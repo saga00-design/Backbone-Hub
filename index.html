@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>Backbone Hub</title>
+    <meta name="description" content="AI-powered inventory management system for modern kitchens and businesses.">
+    <meta name="theme-color" content="#0284c7">
+    <link rel="icon" href="https://lucide.dev/favicon.ico">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script>
+      tailwind.config = {
+        darkMode: 'class',
+        theme: {
+          extend: {
+            fontFamily: {
+              sans: ['Inter', 'sans-serif'],
+            },
+            colors: {
+              'primary-surface': 'var(--primary-surface)',
+              'secondary-surface': 'var(--secondary-surface)',
+              'main-bg': 'var(--main-bg)',
+              'card-bg': 'var(--card-bg)',
+              'text-navy': 'var(--text-navy)',
+              'text-muted': 'var(--text-muted)',
+              'accent': 'var(--accent)',
+              'cta': 'var(--cta)',
+              'border-grey': 'var(--border-grey)',
+              'dark-navy': 'var(--dark-navy)',
+              'success': 'var(--success)',
+              'warning': 'var(--warning)',
+              'error': 'var(--error)',
+              brand: {
+                50: '#DCEAF7',
+                100: '#CFE0F2',
+                200: '#B8D1EB',
+                300: '#94B8E0',
+                400: '#6B9ED4',
+                500: '#4284C8',
+                600: '#0D6EFD', // Accent blue
+                700: '#0B5ED7',
+                800: '#0A53BE',
+                900: '#24345D', // Text navy
+              }
+            }
+          },
+        },
+      }
+    </script>
+    <style>
+      :root {
+        --primary-surface: #DCEAF7;
+        --secondary-surface: #CFE0F2;
+        --main-bg: #F7F7F7;
+        --card-bg: #FFFFFF;
+        --text-navy: #24345D;
+        --text-muted: #7C8799;
+        --accent: #0D6EFD;
+        --cta: #FF5A57;
+        --border-grey: #D9DDE3;
+        --dark-navy: #2E365F;
+        --success: #A8C66C;
+        --warning: #F4C542;
+        --error: #F28B8B;
+      }
+
+      .dark {
+        --primary-surface: #1e293b;
+        --secondary-surface: #334155;
+        --main-bg: #0f172a;
+        --card-bg: #1e293b;
+        --text-navy: #f8fafc;
+        --text-muted: #94a3b8;
+        --accent: #38bdf8;
+        --cta: #f43f5e;
+        --border-grey: #334155;
+        --dark-navy: #020617;
+        --success: #4ade80;
+        --warning: #fbbf24;
+        --error: #f87171;
+      }
+
+      body { font-family: 'Inter', sans-serif; }
+      /* Hide scrollbar for Chrome, Safari and Opera */
+      .no-scrollbar::-webkit-scrollbar {
+          display: none;
+      }
+      /* Hide scrollbar for IE, Edge and Firefox */
+      .no-scrollbar {
+          -ms-overflow-style: none;  /* IE and Edge */
+          scrollbar-width: none;  /* Firefox */
+      }
+      .markdown-body h1, .markdown-body h2, .markdown-body h3 { font-weight: 700; margin-top: 0.5rem; margin-bottom: 0.25rem; font-size: 1rem; }
+      .markdown-body p { margin-bottom: 0.5rem; line-height: 1.5; }
+      .markdown-body ul, .markdown-body ol { margin-left: 1.25rem; margin-bottom: 0.5rem; list-style-type: disc; }
+      .markdown-body li { margin-bottom: 0.125rem; }
+      .markdown-body strong { font-weight: 600; color: inherit; }
+      .markdown-body code { background: rgba(0,0,0,0.05); padding: 0.1rem 0.2rem; border-radius: 0.2rem; font-family: monospace; }
+      
+      .dark .markdown-body code { background: rgba(255,255,255,0.1); }
+      
+      /* Smooth transitions for theme switching */
+      * {
+        transition: background-color 0.2s ease, border-color 0.2s ease, color 0.1s ease;
+      }
+    </style>
+<script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@^19.2.4",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.4/",
+    "react/": "https://esm.sh/react@^19.2.4/",
+    "@google/genai": "https://esm.sh/@google/genai@^1.41.0",
+    "lucide-react": "https://esm.sh/lucide-react@^0.564.0",
+    "jspdf": "https://esm.sh/jspdf@^4.1.0",
+    "jspdf-autotable": "https://esm.sh/jspdf-autotable@^5.0.7",
+    "vite": "https://esm.sh/vite@^7.3.1",
+    "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@^5.1.4",
+    "html5-qrcode": "https://esm.sh/html5-qrcode@^2.3.8"
+  }
+}
+</script>
+</head>
+  <body class="bg-gray-50 text-slate-800 antialiased h-screen overflow-hidden">
+    <div id="root" class="h-full"></div>
+    <script type="module" src="./index.tsx"></script>
+  </body>
+</html>
