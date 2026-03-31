@@ -1,0 +1,275 @@
+{
+  "entities": {
+    "InventoryItem": {
+      "title": "Inventory Item",
+      "description": "An item in the restaurant's inventory",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "category": { "type": "string" },
+        "subCategory": { "type": "string" },
+        "department": { "type": "string" },
+        "quantity": { "type": "number" },
+        "unit": { "type": "string" },
+        "minStockLevel": { "type": "number" },
+        "pricePerUnit": { "type": "number" },
+        "lastUpdated": { "type": "string" },
+        "imageUrl": { "type": "string" },
+        "description": { "type": "string" },
+        "expiryDate": { "type": "string" },
+        "supplier": { "type": "string" },
+        "supplierContact": { "type": "string" },
+        "dailyUsageRate": { "type": "number" },
+        "barcode": { "type": "string" },
+        "allergies": { "type": "array", "items": { "type": "string" } },
+        "totalOwned": { "type": "number" },
+        "brokenQuantity": { "type": "number" }
+      },
+      "required": ["id", "name", "category", "quantity", "unit", "pricePerUnit", "lastUpdated"]
+    },
+    "Recipe": {
+      "title": "Recipe",
+      "description": "A recipe or menu item",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "type": { "type": "string", "enum": ["recipe", "menu_item"] },
+        "category": { "type": "string" },
+        "subCategory": { "type": "string" },
+        "imageUrl": { "type": "string" },
+        "sellingPrice": { "type": "number" },
+        "vatRate": { "type": "number" },
+        "serviceChargeRate": { "type": "number" },
+        "yieldAmount": { "type": "number" },
+        "yieldUnit": { "type": "string" },
+        "quantity": { "type": "number" },
+        "calories": { "type": "number" },
+        "allergies": { "type": "array", "items": { "type": "string" } },
+        "ingredients": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "inventoryItemId": { "type": "string" },
+              "quantity": { "type": "number" },
+              "unit": { "type": "string" }
+            }
+          }
+        },
+        "lastUpdated": { "type": "string" }
+      },
+      "required": ["id", "name", "sellingPrice", "ingredients", "lastUpdated"]
+    },
+    "Supplier": {
+      "title": "Supplier",
+      "description": "A food or beverage supplier",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "contactName": { "type": "string" },
+        "email": { "type": "string" },
+        "phone": { "type": "string" },
+        "address": { "type": "string" },
+        "notes": { "type": "string" }
+      },
+      "required": ["id", "name"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "A purchase order sent to a supplier",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "date": { "type": "string" },
+        "supplier": { "type": "string" },
+        "totalAmount": { "type": "number" },
+        "status": { "type": "string", "enum": ["Draft", "Sent", "Received"] },
+        "items": { "type": "array", "items": { "type": "object" } }
+      },
+      "required": ["id", "date", "supplier", "totalAmount", "status"]
+    },
+    "Invoice": {
+      "title": "Invoice",
+      "description": "A received invoice from a supplier",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "date": { "type": "string" },
+        "vendor": { "type": "string" },
+        "totalAmount": { "type": "number" },
+        "status": { "type": "string", "enum": ["Pending", "Processed"] },
+        "paymentStatus": { "type": "string", "enum": ["Paid", "Unpaid"] },
+        "items": { "type": "array", "items": { "type": "object" } }
+      },
+      "required": ["id", "date", "vendor", "totalAmount", "status", "paymentStatus"]
+    },
+    "StockCountRecord": {
+      "title": "Stock Count Record",
+      "description": "A record of a completed stock count",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "date": { "type": "string" },
+        "aiAnalysis": { "type": "string" },
+        "items": { "type": "array", "items": { "type": "object" } }
+      },
+      "required": ["id", "date", "items"]
+    },
+    "SalesImportRecord": {
+      "title": "Sales Import Record",
+      "description": "A record of a sales data import",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "date": { "type": "string" },
+        "fileName": { "type": "string" },
+        "totalSales": { "type": "number" },
+        "kitchenSales": { "type": "number" },
+        "barSales": { "type": "number" },
+        "itemsCount": { "type": "number" },
+        "matchedCount": { "type": "number" },
+        "ingredientsAffected": { "type": "number" }
+      },
+      "required": ["id", "date", "fileName", "totalSales"]
+    },
+    "UserProfile": {
+      "title": "User Profile",
+      "description": "User specific settings and profile data",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "isDarkMode": { "type": "boolean" },
+        "role": { "type": "string", "enum": ["admin", "user"] }
+      },
+      "required": ["uid", "email"]
+    },
+    "Table": {
+      "title": "Table",
+      "description": "A restaurant table",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "number": { "type": "string" },
+        "capacity": { "type": "number" },
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "status": { "type": "string", "enum": ["Available", "Seated", "Ordered", "Served", "Paid"] },
+        "currentOrderId": { "type": "string" },
+        "waiterId": { "type": "string" },
+        "seatedAt": { "type": "string" }
+      },
+      "required": ["id", "number", "status"]
+    },
+    "POSOrder": {
+      "title": "POS Order",
+      "description": "A restaurant order from the POS",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "tableId": { "type": "string" },
+        "type": { "type": "string", "enum": ["Dine-In", "Takeaway", "Delivery"] },
+        "status": { "type": "string", "enum": ["Open", "Paid", "Cancelled", "Refunded"] },
+        "items": { "type": "array", "items": { "type": "object" } },
+        "subtotal": { "type": "number" },
+        "vat": { "type": "number" },
+        "serviceCharge": { "type": "number" },
+        "total": { "type": "number" },
+        "tips": { "type": "number" },
+        "waiterId": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" },
+        "paidAt": { "type": "string" },
+        "payments": { "type": "array", "items": { "type": "object" } }
+      },
+      "required": ["id", "status", "items", "total", "createdAt"]
+    },
+    "StaffMember": {
+      "title": "Staff Member",
+      "description": "A restaurant staff member",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "role": { "type": "string", "enum": ["Waiter", "Bartender", "Chef", "Manager"] },
+        "pin": { "type": "string" },
+        "hourlyRate": { "type": "number" },
+        "trainingProgress": { "type": "object" },
+        "active": { "type": "boolean" }
+      },
+      "required": ["id", "name", "role", "pin"]
+    },
+    "WasteRecord": {
+      "title": "Waste Record",
+      "description": "A record of wasted inventory",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "inventoryItemId": { "type": "string" },
+        "quantity": { "type": "number" },
+        "unit": { "type": "string" },
+        "reason": { "type": "string" },
+        "cost": { "type": "number" },
+        "date": { "type": "string" },
+        "staffId": { "type": "string" }
+      },
+      "required": ["id", "inventoryItemId", "quantity", "date"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "User profile document"
+    },
+    "/users/{userId}/inventory": {
+      "schema": "InventoryItem",
+      "description": "User's inventory items"
+    },
+    "/users/{userId}/recipes": {
+      "schema": "Recipe",
+      "description": "User's recipes and menu items"
+    },
+    "/users/{userId}/suppliers": {
+      "schema": "Supplier",
+      "description": "User's suppliers"
+    },
+    "/users/{userId}/orders": {
+      "schema": "Order",
+      "description": "User's purchase orders"
+    },
+    "/users/{userId}/invoices": {
+      "schema": "Invoice",
+      "description": "User's invoices"
+    },
+    "/users/{userId}/stockCounts": {
+      "schema": "StockCountRecord",
+      "description": "User's stock count records"
+    },
+    "/users/{userId}/salesImports": {
+      "schema": "SalesImportRecord",
+      "description": "User's sales import records"
+    },
+    "/users/{userId}/tables": {
+      "schema": "Table",
+      "description": "Restaurant tables"
+    },
+    "/users/{userId}/posOrders": {
+      "schema": "POSOrder",
+      "description": "Restaurant POS orders"
+    },
+    "/users/{userId}/staff": {
+      "schema": "StaffMember",
+      "description": "Restaurant staff"
+    },
+    "/users/{userId}/waste": {
+      "schema": "WasteRecord",
+      "description": "Inventory waste records"
+    }
+  }
+}
