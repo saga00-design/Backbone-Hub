@@ -1,18 +1,18 @@
 
 import React, { useState, useEffect } from 'react';
 import { Button } from './Button';
-import { Download, Upload, Trash2, Cloud, LogOut, User, Shield, Users, Building, Check, X, Plus, ChevronRight, ChevronDown, Clock } from 'lucide-react';
-import { auth, db, collection, doc, getDoc, getDocs, setDoc, updateDoc, onSnapshot, cleanObject, handleFirestoreError, OperationType } from '../firebase';
-import { APP_SECTIONS, DEFAULT_ROLES, DEFAULT_DEPARTMENTS } from '../constants';
-import { StaffMember } from '../types';
+import { Download, Upload, Trash2, Cloud, LogOut, User, Shield, Users, Building, Check, X, Plus, ChevronRight, ChevronDown, Clock, Package, Copy, Pencil, RefreshCw, AlertTriangle, ClipboardCheck } from 'lucide-react';
+import { auth, db, collection, doc, getDoc, getDocs, setDoc, updateDoc, onSnapshot, cleanObject, handleFirestoreError, OperationType, query, where } from '../firebase';
+import { APP_SECTIONS, DEFAULT_ROLES, DEFAULT_DEPARTMENTS, DEFAULT_PERMISSIONS } from '../constants';
+import { StaffMember, AppPermissions, AuditLog } from '../types';
 import { motion, AnimatePresence } from 'framer-motion';
-import { addDoc } from 'firebase/firestore';
+import { addDoc, deleteDoc } from 'firebase/firestore';
 import { toast } from 'sonner';
+import { ConfirmationModal } from './ConfirmationModal';
+import { performSystemResetAndRebuild } from '../utils/resetSystem';
 
-interface RolePermissions {
-  [roleId: string]: {
-    [permissionId: string]: boolean;
-  };
+interface RolePermissionsConfig {
+  [roleId: string]: AppPermissions;
 }
 
 interface UserData {
@@ -20,60 +20,317 @@ interface UserData {
   email: string;
   displayName: string;
   photoURL: string;
-  role: 'Admin' | 'Manager' | 'Staff' | 'Waiter' | 'Chef';
+  role: 'Admin' | 'Manager' | 'Waiter' | 'Chef' | 'Bartender';
+  department?: string;
 }
 
-export const Settings: React.FC = () => {
+const LOCATION_ID = 'loc_camden';
+
+interface SettingsProps {
+  auditLogs?: AuditLog[];
+}
+
+export const Settings: React.FC<SettingsProps> = ({ auditLogs = [] }) => {
   const user = auth.currentUser;
-  const [activeTab, setActiveTab] = useState<'profile' | 'team' | 'cloud'>('profile');
-  const [rolePermissions, setRolePermissions] = useState<RolePermissions>({});
+  const [activeTab, setActiveTab] = useState<'profile' | 'team' | 'inventory' | 'cloud' | 'system' | 'logs'>('profile');
+  const [settings, setSettings] = useState({
+    allowNegativeStock: false,
+    autoUpdateFromInvoices: true,
+    lowStockAlertThreshold: 20
+  });
+  const [rolePermissions, setRolePermissions] = useState<RolePermissionsConfig>({});
   const [users, setUsers] = useState<UserData[]>([]);
-  const [userRole, setUserRole] = useState<string>('staff');
+  const [staffMembers, setStaffMembers] = useState<StaffMember[]>([]);
+  const [departments, setDepartments] = useState<any[]>(DEFAULT_DEPARTMENTS);
+  const [userRole, setUserRole] = useState<string>('Waiter');
   const [loading, setLoading] = useState(true);
+  const [selectedModule, setSelectedModule] = useState<keyof AppPermissions>('inventory');
   const [isAddingStaff, setIsAddingStaff] = useState(false);
+  const [editingStaffId, setEditingStaffId] = useState<string | null>(null);
+  const [isAddingDept, setIsAddingDept] = useState(false);
+  const [editingDeptId, setEditingDeptId] = useState<string | null>(null);
+  const [newDept, setNewDept] = useState({ name: '' });
   const [newStaff, setNewStaff] = useState<Partial<StaffMember>>({
     firstName: '',
     lastName: '',
     email: '',
     role: 'Waiter',
-    permissions: [],
+    department: 'foh',
+    permissions: JSON.parse(JSON.stringify(DEFAULT_PERMISSIONS.Waiter)),
+    allowedStations: [],
+    trainingSummary: {
+      level: 1,
+      completedModules: 0,
+      totalModules: 0,
+      requiredOutstanding: 0,
+      lastUpdated: null
+    },
+    certifications: [],
     pin: '',
     hourlyRate: 12.50,
     active: true,
-    trainingProgress: {}
+  });
+
+  const getRolePermissions = (role: string): AppPermissions => {
+    return JSON.parse(JSON.stringify(DEFAULT_PERMISSIONS[role] || DEFAULT_PERMISSIONS.Waiter));
+  };
+
+  const handleRoleChange = (role: StaffMember['role']) => {
+    const permissions = getRolePermissions(role);
+    setNewStaff(prev => ({
+      ...prev,
+      role,
+      permissions
+    }));
+  };
+
+  const [confirmModal, setConfirmModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+    variant: 'danger' | 'warning' | 'info';
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: () => {},
+    variant: 'danger'
   });
 
   const handleAddStaff = async () => {
-    if (!newStaff.firstName || !newStaff.lastName || !newStaff.email || !newStaff.pin || newStaff.pin.length !== 4 || !auth.currentUser) return;
+    if (!newStaff.firstName || !newStaff.lastName || !newStaff.role || !newStaff.pin || newStaff.pin.length !== 4 || !auth.currentUser) {
+      toast.error('Required: Name, Role, and 4-digit PIN');
+      return;
+    }
 
     try {
-      const userId = auth.currentUser.uid;
-      await addDoc(collection(db, `users/${userId}/staff`), cleanObject({
-        ...newStaff,
-        trainingProgress: {
-          food: 0,
-          cocktails: 0,
-          wine: 0,
-          tequila: 0,
-          allergens: 0,
-          service: 0
-        }
-      }));
+      const timestamp = new Date().toISOString();
+      const completed = newStaff.trainingSummary?.completedModules || 0;
+      const total = newStaff.trainingSummary?.totalModules || 0;
+
+      const staffPayload = {
+        firstName: newStaff.firstName,
+        lastName: newStaff.lastName,
+        name: `${newStaff.firstName} ${newStaff.lastName}`.trim(),
+        email: newStaff.email || '',
+        role: newStaff.role,
+        pin: newStaff.pin,
+        active: newStaff.active ?? true,
+        locationId: LOCATION_ID,
+        department: newStaff.department || 'foh',
+        hourlyRate: newStaff.hourlyRate || 12.5,
+
+        permissions: newStaff.permissions || {},
+        allowedStations: newStaff.allowedStations || [],
+        
+        trainingSummary: {
+          ...newStaff.trainingSummary,
+          requiredOutstanding: Math.max(0, total - completed),
+          lastUpdated: timestamp
+        },
+
+        certifications: newStaff.certifications || [],
+        lastUpdated: timestamp,
+        ...(editingStaffId ? {} : { createdAt: timestamp })
+      };
+
+      if (editingStaffId) {
+        await updateDoc(doc(db, 'staffProfiles', editingStaffId), cleanObject(staffPayload));
+        toast.success('Staff member updated');
+      } else {
+        await addDoc(collection(db, 'staffProfiles'), cleanObject(staffPayload));
+        toast.success('Staff member added');
+      }
+
+      // Reset form
       setIsAddingStaff(false);
+      setEditingStaffId(null);
       setNewStaff({
         firstName: '',
         lastName: '',
         email: '',
         role: 'Waiter',
-        permissions: [],
+        department: 'foh',
+        permissions: getRolePermissions('Waiter'),
+        allowedStations: [],
+        trainingSummary: {
+          level: 1,
+          completedModules: 0,
+          totalModules: 0,
+          requiredOutstanding: 0,
+          lastUpdated: null
+        },
+        certifications: [],
         pin: '',
-        hourlyRate: 12.50,
+        hourlyRate: 12.5,
         active: true,
-        trainingProgress: {}
       });
-    } catch (err) {
-      console.error("Error adding staff:", err);
+
+  } catch (err) {
+    console.error('Error saving staff:', err);
+    toast.error('Failed to save staff member');
+  }
+};
+
+  const handleEditStaff = (staff: StaffMember) => {
+    let permissions = JSON.parse(JSON.stringify(staff.permissions || {}));
+    if (Array.isArray(permissions)) {
+      permissions = getRolePermissions(staff.role);
     }
+
+    setNewStaff({
+      ...staff,
+      permissions,
+      allowedStations: staff.allowedStations || [],
+      trainingSummary: staff.trainingSummary || {
+        level: 1,
+        completedModules: 0,
+        totalModules: 0,
+        requiredOutstanding: 0,
+        lastUpdated: null
+      },
+      certifications: staff.certifications || []
+    });
+    setEditingStaffId(staff.id);
+    setIsAddingStaff(true);
+  };
+
+  const handleDeleteStaff = async (staffId: string) => {
+    if (!user) return;
+    setConfirmModal({
+      isOpen: true,
+      title: 'Delete Staff Member',
+      message: 'Are you sure you want to delete this staff member? This action cannot be undone.',
+      variant: 'danger',
+      onConfirm: async () => {
+        try {
+          await deleteDoc(doc(db, 'staffProfiles', staffId));
+          toast.success('Staff member deleted');
+          setConfirmModal(prev => ({ ...prev, isOpen: false }));
+        } catch (err) {
+          console.error("Error deleting staff:", err);
+          toast.error('Failed to delete staff member');
+        }
+      }
+    });
+  };
+
+  const handleCopyStaff = (staff: StaffMember) => {
+    const { id, ...rest } = staff;
+    setNewStaff({ ...rest, firstName: `${rest.firstName} (Copy)` });
+    setEditingStaffId(null);
+    setIsAddingStaff(true);
+  };
+
+  const handleAddDept = async () => {
+    if (!newDept.name || !user) return;
+    try {
+      const userId = user.uid;
+      const deptId = editingDeptId || `dept-${Date.now()}`;
+      const updatedDepts = editingDeptId 
+        ? departments.map(d => d.id === editingDeptId ? { ...d, name: newDept.name } : d)
+        : [...departments.filter(d => d.id !== 'custom'), { id: deptId, name: newDept.name }];
+      
+      await setDoc(doc(db, `users/${userId}/settings`, 'departments'), { departments: updatedDepts });
+      setIsAddingDept(false);
+      setEditingDeptId(null);
+      setNewDept({ name: '' });
+      toast.success(editingDeptId ? 'Department updated' : 'Department added');
+    } catch (err) {
+      console.error("Error adding department:", err);
+      toast.error('Failed to save department');
+    }
+  };
+
+  const handleEditDept = (dept: any) => {
+    setNewDept({ name: dept.name });
+    setEditingDeptId(dept.id);
+    setIsAddingDept(true);
+  };
+
+  const handleDeleteDept = async (deptId: string) => {
+    if (!user) return;
+    setConfirmModal({
+      isOpen: true,
+      title: 'Delete Department',
+      message: 'Are you sure you want to delete this department? This may affect staff assignments.',
+      variant: 'danger',
+      onConfirm: async () => {
+        try {
+          const updatedDepts = departments.filter(d => d.id !== deptId);
+          await setDoc(doc(db, `users/${user.uid}/settings`, 'departments'), { departments: updatedDepts });
+          toast.success('Department deleted');
+          setConfirmModal(prev => ({ ...prev, isOpen: false }));
+        } catch (err) {
+          console.error("Error deleting department:", err);
+          toast.error('Failed to delete department');
+        }
+      }
+    });
+  };
+
+  const handleCopyDept = async (dept: any) => {
+    if (!user) return;
+    try {
+      const newDeptObj = { id: `dept-${Date.now()}`, name: `${dept.name} (Copy)` };
+      const updatedDepts = [...departments, newDeptObj];
+      await setDoc(doc(db, `users/${user.uid}/settings`, 'departments'), { departments: updatedDepts });
+      toast.success('Department copied');
+    } catch (err) {
+      console.error("Error copying department:", err);
+      toast.error('Failed to copy department');
+    }
+  };
+
+  const handleExportData = async () => {
+    if (!user) return;
+    try {
+      const collections = ['inventory', 'recipes', 'suppliers', 'invoices', 'expenses', 'waste', 'posOrders'];
+      const exportData: any = {};
+      
+      for (const col of collections) {
+        const snapshot = await getDocs(collection(db, `users/${user.uid}/${col}`));
+        exportData[col] = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      }
+      
+      const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `backbone-hub-export-${new Date().toISOString().split('T')[0]}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success('Data exported successfully');
+    } catch (error) {
+      console.error('Export failed:', error);
+      toast.error('Failed to export data');
+    }
+  };
+
+  const handleImportData = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      try {
+        const data = JSON.parse(event.target?.result as string);
+        if (!user) return;
+        
+        for (const col in data) {
+          for (const item of data[col]) {
+            const { id, ...rest } = item;
+            await setDoc(doc(db, `users/${user.uid}/${col}`, id), cleanObject(rest));
+          }
+        }
+        toast.success('Data imported successfully');
+      } catch (error) {
+        console.error('Import failed:', error);
+        toast.error('Failed to import data');
+      }
+    };
+    reader.readAsText(file);
   };
 
   // Load permissions and users from Firestore
@@ -90,24 +347,34 @@ export const Settings: React.FC = () => {
       }
     });
 
-    const unsubPermissions = onSnapshot(doc(db, 'settings', 'permissions'), (docSnap) => {
+    const unsubPermissions = onSnapshot(doc(db, 'settings', `permissions_${LOCATION_ID}`), (docSnap) => {
+      const data = docSnap.exists() ? docSnap.data() : { roles: {} };
+      setRolePermissions({ ...DEFAULT_PERMISSIONS, ...(data.roles || {}) });
+    });
+
+    const unsubSettings = onSnapshot(doc(db, `users/${user.uid}/settings`, 'inventory'), (docSnap) => {
       if (docSnap.exists()) {
-        setRolePermissions(docSnap.data() as RolePermissions);
-      } else {
-        const initial: RolePermissions = {};
-        DEFAULT_ROLES.forEach((role: any) => {
-          initial[role.id] = {};
-          APP_SECTIONS.forEach((section: any) => {
-            initial[role.id][section.id] = role.id === 'admin' || role.id === 'backoffice' || role.id === 'manager';
-          });
-        });
-        setRolePermissions(initial);
+        setSettings(docSnap.data() as any);
       }
+    });
+
+    const unsubDepts = onSnapshot(doc(db, `users/${user.uid}/settings`, 'departments'), (docSnap) => {
+      if (docSnap.exists()) {
+        setDepartments(docSnap.data().departments);
+      }
+    });
+
+    const unsubStaff = onSnapshot(query(collection(db, 'staffProfiles'), where('locationId', '==', LOCATION_ID)), (snapshot: any) => {
+      const staffData = snapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() } as StaffMember));
+      setStaffMembers(staffData);
     });
 
     return () => {
       unsubUser();
       unsubPermissions();
+      unsubSettings();
+      unsubDepts();
+      unsubStaff();
     };
   }, [user]);
 
@@ -119,7 +386,7 @@ export const Settings: React.FC = () => {
     }
 
     const unsubUsers = onSnapshot(collection(db, 'users'), (snapshot) => {
-      const userData = snapshot.docs.map(doc => doc.data() as UserData);
+      const userData = snapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() } as UserData));
       setUsers(userData);
       setLoading(false);
     }, (error) => {
@@ -130,35 +397,85 @@ export const Settings: React.FC = () => {
     return () => unsubUsers();
   }, [user, userRole]);
 
+  // Security Guard: Prevent non-admins from accessing sensitive tabs via state manipulation
+  useEffect(() => {
+    if (activeTab !== 'profile' && !loading && userRole !== 'Admin' && userRole !== 'Manager') {
+      setActiveTab('profile');
+    }
+  }, [activeTab, userRole, loading]);
+
   const updateUserRole = async (userId: string, newRole: string) => {
     try {
       await updateDoc(doc(db, 'users', userId), cleanObject({ role: newRole }));
+      toast.success('User role updated');
     } catch (error) {
       console.error("Error updating user role:", error);
+      toast.error('Failed to update role');
     }
   };
 
-  const togglePermission = async (roleId: string, sectionId: string) => {
+  const updateUserDepartment = async (userId: string, newDept: string) => {
+    try {
+      await updateDoc(doc(db, 'users', userId), cleanObject({ department: newDept }));
+      toast.success('User department updated');
+    } catch (error) {
+      console.error("Error updating user department:", error);
+      toast.error('Failed to update department');
+    }
+  };
+
+  const MODULE_NAMES: Record<string, string> = {
+    inventory: 'Inventory & Procurement',
+    orders: 'POS & Stock Orders',
+    recipes: 'Menu & Recipe Engineering',
+    reports: 'Business Intelligence & Reports',
+    staff: 'Staff, Training & Briefing',
+    settings: 'System Configuration',
+    stockCount: 'Stock Count',
+    tables: 'Table Manager',
+    staffingRota: 'Staffing & Rota Intelligence'
+  };
+
+  const togglePermission = async (roleId: string, module: keyof AppPermissions, action: string) => {
+    const currentPerms = rolePermissions[roleId] || DEFAULT_PERMISSIONS[roleId];
+    if (!currentPerms) return;
+
+    const modulePerms = (currentPerms[module] as any) || (DEFAULT_PERMISSIONS[roleId]?.[module] as any) || {};
     const newPermissions = {
       ...rolePermissions,
       [roleId]: {
-        ...rolePermissions[roleId],
-        [sectionId]: !rolePermissions[roleId]?.[sectionId]
+        ...currentPerms,
+        [module]: {
+          ...modulePerms,
+          [action]: !modulePerms[action]
+        }
       }
     };
     
     setRolePermissions(newPermissions);
     
     try {
-      await setDoc(doc(db, 'settings', 'permissions'), cleanObject(newPermissions));
+      await setDoc(doc(db, 'settings', `permissions_${LOCATION_ID}`), cleanObject({
+        roles: newPermissions,
+        updatedAt: new Date().toISOString(),
+        locationId: LOCATION_ID
+      }));
+      toast.success('Permissions updated');
     } catch (error) {
       console.error("Error saving permissions:", error);
+      toast.error('Failed to save permissions');
     }
   };
   
-  const handleExportData = () => {
-    // In a real app, we'd fetch from Firestore here
-    toast.info("Cloud data export is currently being processed. You will receive a notification when it's ready.");
+  const toggleInventorySetting = async (key: keyof typeof settings) => {
+    if (!user) return;
+    const newSettings = { ...settings, [key]: !settings[key] };
+    setSettings(newSettings);
+    try {
+      await setDoc(doc(db, `users/${user.uid}/settings`, 'inventory'), cleanObject(newSettings));
+    } catch (error) {
+      console.error("Error saving inventory settings:", error);
+    }
   };
 
   const [displayName, setDisplayName] = useState(user?.displayName || '');
@@ -181,11 +498,27 @@ export const Settings: React.FC = () => {
     });
   };
 
+  const handleResetSystem = () => {
+    if (!user) return;
+    
+    setConfirmModal({
+      isOpen: true,
+      title: 'CRITICAL: System Reset & Rebuild',
+      message: 'This will PERMANENTLY DELETE all inventory items, recipes, menu items, batches, and modifiers. The system will then be rebuilt with a fresh dataset. This operation cannot be undone. Are you absolutely sure?',
+      variant: 'danger',
+      onConfirm: async () => {
+        await performSystemResetAndRebuild(user.uid);
+        setConfirmModal(prev => ({ ...prev, isOpen: false }));
+      }
+    });
+  };
+
   return (
     <div className="space-y-6">
       {/* Tabs */}
       <div className="flex border-b border-border-grey">
         <button
+          key="tab-profile"
           onClick={() => setActiveTab('profile')}
           className={`px-6 py-3 text-sm font-medium border-b-2 transition-colors ${
             activeTab === 'profile'
@@ -198,8 +531,9 @@ export const Settings: React.FC = () => {
             Profile
           </div>
         </button>
-        {(userRole === 'admin' || userRole === 'backoffice' || userRole === 'manager') && (
+        {(userRole === 'Admin' || userRole === 'Manager') && (
           <button
+            key="tab-team"
             onClick={() => setActiveTab('team')}
             className={`px-6 py-3 text-sm font-medium border-b-2 transition-colors ${
               activeTab === 'team'
@@ -213,19 +547,70 @@ export const Settings: React.FC = () => {
             </div>
           </button>
         )}
-        <button
-          onClick={() => setActiveTab('cloud')}
-          className={`px-6 py-3 text-sm font-medium border-b-2 transition-colors ${
-            activeTab === 'cloud'
-              ? 'border-accent text-accent'
-              : 'border-transparent text-text-muted hover:text-text-navy hover:border-border-grey'
-          }`}
-        >
-          <div className="flex items-center gap-2">
-            <Cloud className="h-4 w-4" />
-            Cloud Sync
-          </div>
-        </button>
+        {(userRole === 'Admin' || userRole === 'Manager') && (
+          <button
+            key="tab-inventory"
+            onClick={() => setActiveTab('inventory')}
+            className={`px-6 py-3 text-sm font-medium border-b-2 transition-colors ${
+              activeTab === 'inventory'
+                ? 'border-accent text-accent'
+                : 'border-transparent text-text-muted hover:text-text-navy hover:border-border-grey'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              <Package className="h-4 w-4" />
+              Inventory
+            </div>
+          </button>
+        )}
+        {(userRole === 'Admin' || userRole === 'Manager') && (
+          <button
+            key="tab-cloud"
+            onClick={() => setActiveTab('cloud')}
+            className={`px-6 py-3 text-sm font-medium border-b-2 transition-colors ${
+              activeTab === 'cloud'
+                ? 'border-accent text-accent'
+                : 'border-transparent text-text-muted hover:text-text-navy hover:border-border-grey'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              <Cloud className="h-4 w-4" />
+              Cloud Sync
+            </div>
+          </button>
+        )}
+        {(userRole === 'Admin' || userRole === 'Manager') && (
+          <button
+            key="tab-system"
+            onClick={() => setActiveTab('system')}
+            className={`px-6 py-3 text-sm font-medium border-b-2 transition-colors ${
+              activeTab === 'system'
+                ? 'border-accent text-accent'
+                : 'border-transparent text-text-muted hover:text-text-navy hover:border-border-grey'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              <RefreshCw className="h-4 w-4" />
+              System
+            </div>
+          </button>
+        )}
+        {(userRole === 'Admin' || userRole === 'Manager') && (
+          <button
+            key="tab-logs"
+            onClick={() => setActiveTab('logs')}
+            className={`px-6 py-3 text-sm font-medium border-b-2 transition-colors ${
+              activeTab === 'logs'
+                ? 'border-accent text-accent'
+                : 'border-transparent text-text-muted hover:text-text-navy hover:border-border-grey'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              <ClipboardCheck className="h-4 w-4" />
+              Audit Logs
+            </div>
+          </button>
+        )}
       </div>
 
       {activeTab === 'profile' && (
@@ -297,22 +682,49 @@ export const Settings: React.FC = () => {
         <div className="space-y-6">
           {/* Roles & Permissions */}
           <div className="bg-card-bg shadow-2xl rounded-2xl p-8 border border-border-grey">
-            <h2 className="text-xl font-bold text-text-navy flex items-center mb-4 tracking-tight">
-              <Shield className="mr-3 h-7 w-7 text-accent" />
-              Roles & Permissions
-            </h2>
-            <p className="text-[10px] font-bold text-text-muted uppercase tracking-widest mb-8">
-              Configure what each role can access within the application.
-            </p>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
+              <div>
+                <h2 className="text-xl font-bold text-text-navy flex items-center mb-1 tracking-tight">
+                  <Shield className="mr-3 h-7 w-7 text-accent" />
+                  Roles & Permissions
+                </h2>
+                <p className="text-[10px] font-bold text-text-muted uppercase tracking-widest">
+                  Configure access levels for each module.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <label className="text-[10px] font-black text-text-muted uppercase tracking-widest whitespace-nowrap">
+                  Select Module:
+                </label>
+                <select
+                  value={selectedModule}
+                  onChange={(e) => setSelectedModule(e.target.value as keyof AppPermissions)}
+                  className="bg-main-bg border-2 border-border-grey rounded-xl px-4 py-2 text-xs font-bold text-text-navy focus:outline-none focus:border-accent transition-all min-w-[200px] cursor-pointer appearance-none"
+                  style={{
+                    backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")`,
+                    backgroundPosition: 'right 12px center',
+                    backgroundRepeat: 'no-repeat',
+                    paddingRight: '40px'
+                  }}
+                >
+                  {Object.keys(DEFAULT_PERMISSIONS.Admin).map((m) => (
+                    <option key={m} value={m}>
+                      {MODULE_NAMES[m] || m.charAt(0).toUpperCase() + m.slice(1)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
 
             <div className="overflow-x-auto rounded-2xl border border-border-grey">
               <table className="min-w-full divide-y divide-border-grey">
                 <thead>
                   <tr className="bg-main-bg">
-                    <th className="px-6 py-4 text-left text-[10px] font-bold text-text-muted uppercase tracking-widest">
-                      Section
+                    <th className="px-6 py-4 text-left text-[10px] font-bold text-text-muted uppercase tracking-widest min-w-[200px]">
+                      Action in {MODULE_NAMES[selectedModule] || (selectedModule.charAt(0).toUpperCase() + selectedModule.slice(1))}
                     </th>
-                    {DEFAULT_ROLES.map((role: any) => (
+                    {DEFAULT_ROLES.filter(r => r.id !== 'Admin').map((role) => (
                       <th key={role.id} className="px-6 py-4 text-center text-[10px] font-bold text-text-muted uppercase tracking-widest">
                         {role.name}
                       </th>
@@ -320,69 +732,163 @@ export const Settings: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody className="bg-card-bg divide-y divide-border-grey">
-                  {APP_SECTIONS.map((section: any) => (
-                    <tr key={section.id} className="hover:bg-main-bg transition-colors">
-                      <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-text-navy">
-                        {section.name}
-                      </td>
-                      {DEFAULT_ROLES.map((role: any) => (
-                        <td key={role.id} className="px-6 py-4 whitespace-nowrap text-center">
-                          <button
-                            onClick={() => togglePermission(role.id, section.id)}
-                            className={`inline-flex items-center justify-center h-10 w-10 rounded-xl transition-all ${
-                              rolePermissions[role.id]?.[section.id]
-                                ? 'bg-success/10 text-success border border-success/20 hover:bg-success/20'
-                                : 'bg-main-bg text-text-muted/30 border border-border-grey hover:bg-secondary-surface'
-                            }`}
-                          >
-                            {rolePermissions[role.id]?.[section.id] ? (
-                              <Check className="h-5 w-5" />
-                            ) : (
-                              <X className="h-5 w-5" />
-                            )}
-                          </button>
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
+                  {(() => {
+                    const module = selectedModule;
+                    const actions = Object.keys(DEFAULT_PERMISSIONS.Admin[module]);
+                    
+                    return (
+                      <>
+                        {actions.map((action) => (
+                          <tr key={`${module}-${action}`} className="hover:bg-main-bg transition-colors">
+                            <td className="px-8 py-3 whitespace-nowrap text-xs font-bold text-text-navy capitalize">
+                              {action.replace(/([A-Z])/g, ' $1').trim()}
+                            </td>
+                            {DEFAULT_ROLES.filter(r => r.id !== 'Admin').map((role) => (
+                              <td key={role.id} className="px-6 py-3 whitespace-nowrap text-center">
+                                <button
+                                  onClick={() => togglePermission(role.id, module, action)}
+                                  className={`inline-flex items-center justify-center h-8 w-8 rounded-lg transition-all ${
+                                    ((rolePermissions[role.id] || DEFAULT_PERMISSIONS[role.id])?.[module] as any)?.[action]
+                                      ? 'bg-success/10 text-success border border-success/20 shadow-sm'
+                                      : 'bg-main-bg text-text-muted/20 border border-border-grey hover:bg-secondary-surface'
+                                  }`}
+                                >
+                                  {((rolePermissions[role.id] || DEFAULT_PERMISSIONS[role.id])?.[module] as any)?.[action] ? (
+                                    <Check className="h-4 w-4" />
+                                  ) : (
+                                    <X className="h-4 w-4" />
+                                  )}
+                                </button>
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </>
+                    );
+                  })()}
                 </tbody>
               </table>
+            </div>
+            <div className="mt-4 p-4 bg-accent/5 rounded-xl border border-accent/20">
+              <p className="text-[10px] font-bold text-accent uppercase tracking-widest flex items-center gap-2">
+                <Shield className="h-3 w-3" />
+                Note: Admin role always has all permissions enabled.
+              </p>
             </div>
           </div>
 
           {/* Departments */}
-          <div className="bg-card-bg shadow-2xl rounded-2xl p-8 border border-border-grey">
-            <h2 className="text-xl font-bold text-text-navy flex items-center mb-4 tracking-tight">
-              <Building className="mr-3 h-7 w-7 text-accent" />
-              Departments
-            </h2>
-            <p className="text-[10px] font-bold text-text-muted uppercase tracking-widest mb-8">
-              Manage the departments within your organization.
-            </p>
+          <div className="bg-card-bg shadow-2xl rounded-2xl p-6 border border-border-grey">
+            <div className="flex items-center justify-between mb-6">
+              <div>
+                <h2 className="text-lg font-bold text-text-navy flex items-center tracking-tight">
+                  <Building className="mr-2 h-5 w-5 text-accent" />
+                  Departments
+                </h2>
+                <p className="text-[9px] font-bold text-text-muted uppercase tracking-widest">
+                  Manage organization structure
+                </p>
+              </div>
+              <Button 
+                size="sm"
+                onClick={() => {
+                  setEditingDeptId(null);
+                  setNewDept({ name: '' });
+                  setIsAddingDept(true);
+                }}
+                className="bg-accent/10 text-accent hover:bg-accent hover:text-white border-none rounded-lg px-3 py-1.5 text-[9px] font-bold uppercase tracking-widest transition-all flex items-center gap-1.5"
+              >
+                <Plus className="h-3 w-3" />
+                Add Dept
+              </Button>
+            </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-              {DEFAULT_DEPARTMENTS.map((dept: any) => (
-                <div key={dept.id} className="flex items-center justify-between p-5 border border-border-grey rounded-2xl bg-main-bg hover:bg-card-bg hover:shadow-xl transition-all group">
-                  <div className="flex items-center gap-4">
-                    <div className="h-12 w-12 rounded-xl bg-primary-surface text-accent flex items-center justify-center shadow-sm">
-                      <Building className="h-6 w-6" />
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+              {departments.map((dept: any) => (
+                <div key={dept.id} className="flex items-center justify-between p-3 border border-border-grey rounded-xl bg-main-bg hover:bg-card-bg hover:shadow-md transition-all group relative overflow-hidden">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="h-8 w-8 shrink-0 rounded-lg bg-primary-surface text-accent flex items-center justify-center shadow-sm">
+                      <Building className="h-4 w-4" />
                     </div>
-                    <div>
-                      <h3 className="font-bold text-text-navy">{dept.name}</h3>
-                      <p className="text-[9px] font-bold text-text-muted uppercase tracking-widest">Active Department</p>
+                    <div className="min-w-0">
+                      <h3 className="text-xs font-bold text-text-navy truncate">{dept.name}</h3>
                     </div>
                   </div>
-                  <Button variant="ghost" size="sm" className="opacity-0 group-hover:opacity-100 transition-opacity text-[10px] font-bold uppercase tracking-widest text-accent">
-                    Edit
-                  </Button>
+                  
+                  <div className="absolute inset-0 bg-card-bg/95 flex items-center justify-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button 
+                      onClick={() => handleCopyDept(dept)}
+                      className="p-1.5 text-text-muted hover:text-accent transition-colors"
+                      title="Copy"
+                    >
+                      <Copy className="h-3.5 w-3.5" />
+                    </button>
+                    <button 
+                      onClick={() => handleEditDept(dept)}
+                      className="p-1.5 text-text-muted hover:text-accent transition-colors"
+                      title="Edit"
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </button>
+                    <button 
+                      onClick={() => handleDeleteDept(dept.id)}
+                      className="p-1.5 text-text-muted hover:text-cta transition-colors"
+                      title="Delete"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
                 </div>
               ))}
-              <button className="flex items-center justify-center gap-3 p-5 border-2 border-dashed border-border-grey rounded-2xl text-text-muted hover:border-accent hover:text-accent transition-all group">
-                <Plus className="h-5 w-5 group-hover:scale-110 transition-transform" />
-                <span className="text-[10px] font-bold uppercase tracking-widest">Add Custom Dept</span>
-              </button>
             </div>
           </div>
+
+          {/* Add Department Modal */}
+          <AnimatePresence>
+            {isAddingDept && (
+              <motion.div 
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-8"
+              >
+                <motion.div 
+                  initial={{ scale: 0.9, y: 20 }}
+                  animate={{ scale: 1, y: 0 }}
+                  className="w-full max-w-md bg-card-bg border border-border-grey rounded-3xl p-8 shadow-2xl"
+                >
+                  <div className="flex items-center justify-between mb-8">
+                    <h3 className="text-2xl font-bold text-text-navy tracking-tight">
+                      {editingDeptId ? 'Edit Department' : 'New Department'}
+                    </h3>
+                    <button onClick={() => setIsAddingDept(false)} className="text-text-muted hover:text-text-navy transition-colors">
+                      <X className="w-6 h-6" />
+                    </button>
+                  </div>
+
+                  <div className="space-y-5">
+                    <div>
+                      <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2 block">Department Name</label>
+                      <input 
+                        type="text"
+                        value={newDept.name}
+                        onChange={(e) => setNewDept({ name: e.target.value })}
+                        className="w-full bg-main-bg border border-border-grey rounded-xl px-4 py-3 text-text-navy focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent transition-all"
+                        placeholder="e.g. Terrace, Basement Bar"
+                      />
+                    </div>
+
+                    <button 
+                      onClick={handleAddDept}
+                      className="w-full py-4 bg-accent text-white rounded-xl font-bold uppercase tracking-widest text-[10px] shadow-lg shadow-accent/20 hover:opacity-90 transition-all mt-4"
+                    >
+                      {editingDeptId ? 'Update Department' : 'Create Department'}
+                    </button>
+                  </div>
+                </motion.div>
+              </motion.div>
+            )}
+          </AnimatePresence>
 
           {/* User Management */}
           <div className="bg-card-bg shadow-2xl rounded-2xl p-8 border border-border-grey">
@@ -395,8 +901,9 @@ export const Settings: React.FC = () => {
             </p>
 
             <div className="space-y-4">
+              {/* Root Users */}
               {users.map((u) => (
-                <div key={u.uid} className="flex items-center justify-between p-5 border border-border-grey rounded-2xl bg-main-bg hover:bg-card-bg transition-all">
+                <div key={`user-row-${u.uid}`} className="flex items-center justify-between p-5 border border-border-grey rounded-2xl bg-main-bg hover:bg-card-bg transition-all">
                   <div className="flex items-center gap-4">
                     {u.photoURL ? (
                       <img src={u.photoURL} alt={u.displayName} className="h-12 w-12 rounded-full border border-border-grey shadow-sm" referrerPolicy="no-referrer" />
@@ -412,7 +919,17 @@ export const Settings: React.FC = () => {
                   </div>
                   <div className="flex items-center gap-3">
                     <select
-                      value={u.role || 'staff'}
+                      value={u.department || ''}
+                      onChange={(e) => updateUserDepartment(u.uid, e.target.value)}
+                      className="text-[10px] font-bold uppercase tracking-widest border-border-grey rounded-xl focus:ring-accent focus:border-accent bg-card-bg py-2 px-4 transition-all"
+                    >
+                      <option value="">No Dept</option>
+                      {departments.map(dept => (
+                        <option key={dept.id} value={dept.id}>{dept.name}</option>
+                      ))}
+                    </select>
+                    <select
+                      value={u.role || 'Waiter'}
                       onChange={(e) => updateUserRole(u.uid, e.target.value)}
                       className="text-[10px] font-bold uppercase tracking-widest border-border-grey rounded-xl focus:ring-accent focus:border-accent bg-card-bg py-2 px-4 transition-all"
                     >
@@ -423,8 +940,56 @@ export const Settings: React.FC = () => {
                   </div>
                 </div>
               ))}
-              {users.length === 0 && (
-                <div className="text-center py-12 text-text-muted bg-main-bg rounded-2xl border border-dashed border-border-grey">
+
+              {/* Local Staff Members */}
+              {staffMembers.filter(s => s.active).map((s) => (
+                <div key={`staff-row-${s.id}`} className="flex items-center justify-between p-5 border border-border-grey rounded-2xl bg-main-bg hover:bg-card-bg transition-all group">
+                  <div className="flex items-center gap-4">
+                    <div className="h-12 w-12 rounded-full bg-accent/10 text-accent flex items-center justify-center font-bold shadow-sm">
+                      {s.firstName?.charAt(0)}{s.lastName?.charAt(0)}
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-text-navy">{s.firstName} {s.lastName}</h3>
+                      <p className="text-xs text-text-muted">
+                        {s.email} • {s.role} 
+                        {userRole === 'Admin' && ` • PIN: ${s.pin}`}
+                        {s.department && ` • ${departments.find(d => d.id === s.department)?.name || s.department}`}
+                      </p>
+                    </div>
+                  </div>
+                    <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <Button 
+                        variant="ghost" 
+                        size="sm" 
+                        onClick={() => handleCopyStaff(s)}
+                        className="text-[10px] font-bold uppercase tracking-widest text-text-muted hover:text-accent"
+                      >
+                        Copy
+                      </Button>
+                      <Button 
+                        variant="ghost" 
+                        size="sm" 
+                        onClick={() => handleEditStaff(s)}
+                        className="text-[10px] font-bold uppercase tracking-widest text-accent"
+                      >
+                        Edit
+                      </Button>
+                      {userRole === 'Admin' && (
+                        <Button 
+                          variant="ghost" 
+                          size="sm" 
+                          onClick={() => handleDeleteStaff(s.id)}
+                          className="text-[10px] font-bold uppercase tracking-widest text-cta"
+                        >
+                          Delete
+                        </Button>
+                      )}
+                    </div>
+                </div>
+              ))}
+
+              {users.length === 0 && staffMembers.length === 0 && (
+                <div key="no-team-users" className="text-center py-12 text-text-muted bg-main-bg rounded-2xl border border-dashed border-border-grey">
                   <Users className="h-12 w-12 mx-auto mb-4 opacity-20" />
                   <p className="text-[10px] font-bold uppercase tracking-widest">No other users found. Invite your team to join Backbone Hub.</p>
                 </div>
@@ -454,13 +1019,18 @@ export const Settings: React.FC = () => {
                   className="w-full max-w-md bg-card-bg border border-border-grey rounded-3xl p-8 shadow-2xl"
                 >
                   <div className="flex items-center justify-between mb-8">
-                    <h3 className="text-2xl font-bold text-text-navy tracking-tight">New Staff Member</h3>
-                    <button onClick={() => setIsAddingStaff(false)} className="text-text-muted hover:text-text-navy transition-colors">
+                    <h3 className="text-2xl font-bold text-text-navy tracking-tight">
+                      {editingStaffId ? 'Edit Staff Member' : 'New Staff Member'}
+                    </h3>
+                    <button onClick={() => {
+                      setIsAddingStaff(false);
+                      setEditingStaffId(null);
+                    }} className="text-text-muted hover:text-text-navy transition-colors">
                       <X className="w-6 h-6" />
                     </button>
                   </div>
 
-                  <div className="space-y-5">
+                  <div className="space-y-5 max-h-[60vh] overflow-y-auto pr-4 custom-scrollbar overflow-x-hidden">
                     <div className="grid grid-cols-2 gap-4">
                       <div>
                         <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2 block">First Name</label>
@@ -491,31 +1061,114 @@ export const Settings: React.FC = () => {
                       />
                     </div>
                     <div>
+                      <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2 block">Department</label>
+                      <select 
+                        value={newStaff.department}
+                        onChange={(e) => setNewStaff({ ...newStaff, department: e.target.value })}
+                        className="w-full bg-main-bg border border-border-grey rounded-xl px-4 py-3 text-text-navy focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent transition-all appearance-none"
+                      >
+                        {departments.map(dept => (
+                          <option key={dept.id} value={dept.id}>{dept.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
                       <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2 block">Role</label>
                       <select 
                         value={newStaff.role}
-                        onChange={(e) => setNewStaff({ ...newStaff, role: e.target.value as any })}
+                        onChange={(e) => handleRoleChange(e.target.value as any)}
                         className="w-full bg-main-bg border border-border-grey rounded-xl px-4 py-3 text-text-navy focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent transition-all appearance-none"
                       >
                         <option value="Waiter">Waiter</option>
                         <option value="Bartender">Bartender</option>
-                        <option value="Chef">Chef (Admin)</option>
-                        <option value="Manager">Manager (Admin)</option>
+                        <option value="Chef">Chef</option>
+                        <option value="Manager">Manager</option>
+                        <option value="Admin">Admin</option>
                       </select>
                     </div>
-                    <div>
-                      <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2 block">Permissions (comma separated)</label>
-                      <input 
-                        type="text"
-                        value={newStaff.permissions?.join(', ')}
-                        onChange={(e) => setNewStaff({ ...newStaff, permissions: e.target.value.split(',').map(p => p.trim()) })}
-                        className="w-full bg-main-bg border border-border-grey rounded-xl px-4 py-3 text-text-navy focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent transition-all"
-                      />
+
+                    <div className="bg-main-bg/50 p-4 rounded-2xl border border-border-grey">
+                      <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest mb-4 block">Station Access</label>
+                      <div className="flex flex-wrap gap-6">
+                        {['food', 'beverage', 'non_fb'].map(station => (
+                          <label key={station} className="flex items-center gap-2 cursor-pointer group">
+                            <input 
+                              type="checkbox"
+                              checked={(newStaff.allowedStations || []).includes(station)}
+                              onChange={(e) => {
+                                const stations = [...(newStaff.allowedStations || [])];
+                                if (e.target.checked) {
+                                  stations.push(station);
+                                } else {
+                                  const index = stations.indexOf(station);
+                                  if (index > -1) stations.splice(index, 1);
+                                }
+                                setNewStaff({ ...newStaff, allowedStations: stations });
+                              }}
+                              className="w-4 h-4 rounded border-border-grey text-accent focus:ring-accent"
+                            />
+                            <span className="text-[10px] font-bold uppercase tracking-widest text-text-navy group-hover:text-accent transition-colors">
+                              {station.replace('_', '-')}
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="bg-main-bg/50 p-4 rounded-2xl border border-border-grey">
+                      <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest mb-4 block">Training Summary</label>
+                      <div className="grid grid-cols-3 gap-3">
+                        <div>
+                          <label className="text-[8px] font-bold text-text-muted uppercase tracking-widiest mb-1 block">Level</label>
+                          <input 
+                            type="number"
+                            value={newStaff.trainingSummary?.level || 1}
+                            onChange={(e) => setNewStaff({
+                              ...newStaff,
+                              trainingSummary: {
+                                ...(newStaff.trainingSummary as any),
+                                level: parseInt(e.target.value) || 1
+                              }
+                            })}
+                            className="w-full bg-card-bg border border-border-grey rounded-lg px-2 py-1.5 text-xs text-text-navy"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[8px] font-bold text-text-muted uppercase tracking-widest mb-1 block">Completed</label>
+                          <input 
+                            type="number"
+                            value={newStaff.trainingSummary?.completedModules || 0}
+                            onChange={(e) => setNewStaff({
+                              ...newStaff,
+                              trainingSummary: {
+                                ...(newStaff.trainingSummary as any),
+                                completedModules: parseInt(e.target.value) || 0
+                              }
+                            })}
+                            className="w-full bg-card-bg border border-border-grey rounded-lg px-2 py-1.5 text-xs text-text-navy"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[8px] font-bold text-text-muted uppercase tracking-widest mb-1 block">Total</label>
+                          <input 
+                            type="number"
+                            value={newStaff.trainingSummary?.totalModules || 0}
+                            onChange={(e) => setNewStaff({
+                              ...newStaff,
+                              trainingSummary: {
+                                ...(newStaff.trainingSummary as any),
+                                totalModules: parseInt(e.target.value) || 0
+                              }
+                            })}
+                            className="w-full bg-card-bg border border-border-grey rounded-lg px-2 py-1.5 text-xs text-text-navy"
+                          />
+                        </div>
+                      </div>
                     </div>
                     <div>
                       <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2 block">Security PIN (4 digits)</label>
                       <input 
-                        type="password"
+                        type={userRole === 'Admin' ? "text" : "password"}
                         maxLength={4}
                         value={newStaff.pin}
                         onChange={(e) => setNewStaff({ ...newStaff, pin: e.target.value })}
@@ -536,13 +1189,49 @@ export const Settings: React.FC = () => {
                       onClick={handleAddStaff}
                       className="w-full py-4 bg-accent text-white rounded-xl font-bold uppercase tracking-widest text-[10px] shadow-lg shadow-accent/20 hover:opacity-90 transition-all mt-4"
                     >
-                      Create Staff Member
+                      {editingStaffId ? 'Update Staff Member' : 'Create Staff Member'}
                     </button>
                   </div>
                 </motion.div>
               </motion.div>
             )}
           </AnimatePresence>
+        </div>
+      )}
+
+      {activeTab === 'inventory' && (
+        <div className="bg-card-bg shadow-2xl rounded-2xl p-8 border border-border-grey">
+          <h2 className="text-xl font-bold text-text-navy flex items-center mb-6 tracking-tight">
+            <Package className="mr-3 h-7 w-7 text-accent" />
+            Inventory Settings
+          </h2>
+          <div className="space-y-6">
+            <div className="flex items-center justify-between p-6 bg-main-bg rounded-2xl border border-border-grey">
+              <div>
+                <h3 className="font-bold text-text-navy">Allow Negative Stock</h3>
+                <p className="text-[10px] font-bold text-text-muted uppercase tracking-widest mt-1">Allow POS sales even if stock is 0. Items will show in red.</p>
+              </div>
+              <button 
+                onClick={() => toggleInventorySetting('allowNegativeStock')}
+                className={`w-14 h-7 rounded-full transition-all relative ${settings.allowNegativeStock ? 'bg-success' : 'bg-border-grey'}`}
+              >
+                <div className={`absolute top-1 w-5 h-5 bg-white rounded-full transition-all ${settings.allowNegativeStock ? 'left-8' : 'left-1'}`}></div>
+              </button>
+            </div>
+
+            <div className="flex items-center justify-between p-6 bg-main-bg rounded-2xl border border-border-grey">
+              <div>
+                <h3 className="font-bold text-text-navy">Auto-update from Invoices</h3>
+                <p className="text-[10px] font-bold text-text-muted uppercase tracking-widest mt-1">Automatically update stock levels when an invoice is approved.</p>
+              </div>
+              <button 
+                onClick={() => toggleInventorySetting('autoUpdateFromInvoices')}
+                className={`w-14 h-7 rounded-full transition-all relative ${settings.autoUpdateFromInvoices ? 'bg-success' : 'bg-border-grey'}`}
+              >
+                <div className={`absolute top-1 w-5 h-5 bg-white rounded-full transition-all ${settings.autoUpdateFromInvoices ? 'left-8' : 'left-1'}`}></div>
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -576,6 +1265,141 @@ export const Settings: React.FC = () => {
           </div>
         </div>
       )}
+
+      {activeTab === 'system' && (
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-card-bg shadow-2xl rounded-2xl p-8 border border-border-grey"
+        >
+          <h2 className="text-xl font-bold text-text-navy flex items-center mb-4 tracking-tight">
+            <AlertTriangle className="mr-3 h-7 w-7 text-danger" />
+            System Maintenance
+          </h2>
+          <p className="text-[10px] font-bold text-text-muted uppercase tracking-widest mb-8">
+            Critical operations for system management. These actions are destructive and should be used with extreme caution.
+          </p>
+          
+          <div className="p-6 border border-danger/20 rounded-2xl bg-danger/5 flex flex-col">
+            <h3 className="font-bold text-danger mb-2">Reset & Rebuild System</h3>
+            <p className="text-[10px] font-bold text-danger/70 uppercase tracking-widest mb-6 flex-1">
+              This will wipe all existing inventory, recipes, and menu data and rebuild them with a fresh, structured dataset. 
+              Use this only if you want to start over with a clean slate.
+            </p>
+            <Button
+              variant="danger"
+              onClick={handleResetSystem}
+              className="w-full px-6 py-2.5 rounded-xl font-bold uppercase tracking-widest text-[10px] border border-danger/20 text-danger hover:bg-danger/10"
+            >
+              <Trash2 className="mr-2 h-4 w-4" /> Reset & Rebuild Now
+            </Button>
+          </div>
+        </motion.div>
+      )}
+
+      {activeTab === 'logs' && (
+        <div className="bg-card-bg shadow-2xl rounded-2xl p-8 border border-border-grey overflow-hidden">
+          <div className="flex items-center justify-between mb-8">
+            <div>
+              <h2 className="text-xl font-bold text-text-navy flex items-center tracking-tight">
+                <ClipboardCheck className="mr-3 h-7 w-7 text-accent" />
+                Audit Trail & Historical Records
+              </h2>
+              <p className="text-[10px] font-bold text-text-muted uppercase tracking-widest mt-1">
+                Real-time feed of all administrative actions and data modifications.
+              </p>
+            </div>
+            <div className="flex gap-2">
+               <span className="px-3 py-1 bg-success/10 text-success rounded-full text-[10px] font-black uppercase tracking-widest flex items-center gap-1.5 border border-success/20">
+                 <div className="w-1.5 h-1.5 bg-success rounded-full animate-pulse" /> Live Monitoring
+               </span>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto rounded-2xl border border-border-grey">
+            <table className="min-w-full divide-y divide-border-grey">
+              <thead>
+                <tr className="bg-main-bg">
+                  <th className="px-6 py-4 text-left text-[10px] font-bold text-text-muted uppercase tracking-widest">Timestamp</th>
+                  <th className="px-6 py-4 text-left text-[10px] font-bold text-text-muted uppercase tracking-widest">User</th>
+                  <th className="px-6 py-4 text-left text-[10px] font-bold text-text-muted uppercase tracking-widest">Action</th>
+                  <th className="px-6 py-4 text-left text-[10px] font-bold text-text-muted uppercase tracking-widest">Target</th>
+                  <th className="px-6 py-4 text-left text-[10px] font-bold text-text-muted uppercase tracking-widest">Changes</th>
+                </tr>
+              </thead>
+              <tbody className="bg-card-bg divide-y divide-border-grey">
+                {auditLogs.length > 0 ? (
+                  auditLogs.map((log) => (
+                    <tr key={log.id} className="hover:bg-main-bg transition-colors">
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="flex flex-col text-[10px] font-medium text-text-muted">
+                          <span>{new Date(log.timestamp).toLocaleDateString()}</span>
+                          <span className="text-accent font-bold tracking-widest">{new Date(log.timestamp).toLocaleTimeString()}</span>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="flex items-center gap-3">
+                          <div className="w-7 h-7 rounded-full bg-accent/10 flex items-center justify-center text-accent font-black text-[10px]">
+                            {log.userName?.charAt(0).toUpperCase()}
+                          </div>
+                          <span className="text-xs font-bold text-text-navy">{log.userName}</span>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-[0.2em] border ${
+                          log.action === 'CREATE' ? 'bg-success/5 text-success border-success/20' : 
+                          log.action === 'UPDATE' ? 'bg-accent/5 text-accent border-accent/20' : 
+                          'bg-cta/5 text-cta border-cta/20'
+                        }`}>
+                          {log.action}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="flex flex-col">
+                          <span className="text-[8px] font-black text-text-muted uppercase tracking-widest">{log.targetType}</span>
+                          <span className="text-xs font-black text-text-navy">{log.targetName}</span>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="flex flex-col gap-1 max-w-md overflow-hidden text-ellipsis">
+                          {log.action === 'UPDATE' ? (
+                            <span className="text-[10px] font-medium text-text-muted line-clamp-1">
+                              Modified existing {log.targetType.toLowerCase()}
+                            </span>
+                          ) : log.action === 'CREATE' ? (
+                            <span className="text-[10px] font-medium text-success">
+                              Created new entry
+                            </span>
+                          ) : (
+                            <span className="text-[10px] font-medium text-cta">
+                              Removed entry
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={5} className="px-6 py-12 text-center text-text-muted italic text-sm">
+                      No logs found. All future administrative actions will appear here.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      <ConfirmationModal
+        isOpen={confirmModal.isOpen}
+        title={confirmModal.title}
+        message={confirmModal.message}
+        onConfirm={confirmModal.onConfirm}
+        onCancel={() => setConfirmModal(prev => ({ ...prev, isOpen: false }))}
+        variant={confirmModal.variant}
+      />
     </div>
   );
 };

@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { Trash2, Plus, Search, Calendar, User, FileText, Download, Filter, ArrowUpDown, Trash, X } from 'lucide-react';
 import { InventoryItem, WasteRecord, Unit } from '../types';
 import { toast } from 'sonner';
+import { convertToBaseUnit } from '../utils/unitConversions';
 import { jsPDF } from 'jspdf';
 import 'jspdf-autotable';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -12,6 +13,7 @@ interface WasteManagerProps {
   onSaveWaste: (record: WasteRecord) => void;
   onDeleteWaste: (id: string) => void;
   isDarkMode?: boolean;
+  checkPermission: (module: string, action: string) => boolean;
 }
 
 export const WasteManager: React.FC<WasteManagerProps> = ({
@@ -19,7 +21,8 @@ export const WasteManager: React.FC<WasteManagerProps> = ({
   wasteRecords,
   onSaveWaste,
   onDeleteWaste,
-  isDarkMode
+  isDarkMode,
+  checkPermission
 }) => {
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
@@ -55,14 +58,17 @@ export const WasteManager: React.FC<WasteManagerProps> = ({
       return;
     }
 
+    const baseQty = convertToBaseUnit(Number(quantity), selectedItem.unit as Unit, selectedItem.unitSize);
+    
     const newRecord: WasteRecord = {
       id: `waste-${Date.now()}`,
       inventoryItemId: selectedItem.id,
       itemName: selectedItem.name,
       quantity: Number(quantity),
+      baseQuantity: baseQty,
       unit: selectedItem.unit,
       reason,
-      cost: selectedItem.pricePerUnit * Number(quantity),
+      cost: selectedItem.pricePerUnit * baseQty,
       date: new Date().toISOString(),
       staffId: 'current-user', // In a real app, this would be the actual user ID
       staffName: staffName || 'System'
@@ -202,7 +208,9 @@ export const WasteManager: React.FC<WasteManagerProps> = ({
                 <th className="px-6 py-4 text-xs font-bold text-text-muted uppercase tracking-wider">Item</th>
                 <th className="px-6 py-4 text-xs font-bold text-text-muted uppercase tracking-wider">Quantity</th>
                 <th className="px-6 py-4 text-xs font-bold text-text-muted uppercase tracking-wider">Reason</th>
-                <th className="px-6 py-4 text-xs font-bold text-text-muted uppercase tracking-wider">Cost</th>
+                {checkPermission('inventory', 'viewCosts') && (
+                  <th className="px-6 py-4 text-xs font-bold text-text-muted uppercase tracking-wider">Cost</th>
+                )}
                 <th className="px-6 py-4 text-xs font-bold text-text-muted uppercase tracking-wider">Staff</th>
                 <th className="px-6 py-4 text-xs font-bold text-text-muted uppercase tracking-wider text-right">Actions</th>
               </tr>
@@ -229,9 +237,11 @@ export const WasteManager: React.FC<WasteManagerProps> = ({
                         {record.reason}
                       </span>
                     </td>
-                    <td className="px-6 py-4 text-sm font-bold text-cta">
-                      £{record.cost.toFixed(2)}
-                    </td>
+                    {checkPermission('inventory', 'viewCosts') && (
+                      <td className="px-6 py-4 text-sm font-bold text-cta">
+                        £{record.cost.toFixed(2)}
+                      </td>
+                    )}
                     <td className="px-6 py-4 text-sm text-text-muted">
                       {record.staffName || 'N/A'}
                     </td>
@@ -358,7 +368,9 @@ export const WasteManager: React.FC<WasteManagerProps> = ({
                   <div className="p-4 bg-accent/5 rounded-2xl border border-accent/10">
                     <div className="flex justify-between items-center">
                       <span className="text-sm text-text-muted">Estimated Waste Cost:</span>
-                      <span className="text-lg font-bold text-cta">£{(selectedItem.pricePerUnit * Number(quantity)).toFixed(2)}</span>
+                      <span className="text-lg font-bold text-cta">
+                        £{(selectedItem.pricePerUnit * convertToBaseUnit(Number(quantity), selectedItem.unit as Unit, selectedItem.unitSize)).toFixed(2)}
+                      </span>
                     </div>
                   </div>
                 )}

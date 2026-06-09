@@ -1,9 +1,10 @@
 
 import React, { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { InventoryItem, StockCountItem, Unit, StockCountRecord } from '../types';
+import { InventoryItem, StockCountItem, Unit, StockCountRecord, InventoryType, MovementType } from '../types';
 import { Button } from './Button';
 import { analyzeDiscrepancies } from '../services/geminiService';
+import { convertToBaseUnit, convertFromBaseUnit } from '../utils/unitConversions';
 import { jsPDF } from "jspdf";
 import autoTable from 'jspdf-autotable';
 import { Save, FileText, CheckCircle, Clock, History as HistoryIcon, ChevronDown, ChevronUp, Search, ScanBarcode, Camera } from 'lucide-react';
@@ -12,12 +13,13 @@ import { toast } from 'sonner';
 
 interface StockTakingProps {
   items: InventoryItem[];
-  onUpdateInventory: (updates: {id: string, quantity: number}[]) => void;
+  onUpdateInventory: (updates: {id: string, quantity: number}[], type?: MovementType, referenceId?: string) => void;
   history: StockCountRecord[];
   onSaveRecord: (record: StockCountRecord) => void;
+  checkPermission: (module: string, action: string) => boolean;
 }
 
-export const StockTaking: React.FC<StockTakingProps> = ({ items, onUpdateInventory, history, onSaveRecord }) => {
+export const StockTaking: React.FC<StockTakingProps> = ({ items, onUpdateInventory, history, onSaveRecord, checkPermission }) => {
   const [activeTab, setActiveTab] = useState<'new' | 'review' | 'history'>('new');
   
   // Initialize count state with current theoretical stock
@@ -29,13 +31,16 @@ export const StockTaking: React.FC<StockTakingProps> = ({ items, onUpdateInvento
       const newCounts = items.map(item => {
         const existing = prevCounts.find(c => c.itemId === item.id);
         if (existing) {
+          const itemBaseQty = item.quantity || 0;
+          const actualBaseQty = existing.actualQuantity === '' ? itemBaseQty : convertToBaseUnit(Number(existing.actualQuantity), existing.unit as Unit, item.unitSize);
+          const discrepancyBase = actualBaseQty - itemBaseQty;
+          
           return {
             ...existing,
             expectedQuantity: item.quantity,
-            expectedValue: item.quantity * item.pricePerUnit,
-            // Recalculate discrepancy if actualQuantity is already set
-            discrepancy: existing.actualQuantity === '' ? 0 : (Number(existing.actualQuantity) - item.quantity),
-            varianceValue: existing.actualQuantity === '' ? 0 : ((Number(existing.actualQuantity) - item.quantity) * item.pricePerUnit)
+            expectedValue: item.quantity * (item.averageCostBase || item.pricePerUnit),
+            discrepancy: discrepancyBase,
+            varianceValue: discrepancyBase * (item.averageCostBase || item.pricePerUnit)
           };
         }
         return {
@@ -44,9 +49,9 @@ export const StockTaking: React.FC<StockTakingProps> = ({ items, onUpdateInvento
           expectedQuantity: item.quantity,
           actualQuantity: '' as number | '',
           discrepancy: 0,
-          unit: item.unit,
-          expectedValue: item.quantity * item.pricePerUnit,
-          actualValue: item.quantity * item.pricePerUnit,
+          unit: item.unit as Unit,
+          expectedValue: item.quantity * (item.averageCostBase || item.pricePerUnit),
+          actualValue: item.quantity * (item.averageCostBase || item.pricePerUnit),
           varianceValue: 0
         };
       });
@@ -70,14 +75,17 @@ export const StockTaking: React.FC<StockTakingProps> = ({ items, onUpdateInvento
     setCounts(prev => prev.map(c => {
       if (c.itemId === itemId) {
         const item = items.find(i => i.id === itemId);
-        const price = item ? item.pricePerUnit : 0;
-        const actualNum = newVal === '' ? c.expectedQuantity : newVal;
+        const costPerBase = item ? (item.averageCostBase || item.pricePerUnit) : 0;
+        
+        const actualBaseQty = newVal === '' ? c.expectedQuantity : convertToBaseUnit(newVal, c.unit as Unit, item?.unitSize);
+        const discrepancyBase = actualBaseQty - c.expectedQuantity;
+        
         return {
           ...c,
           actualQuantity: newVal,
-          discrepancy: newVal === '' ? 0 : (newVal - c.expectedQuantity),
-          actualValue: actualNum * price,
-          varianceValue: newVal === '' ? 0 : ((newVal - c.expectedQuantity) * price)
+          discrepancy: discrepancyBase,
+          actualValue: actualBaseQty * costPerBase,
+          varianceValue: discrepancyBase * costPerBase
         };
       }
       return c;
@@ -87,9 +95,18 @@ export const StockTaking: React.FC<StockTakingProps> = ({ items, onUpdateInvento
   const handleUnitChange = (itemId: string, newUnit: Unit) => {
     setCounts(prev => prev.map(c => {
       if (c.itemId === itemId) {
+        const item = items.find(i => i.id === itemId);
+        const costPerBase = item ? (item.averageCostBase || item.pricePerUnit) : 0;
+        
+        const actualBaseQty = c.actualQuantity === '' ? c.expectedQuantity : convertToBaseUnit(Number(c.actualQuantity), newUnit, item?.unitSize);
+        const discrepancyBase = actualBaseQty - c.expectedQuantity;
+
         return {
           ...c,
-          unit: newUnit
+          unit: newUnit,
+          discrepancy: discrepancyBase,
+          actualValue: actualBaseQty * costPerBase,
+          varianceValue: discrepancyBase * costPerBase
         };
       }
       return c;
@@ -150,15 +167,22 @@ export const StockTaking: React.FC<StockTakingProps> = ({ items, onUpdateInvento
     doc.text(`Date: ${new Date().toLocaleDateString()}`, 14, 30);
     
     // Add table
-    const tableData = countedItems.map(row => [
-      row.itemName,
-      `${row.expectedQuantity} ${row.unit}`,
-      `${row.actualQuantity} ${row.unit}`,
-      row.discrepancy > 0 ? `+${row.discrepancy} ${row.unit}` : `${row.discrepancy} ${row.unit}`,
-      `£${row.expectedValue.toFixed(2)}`,
-      `£${row.actualValue.toFixed(2)}`,
-      `£${row.varianceValue.toFixed(2)}`
-    ]);
+    const tableData = countedItems.map(row => {
+      const invItem = items.find(i => i.id === row.itemId);
+      const expectedInUnit = convertFromBaseUnit(row.expectedQuantity, row.unit as Unit, invItem?.unitSize);
+      const actualInUnit = row.actualQuantity as number;
+      const varianceInUnit = actualInUnit - expectedInUnit;
+
+      return [
+        row.itemName,
+        `${expectedInUnit.toFixed(2)} ${row.unit}`,
+        `${actualInUnit.toFixed(2)} ${row.unit}`,
+        varianceInUnit > 0 ? `+${varianceInUnit.toFixed(2)} ${row.unit}` : `${varianceInUnit.toFixed(2)} ${row.unit}`,
+        `£${row.expectedValue.toFixed(2)}`,
+        `£${row.actualValue.toFixed(2)}`,
+        `£${row.varianceValue.toFixed(2)}`
+      ];
+    });
 
     autoTable(doc, {
       startY: 40,
@@ -229,23 +253,32 @@ export const StockTaking: React.FC<StockTakingProps> = ({ items, onUpdateInvento
     doc.save(`stock-report-${new Date().toISOString().split('T')[0]}.pdf`);
 
     // 4. Update Global Inventory State (only for counted items)
-    onUpdateInventory(countedItems.map(c => ({ id: c.itemId, quantity: c.actualQuantity as number })));
+    onUpdateInventory(countedItems.map(c => {
+      const invItem = items.find(i => i.id === c.itemId);
+      const actualBaseQty = convertToBaseUnit(Number(c.actualQuantity), c.unit as Unit, invItem?.unitSize);
+      return { id: c.itemId, quantity: actualBaseQty };
+    }), 'ADJUSTMENT', `stocktake-${Date.now()}`);
 
     // 5. Save History Record (save all counted items)
     const newRecord: StockCountRecord = {
       id: Date.now().toString(),
       date: new Date().toISOString(),
       aiAnalysis: analysis,
-      items: countedItems.map(c => ({
-        name: c.itemName,
-        expected: c.expectedQuantity,
-        actual: c.actualQuantity as number,
-        unit: c.unit,
-        variance: c.discrepancy,
-        expectedValue: c.expectedValue,
-        actualValue: c.actualValue,
-        varianceValue: c.varianceValue
-      }))
+      items: countedItems.map(c => {
+        const invItem = items.find(i => i.id === c.itemId);
+        return {
+          itemId: c.itemId,
+          name: c.itemName,
+          expected: c.expectedQuantity,
+          actual: c.actualQuantity as number,
+          unit: c.unit,
+          variance: c.discrepancy,
+          expectedValue: c.expectedValue,
+          actualValue: c.actualValue,
+          varianceValue: c.varianceValue,
+          imageUrl: invItem?.imageUrl
+        };
+      })
     };
     onSaveRecord(newRecord);
     
@@ -351,8 +384,8 @@ export const StockTaking: React.FC<StockTakingProps> = ({ items, onUpdateInvento
                  onChange={(e) => setSelectedDepartment(e.target.value)}
                >
                  <option value="All">All Departments</option>
-                 <option value="Kitchen">Kitchen</option>
-                 <option value="Bar">Bar</option>
+                 <option value="Food">Food</option>
+                 <option value="Beverage">Beverage</option>
                </select>
                <select
                  className="block w-full sm:w-auto bg-main-bg border-border-grey text-text-navy text-[10px] font-bold uppercase tracking-widest rounded-xl py-2.5 pl-4 pr-10 focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent transition-all appearance-none cursor-pointer"
@@ -395,29 +428,45 @@ export const StockTaking: React.FC<StockTakingProps> = ({ items, onUpdateInvento
               <thead className="bg-main-bg">
                 <tr>
                   <th className="px-8 py-4 text-left text-[10px] font-bold text-text-muted uppercase tracking-widest">Item</th>
+                  <th className="px-8 py-4 text-left text-[10px] font-bold text-text-muted uppercase tracking-widest">Expected</th>
                   <th className="px-8 py-4 text-left text-[10px] font-bold text-text-muted uppercase tracking-widest">Actual</th>
                 </tr>
               </thead>
               <tbody className="bg-card-bg divide-y divide-border-grey">
                 {filteredCounts.length === 0 ? (
                   <tr>
-                    <td colSpan={2} className="px-8 py-12 text-center text-text-muted italic">
+                    <td colSpan={3} className="px-8 py-12 text-center text-text-muted italic">
                        No items found matching your search.
                     </td>
                   </tr>
                 ) : (
                   filteredCounts.map((item) => {
                     const invItem = items.find(i => i.id === item.itemId);
+                    const expectedInUnit = convertFromBaseUnit(item.expectedQuantity, item.unit as Unit, invItem?.unitSize);
                     return (
                         <tr key={item.itemId} className="hover:bg-main-bg transition-colors group">
                         <td className="px-8 py-5 whitespace-nowrap">
-                            <div className="text-sm font-bold text-text-navy group-hover:text-accent transition-colors">{item.itemName}</div>
-                            {invItem?.barcode && (
-                                <div className="text-[10px] text-text-muted font-bold uppercase tracking-widest flex items-center mt-1">
-                                    <ScanBarcode className="h-3 w-3 mr-1.5 text-accent" />
-                                    {invItem.barcode}
+                            <div className="flex items-center">
+                                {invItem?.imageUrl && (
+                                    <div className="flex-shrink-0 h-10 w-10 mr-4">
+                                        <img className="h-10 w-10 rounded-lg object-cover shadow-sm border border-border-grey" src={invItem.imageUrl} alt="" referrerPolicy="no-referrer" />
+                                    </div>
+                                )}
+                                <div>
+                                    <div className="text-sm font-bold text-text-navy group-hover:text-accent transition-colors">{item.itemName}</div>
+                                    {invItem?.barcode && (
+                                        <div className="text-[10px] text-text-muted font-bold uppercase tracking-widest flex items-center mt-1">
+                                            <ScanBarcode className="h-3 w-3 mr-1.5 text-accent" />
+                                            {invItem.barcode}
+                                        </div>
+                                    )}
                                 </div>
-                            )}
+                            </div>
+                        </td>
+                        <td className="px-8 py-5 whitespace-nowrap">
+                            <div className="text-sm font-bold text-text-muted">
+                              {expectedInUnit.toFixed(4)} <span className="text-[10px] uppercase tracking-widest">{item.unit}</span>
+                            </div>
                         </td>
                         <td className="px-8 py-5 whitespace-nowrap flex items-center">
                             <input
@@ -427,7 +476,7 @@ export const StockTaking: React.FC<StockTakingProps> = ({ items, onUpdateInvento
                             className="w-28 bg-main-bg border-border-grey rounded-xl px-4 py-2 text-sm text-text-navy focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent transition-all placeholder-text-muted/30"
                             value={item.actualQuantity}
                             onChange={(e) => handleQuantityChange(item.itemId, e.target.value)}
-                            placeholder="0.00"
+                            placeholder="0.0000"
                             /> 
                             <select
                               className="ml-3 bg-main-bg border-border-grey rounded-xl px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-text-muted focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent transition-all appearance-none cursor-pointer"
@@ -467,14 +516,19 @@ export const StockTaking: React.FC<StockTakingProps> = ({ items, onUpdateInvento
                 return (
                   <div key={item.itemId} className="p-6 space-y-4 bg-card-bg">
                     <div className="flex justify-between items-start">
-                      <div>
-                        <div className="text-sm font-bold text-text-navy">{item.itemName}</div>
-                        {invItem?.barcode && (
-                          <div className="text-[10px] text-text-muted font-bold uppercase tracking-widest flex items-center mt-1">
-                            <ScanBarcode className="h-3 w-3 mr-1.5 text-accent" />
-                            {invItem.barcode}
-                          </div>
+                      <div className="flex items-center">
+                        {invItem?.imageUrl && (
+                          <img className="h-12 w-12 rounded-lg object-cover mr-4 shadow-sm border border-border-grey" src={invItem.imageUrl} alt="" referrerPolicy="no-referrer" />
                         )}
+                        <div>
+                          <div className="text-sm font-bold text-text-navy">{item.itemName}</div>
+                          {invItem?.barcode && (
+                            <div className="text-[10px] text-text-muted font-bold uppercase tracking-widest flex items-center mt-1">
+                              <ScanBarcode className="h-3 w-3 mr-1.5 text-accent" />
+                              {invItem.barcode}
+                            </div>
+                          )}
+                        </div>
                       </div>
                       <div className="text-[10px] font-bold text-text-muted uppercase tracking-widest bg-main-bg px-2 py-1 rounded-lg border border-border-grey">
                         Exp: {item.expectedQuantity} {item.unit}
@@ -541,9 +595,13 @@ export const StockTaking: React.FC<StockTakingProps> = ({ items, onUpdateInvento
                   <th className="px-8 py-4 text-left text-[10px] font-bold text-text-muted uppercase tracking-widest">Expected Qty</th>
                   <th className="px-8 py-4 text-left text-[10px] font-bold text-text-muted uppercase tracking-widest">Actual Qty</th>
                   <th className="px-8 py-4 text-left text-[10px] font-bold text-text-muted uppercase tracking-widest">Variance Qty</th>
-                  <th className="px-8 py-4 text-left text-[10px] font-bold text-text-muted uppercase tracking-widest">Expected £</th>
-                  <th className="px-8 py-4 text-left text-[10px] font-bold text-text-muted uppercase tracking-widest">Actual £</th>
-                  <th className="px-8 py-4 text-left text-[10px] font-bold text-text-muted uppercase tracking-widest">Variance £</th>
+                  {checkPermission('inventory', 'viewCosts') && (
+                    <>
+                      <th className="px-8 py-4 text-left text-[10px] font-bold text-text-muted uppercase tracking-widest">Expected £</th>
+                      <th className="px-8 py-4 text-left text-[10px] font-bold text-text-muted uppercase tracking-widest">Actual £</th>
+                      <th className="px-8 py-4 text-left text-[10px] font-bold text-text-muted uppercase tracking-widest">Variance £</th>
+                    </>
+                  )}
                 </tr>
               </thead>
               <tbody className="bg-card-bg divide-y divide-border-grey">
@@ -554,34 +612,52 @@ export const StockTaking: React.FC<StockTakingProps> = ({ items, onUpdateInvento
                     </td>
                   </tr>
                 ) : (
-                  counts.filter(c => Math.abs(c.discrepancy) > 0).map((item) => {
+                  counts.filter(c => Math.abs(c.discrepancy) > 0.0001).map((item) => {
+                    const invItem = items.find(i => i.id === item.itemId);
+                    const expectedInUnit = convertFromBaseUnit(item.expectedQuantity, item.unit as Unit, invItem?.unitSize);
+                    const actualInUnit = item.actualQuantity === '' ? expectedInUnit : Number(item.actualQuantity);
+                    const varianceInUnit = actualInUnit - expectedInUnit;
+
                     return (
                         <tr key={item.itemId} className="hover:bg-main-bg transition-colors">
-                        <td className="px-8 py-5 whitespace-nowrap text-sm font-bold text-text-navy">
-                            {item.itemName}
+                        <td className="px-8 py-5 whitespace-nowrap">
+                            <div className="flex items-center">
+                                {invItem?.imageUrl && (
+                                    <div className="flex-shrink-0 h-10 w-10 mr-4">
+                                        <img className="h-10 w-10 rounded-lg object-cover shadow-sm border border-border-grey" src={invItem.imageUrl} alt="" referrerPolicy="no-referrer" />
+                                    </div>
+                                )}
+                                <div className="text-sm font-bold text-text-navy">
+                                    {item.itemName}
+                                </div>
+                            </div>
                         </td>
                         <td className="px-8 py-5 whitespace-nowrap text-sm text-text-muted">
-                            {item.expectedQuantity} {item.unit}
+                            {expectedInUnit.toFixed(4)} {item.unit}
                         </td>
                         <td className="px-8 py-5 whitespace-nowrap text-sm text-text-navy">
-                            {item.actualQuantity} {item.unit}
+                            {actualInUnit.toFixed(4)} {item.unit}
                         </td>
                         <td className="px-8 py-5 whitespace-nowrap text-sm">
-                            <span className={`font-bold ${item.discrepancy < 0 ? 'text-cta' : item.discrepancy > 0 ? 'text-success' : 'text-text-muted'}`}>
-                            {item.discrepancy > 0 ? `+${item.discrepancy}` : item.discrepancy}
+                            <span className={`font-bold ${varianceInUnit < -0.0001 ? 'text-cta' : varianceInUnit > 0.0001 ? 'text-success' : 'text-text-muted'}`}>
+                            {varianceInUnit > 0.0001 ? `+${varianceInUnit.toFixed(4)}` : varianceInUnit.toFixed(4)}
                             </span>
                         </td>
-                        <td className="px-8 py-5 whitespace-nowrap text-sm text-text-muted">
-                            £{item.expectedValue.toFixed(2)}
-                        </td>
-                        <td className="px-8 py-5 whitespace-nowrap text-sm text-text-navy">
-                            £{item.actualValue.toFixed(2)}
-                        </td>
-                        <td className="px-8 py-5 whitespace-nowrap text-sm">
-                            <span className={`font-bold ${item.varianceValue < 0 ? 'text-cta' : item.varianceValue > 0 ? 'text-success' : 'text-text-muted'}`}>
-                            {item.varianceValue > 0 ? `+£${item.varianceValue.toFixed(2)}` : `-£${Math.abs(item.varianceValue).toFixed(2)}`}
-                            </span>
-                        </td>
+                        {checkPermission('inventory', 'viewCosts') && (
+                          <>
+                            <td className="px-8 py-5 whitespace-nowrap text-sm text-text-muted">
+                                £{item.expectedValue.toFixed(2)}
+                            </td>
+                            <td className="px-8 py-5 whitespace-nowrap text-sm text-text-navy">
+                                £{item.actualValue.toFixed(2)}
+                            </td>
+                            <td className="px-8 py-5 whitespace-nowrap text-sm">
+                                <span className={`font-bold ${item.varianceValue < -0.01 ? 'text-cta' : item.varianceValue > 0.01 ? 'text-success' : 'text-text-muted'}`}>
+                                {item.varianceValue > 0.01 ? `+£${item.varianceValue.toFixed(2)}` : `-£${Math.abs(item.varianceValue).toFixed(2)}`}
+                                </span>
+                            </td>
+                          </>
+                        )}
                         </tr>
                     );
                   })
@@ -592,30 +668,42 @@ export const StockTaking: React.FC<StockTakingProps> = ({ items, onUpdateInvento
 
           {/* Mobile Review View */}
           <div className="sm:hidden divide-y divide-border-grey">
-            {counts.filter(c => Math.abs(c.discrepancy) > 0).length === 0 ? (
+            {counts.filter(c => Math.abs(c.discrepancy) > 0.0001).length === 0 ? (
               <div className="px-8 py-12 text-center text-text-muted italic">
                 No discrepancies found.
               </div>
             ) : (
-              counts.filter(c => Math.abs(c.discrepancy) > 0).map((item) => (
-                <div key={item.itemId} className="p-6 space-y-3 bg-card-bg">
-                  <div className="flex justify-between items-start">
-                    <div className="text-sm font-bold text-text-navy">{item.itemName}</div>
-                    <div className={`text-xs font-bold ${item.varianceValue < 0 ? 'text-cta' : 'text-success'}`}>
-                      {item.varianceValue > 0 ? `+£${item.varianceValue.toFixed(2)}` : `-£${Math.abs(item.varianceValue).toFixed(2)}`}
+              counts.filter(c => Math.abs(c.discrepancy) > 0.0001).map((item) => {
+                const invItem = items.find(i => i.id === item.itemId);
+                const expectedInUnit = convertFromBaseUnit(item.expectedQuantity, item.unit as Unit, invItem?.unitSize);
+                const actualInUnit = item.actualQuantity === '' ? expectedInUnit : Number(item.actualQuantity);
+                const varianceInUnit = actualInUnit - expectedInUnit;
+
+                return (
+                  <div key={item.itemId} className="p-6 space-y-3 bg-card-bg">
+                    <div className="flex justify-between items-start">
+                      <div className="flex items-center">
+                        {invItem?.imageUrl && (
+                          <img className="h-10 w-10 rounded-lg object-cover mr-3 shadow-sm border border-border-grey" src={invItem.imageUrl} alt="" referrerPolicy="no-referrer" />
+                        )}
+                        <div className="text-sm font-bold text-text-navy">{item.itemName}</div>
+                      </div>
+                      <div className={`text-xs font-bold ${item.varianceValue < -0.01 ? 'text-cta' : 'text-success'}`}>
+                        {item.varianceValue > 0.01 ? `+£${item.varianceValue.toFixed(2)}` : `-£${Math.abs(item.varianceValue).toFixed(2)}`}
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3 text-[10px] font-bold text-text-muted uppercase tracking-widest">
+                      <div>Expected: {expectedInUnit.toFixed(2)} {item.unit}</div>
+                      <div>Actual: {actualInUnit.toFixed(2)} {item.unit}</div>
+                      <div className="col-span-2 bg-main-bg p-2 rounded-lg border border-border-grey">
+                        Variance: <span className={varianceInUnit < -0.0001 ? 'text-cta' : 'text-success'}>
+                          {varianceInUnit > 0.0001 ? `+${varianceInUnit.toFixed(2)}` : varianceInUnit.toFixed(2)} {item.unit}
+                        </span>
+                      </div>
                     </div>
                   </div>
-                  <div className="grid grid-cols-2 gap-3 text-[10px] font-bold text-text-muted uppercase tracking-widest">
-                    <div>Expected: {item.expectedQuantity} {item.unit}</div>
-                    <div>Actual: {item.actualQuantity} {item.unit}</div>
-                    <div className="col-span-2 bg-main-bg p-2 rounded-lg border border-border-grey">
-                      Variance: <span className={item.discrepancy < 0 ? 'text-cta' : 'text-success'}>
-                        {item.discrepancy > 0 ? `+${item.discrepancy}` : item.discrepancy} {item.unit}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </div>
@@ -731,7 +819,16 @@ export const StockTaking: React.FC<StockTakingProps> = ({ items, onUpdateInvento
                                  <tbody className="divide-y divide-border-grey">
                                    {record.items.map((item, idx) => (
                                      <tr key={idx} className={Math.abs(item.variance) > 0 ? 'bg-accent/5' : ''}>
-                                       <td className="px-6 py-3 text-sm font-bold text-text-navy">{item.name}</td>
+                                       <td className="px-6 py-3">
+                                         <div className="flex items-center">
+                                           {item.imageUrl && (
+                                             <div className="flex-shrink-0 h-8 w-8 mr-3">
+                                               <img className="h-8 w-8 rounded-lg object-cover shadow-sm border border-border-grey" src={item.imageUrl} alt="" referrerPolicy="no-referrer" />
+                                             </div>
+                                           )}
+                                           <div className="text-sm font-bold text-text-navy">{item.name}</div>
+                                         </div>
+                                       </td>
                                        <td className="px-6 py-3 text-sm text-text-muted">{item.expected} {item.unit}</td>
                                        <td className="px-6 py-3 text-sm text-text-navy">{item.actual} {item.unit}</td>
                                        <td className={`px-6 py-3 text-sm font-bold ${item.variance < 0 ? 'text-cta' : item.variance > 0 ? 'text-success' : 'text-text-muted'}`}>

@@ -1,4 +1,5 @@
-import { GoogleGenAI, Type } from "@google/genai";
+import { getAiClient } from "./services/geminiService";
+import { Type } from "@google/genai";
 
 const ALLERGIES_LIST = [
   'Celery', 'Gluten', 'Crustaceans', 'Eggs', 'Fish', 
@@ -7,10 +8,10 @@ const ALLERGIES_LIST = [
 ];
 
 async function test() {
-  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  const ai = getAiClient();
   const ingredientNames = ['Flour', 'Water', 'Salt', 'Yeast', 'Cheese', 'Tomato Sauce'];
   const response = await ai.models.generateContent({
-    model: "gemini-3-flash-preview",
+    model: "gemini-3.1-flash-lite-preview",
     contents: `Given these ingredients: ${ingredientNames.join(', ')}. Which of the following allergies might be present? ${ALLERGIES_LIST.join(', ')}. Return a JSON object where the keys are the allergy names and the values are arrays of ingredient names that contain that allergy. Only include allergies that are present.`,
     config: {
       responseMimeType: "application/json",

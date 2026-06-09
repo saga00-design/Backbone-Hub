@@ -95,8 +95,8 @@ export const SupplierManager: React.FC<SupplierManagerProps> = ({
       <div className="bg-white dark:bg-slate-900 shadow-2xl rounded-2xl p-8 flex flex-col lg:flex-row justify-between items-center border border-gray-100 dark:border-slate-800 gap-6 transition-colors">
         <div>
           <h2 className="text-2xl font-black text-gray-900 dark:text-white flex items-center tracking-tight uppercase">
-            <div className="bg-blue-50 dark:bg-blue-900/20 p-3 rounded-xl mr-4">
-              <Truck className="h-7 w-7 text-blue-600 dark:text-blue-400" />
+            <div className="bg-accent/10 p-3 rounded-xl mr-4">
+              <Truck className="h-7 w-7 text-accent" />
             </div>
             Supplier Management
           </h2>
@@ -105,17 +105,17 @@ export const SupplierManager: React.FC<SupplierManagerProps> = ({
         <div className="mt-4 lg:mt-0 flex flex-col sm:flex-row gap-4 w-full lg:w-auto">
            <div className="relative rounded-xl shadow-sm w-full sm:w-64 group">
                 <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                    <Search className="h-4 w-4 text-gray-400 group-focus-within:text-blue-500 transition-colors" />
+                    <Search className="h-4 w-4 text-gray-400 group-focus-within:text-accent transition-colors" />
                 </div>
                 <input
                     type="text"
-                    className="bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-900 dark:text-white block w-full pl-11 py-2.5 text-sm rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all placeholder-gray-400 dark:placeholder-slate-600"
+                    className="bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-900 dark:text-white block w-full pl-11 py-2.5 text-sm rounded-xl focus:outline-none focus:ring-2 focus:ring-accent transition-all placeholder-gray-400 dark:placeholder-slate-600"
                     placeholder="Search suppliers..."
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
                 />
            </div>
-          <Button onClick={() => handleOpenModal()} className="px-6 py-2.5 rounded-xl font-black uppercase tracking-widest text-[10px] bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 text-white shadow-lg shadow-blue-500/20">
+          <Button onClick={() => handleOpenModal()} className="px-6 py-2.5 rounded-xl font-black uppercase tracking-widest text-[10px] bg-accent hover:bg-accent/90 text-white shadow-lg shadow-accent/20">
             <Plus className="mr-2 h-4 w-4" />
             Add Supplier
           </Button>
@@ -147,7 +147,7 @@ export const SupplierManager: React.FC<SupplierManagerProps> = ({
                 <div className="p-8 flex-1">
                   <div className="flex justify-between items-start">
                     <div className="flex-1 min-w-0">
-                        <h3 className="text-lg font-black text-gray-900 dark:text-white truncate group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors uppercase tracking-tight">{supplier.name}</h3>
+                        <h3 className="text-lg font-black text-gray-900 dark:text-white truncate group-hover:text-accent transition-colors uppercase tracking-tight">{supplier.name}</h3>
                         {supplier.contactName && <p className="text-[10px] font-bold text-gray-400 dark:text-slate-500 uppercase tracking-widest mt-1">{supplier.contactName}</p>}
                     </div>
                     <div className="flex items-center gap-3 ml-4">
@@ -156,7 +156,7 @@ export const SupplierManager: React.FC<SupplierManagerProps> = ({
                                 {unpaidCount} Unpaid
                             </span>
                         )}
-                        <button onClick={() => handleOpenModal(supplier)} className="text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors">
+                        <button onClick={() => handleOpenModal(supplier)} className="text-gray-400 hover:text-accent transition-colors">
                             <Edit2 className="h-4 w-4" />
                         </button>
                     </div>
@@ -176,19 +176,19 @@ export const SupplierManager: React.FC<SupplierManagerProps> = ({
                   <div className="mt-8 space-y-4">
                     {supplier.email && (
                         <div className="flex items-center text-xs font-bold text-gray-600 dark:text-slate-300">
-                            <Mail className="h-4 w-4 mr-3 text-blue-600 dark:text-blue-400" />
-                            <a href={`mailto:${supplier.email}`} className="hover:text-blue-600 dark:hover:text-blue-400 truncate transition-colors">{supplier.email}</a>
+                            <Mail className="h-4 w-4 mr-3 text-accent" />
+                            <a href={`mailto:${supplier.email}`} className="hover:text-accent truncate transition-colors">{supplier.email}</a>
                         </div>
                     )}
                     {supplier.phone && (
                         <div className="flex items-center text-xs font-bold text-gray-600 dark:text-slate-300">
-                            <Phone className="h-4 w-4 mr-3 text-blue-600 dark:text-blue-400" />
-                            <a href={`tel:${supplier.phone}`} className="hover:text-blue-600 dark:hover:text-blue-400 transition-colors">{supplier.phone}</a>
+                            <Phone className="h-4 w-4 mr-3 text-accent" />
+                            <a href={`tel:${supplier.phone}`} className="hover:text-accent transition-colors">{supplier.phone}</a>
                         </div>
                     )}
                     {supplier.address && (
                         <div className="flex items-start text-xs font-bold text-gray-600 dark:text-slate-300">
-                            <MapPin className="h-4 w-4 mr-3 text-blue-600 dark:text-blue-400 mt-0.5" />
+                            <MapPin className="h-4 w-4 mr-3 text-accent mt-0.5" />
                             <span className="line-clamp-2 text-gray-500 dark:text-slate-400">{supplier.address}</span>
                         </div>
                     )}
@@ -197,7 +197,7 @@ export const SupplierManager: React.FC<SupplierManagerProps> = ({
                   {supplierInvoices.length > 0 && (
                       <div className="mt-8 pt-8 border-t border-gray-100 dark:border-slate-800">
                           <p className="text-[10px] font-black text-gray-400 dark:text-slate-500 uppercase tracking-widest mb-4 flex items-center">
-                              <FileText className="h-3 w-3 mr-2 text-blue-600 dark:text-blue-400" />
+                              <FileText className="h-3 w-3 mr-2 text-accent" />
                               Invoice History
                           </p>
                           <div className="space-y-3 max-h-48 overflow-y-auto pr-2 no-scrollbar">
@@ -231,7 +231,7 @@ export const SupplierManager: React.FC<SupplierManagerProps> = ({
                   {suppliedItems.length > 0 && (
                       <div className="mt-8 pt-8 border-t border-gray-100 dark:border-slate-800">
                           <p className="text-[10px] font-black text-gray-400 dark:text-slate-500 uppercase tracking-widest mb-4 flex items-center">
-                              <Package className="h-3 w-3 mr-2 text-blue-600 dark:text-blue-400" />
+                              <Package className="h-3 w-3 mr-2 text-accent" />
                               Supplied Items ({suppliedItems.length})
                           </p>
                           <div className="flex flex-wrap gap-2">
@@ -250,7 +250,7 @@ export const SupplierManager: React.FC<SupplierManagerProps> = ({
                   )}
                   
                   {supplier.notes && (
-                      <div className="mt-8 bg-blue-50/50 dark:bg-blue-900/10 p-4 rounded-xl text-[10px] font-bold text-blue-600/80 dark:text-blue-400 border border-blue-100/50 dark:border-blue-900/20 italic">
+                      <div className="mt-8 bg-accent/5 p-4 rounded-xl text-[10px] font-bold text-accent/80 border border-accent/10 italic">
                           "{supplier.notes}"
                       </div>
                   )}
@@ -299,7 +299,7 @@ export const SupplierManager: React.FC<SupplierManagerProps> = ({
                       <input
                         type="text"
                         required
-                        className="bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-900 dark:text-white block w-full px-5 py-3.5 text-sm rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all placeholder-gray-400 dark:placeholder-slate-600"
+                        className="bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-900 dark:text-white block w-full px-5 py-3.5 text-sm rounded-xl focus:outline-none focus:ring-2 focus:ring-accent transition-all placeholder-gray-400 dark:placeholder-slate-600"
                         value={editingSupplier.name}
                         onChange={(e) => setEditingSupplier(prev => ({ ...prev, name: e.target.value }))}
                         placeholder="e.g. Fresh Produce Co."
@@ -310,7 +310,7 @@ export const SupplierManager: React.FC<SupplierManagerProps> = ({
                       <label className="block text-[10px] font-black text-gray-400 dark:text-slate-500 uppercase tracking-widest mb-2">Contact Person</label>
                       <input
                         type="text"
-                        className="bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-900 dark:text-white block w-full px-5 py-3.5 text-sm rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all placeholder-gray-400 dark:placeholder-slate-600"
+                        className="bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-900 dark:text-white block w-full px-5 py-3.5 text-sm rounded-xl focus:outline-none focus:ring-2 focus:ring-accent transition-all placeholder-gray-400 dark:placeholder-slate-600"
                         value={editingSupplier.contactName || ''}
                         onChange={(e) => setEditingSupplier(prev => ({ ...prev, contactName: e.target.value }))}
                         placeholder="e.g. John Smith"
@@ -322,7 +322,7 @@ export const SupplierManager: React.FC<SupplierManagerProps> = ({
                         <label className="block text-[10px] font-black text-gray-400 dark:text-slate-500 uppercase tracking-widest mb-2">Email</label>
                         <input
                             type="email"
-                            className="bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-900 dark:text-white block w-full px-5 py-3.5 text-sm rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all placeholder-gray-400 dark:placeholder-slate-600"
+                            className="bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-900 dark:text-white block w-full px-5 py-3.5 text-sm rounded-xl focus:outline-none focus:ring-2 focus:ring-accent transition-all placeholder-gray-400 dark:placeholder-slate-600"
                             value={editingSupplier.email || ''}
                             onChange={(e) => setEditingSupplier(prev => ({ ...prev, email: e.target.value }))}
                             placeholder="orders@vendor.com"
@@ -332,7 +332,7 @@ export const SupplierManager: React.FC<SupplierManagerProps> = ({
                         <label className="block text-[10px] font-black text-gray-400 dark:text-slate-500 uppercase tracking-widest mb-2">Phone</label>
                         <input
                             type="tel"
-                            className="bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-900 dark:text-white block w-full px-5 py-3.5 text-sm rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all placeholder-gray-400 dark:placeholder-slate-600"
+                            className="bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-900 dark:text-white block w-full px-5 py-3.5 text-sm rounded-xl focus:outline-none focus:ring-2 focus:ring-accent transition-all placeholder-gray-400 dark:placeholder-slate-600"
                             value={editingSupplier.phone || ''}
                             onChange={(e) => setEditingSupplier(prev => ({ ...prev, phone: e.target.value }))}
                             placeholder="+44 20 1234 5678"
@@ -344,7 +344,7 @@ export const SupplierManager: React.FC<SupplierManagerProps> = ({
                       <label className="block text-[10px] font-black text-gray-400 dark:text-slate-500 uppercase tracking-widest mb-2">Address</label>
                       <textarea
                         rows={2}
-                        className="bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-900 dark:text-white block w-full px-5 py-3.5 text-sm rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all placeholder-gray-400 dark:placeholder-slate-600 resize-none"
+                        className="bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-900 dark:text-white block w-full px-5 py-3.5 text-sm rounded-xl focus:outline-none focus:ring-2 focus:ring-accent transition-all placeholder-gray-400 dark:placeholder-slate-600 resize-none"
                         value={editingSupplier.address || ''}
                         onChange={(e) => setEditingSupplier(prev => ({ ...prev, address: e.target.value }))}
                         placeholder="123 Market St, London..."
@@ -355,7 +355,7 @@ export const SupplierManager: React.FC<SupplierManagerProps> = ({
                       <label className="block text-[10px] font-black text-gray-400 dark:text-slate-500 uppercase tracking-widest mb-2">Notes</label>
                       <textarea
                         rows={2}
-                        className="bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-900 dark:text-white block w-full px-5 py-3.5 text-sm rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all placeholder-gray-400 dark:placeholder-slate-600 resize-none"
+                        className="bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-900 dark:text-white block w-full px-5 py-3.5 text-sm rounded-xl focus:outline-none focus:ring-2 focus:ring-accent transition-all placeholder-gray-400 dark:placeholder-slate-600 resize-none"
                         value={editingSupplier.notes || ''}
                         onChange={(e) => setEditingSupplier(prev => ({ ...prev, notes: e.target.value }))}
                         placeholder="Payment terms, delivery days, etc."
@@ -364,7 +364,7 @@ export const SupplierManager: React.FC<SupplierManagerProps> = ({
                   </div>
                 </div>
                 <div className="bg-gray-50 dark:bg-slate-800 px-10 py-8 flex flex-col sm:flex-row-reverse gap-4 border-t border-gray-100 dark:border-slate-700">
-                  <Button type="submit" className="w-full sm:w-auto px-10 py-3.5 rounded-xl font-black uppercase tracking-widest text-[10px] bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 text-white shadow-lg shadow-blue-500/20">
+                  <Button type="submit" className="w-full sm:w-auto px-10 py-3.5 rounded-xl font-black uppercase tracking-widest text-[10px] bg-accent hover:bg-accent/90 text-white shadow-lg shadow-accent/20">
                     Save Supplier
                   </Button>
                   <Button type="button" onClick={() => setIsModalOpen(false)} variant="secondary" className="w-full sm:w-auto px-10 py-3.5 rounded-xl font-black uppercase tracking-widest text-[10px] bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800">

@@ -270,7 +270,7 @@ export const ChatBot: React.FC<ChatBotProps> = ({ items, recipes = [] }) => {
               </button>
             </div>
             <p className="mt-2 text-[10px] text-center text-gray-400 font-medium">
-              Powered by Backbone Hub Intelligence
+              Powered by Backbone POS Intelligence
             </p>
           </div>
         </div>

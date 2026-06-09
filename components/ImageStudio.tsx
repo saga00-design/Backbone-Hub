@@ -1,7 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { Button } from './Button';
 import { Upload, Wand2, Download, RefreshCw, Image as ImageIcon } from 'lucide-react';
-import { editInventoryImage } from '../services/geminiService';
+import { editInventoryImage, handleAiError } from '../services/geminiService';
 import { toast } from 'sonner';
 
 export const ImageStudio: React.FC = () => {
@@ -37,7 +37,8 @@ export const ImageStudio: React.FC = () => {
       const result = await editInventoryImage(base64Data, mimeType, prompt);
       setGeneratedImage(result);
     } catch (error) {
-      toast.error("Failed to edit image. Please try again.");
+      const message = handleAiError(error);
+      toast.error(message);
       console.error(error);
     } finally {
       setIsLoading(false);

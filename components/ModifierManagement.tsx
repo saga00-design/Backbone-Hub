@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { InventoryItem, Modifier } from '../types';
 import { Button } from './Button';
 import { Plus, Trash2, Edit2, Search } from 'lucide-react';
-import { db, collection, addDoc, deleteDoc, doc, onSnapshot, handleFirestoreError, OperationType, cleanObject, auth, updateDoc } from '../firebase';
+import { db, collection, addDoc, deleteDoc, doc, onSnapshot, handleFirestoreError, OperationType, cleanObject, auth, updateDoc, query, where, LOCATION_ID } from '../firebase';
+import { logAuditAction } from '../services/auditService';
 
 interface ModifierManagementProps {
   inventoryItems: InventoryItem[];
@@ -29,8 +30,7 @@ export const ModifierManagement: React.FC<ModifierManagementProps> = ({ inventor
 
   useEffect(() => {
     if (!auth.currentUser) return;
-    const userId = auth.currentUser.uid;
-    const unsub = onSnapshot(collection(db, `users/${userId}/modifiers`), (snapshot) => {
+    const unsub = onSnapshot(query(collection(db, 'modifiers'), where('locationId', '==', LOCATION_ID)), (snapshot) => {
       setModifiers(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Modifier)));
     }, (err) => handleFirestoreError(err, OperationType.GET, 'modifiers'));
     return unsub;
@@ -43,13 +43,49 @@ export const ModifierManagement: React.FC<ModifierManagementProps> = ({ inventor
 
   const handleSave = async () => {
     if (!auth.currentUser || !editingModifier.name) return;
-    const userId = auth.currentUser.uid;
     try {
       if (editingModifier.id) {
         const { id, ...data } = editingModifier;
-        await updateDoc(doc(db, `users/${userId}/modifiers`, id!), cleanObject(data));
+        const updatedData = {
+          ...data,
+          locationId: LOCATION_ID,
+          updatedAt: new Date().toISOString()
+        };
+        
+        // Audit log
+        const oldMod = modifiers.find(m => m.id === id);
+        logAuditAction(
+          auth.currentUser.uid,
+          auth.currentUser.displayName || auth.currentUser.email || 'Unknown',
+          'UPDATE',
+          'Modifier',
+          id!,
+          editingModifier.name || 'Unknown',
+          oldMod,
+          updatedData
+        );
+
+        await updateDoc(doc(db, 'modifiers', id!), cleanObject(updatedData));
       } else {
-        await addDoc(collection(db, `users/${userId}/modifiers`), cleanObject(editingModifier));
+        const newMod = {
+          ...editingModifier,
+          locationId: LOCATION_ID,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+        const docRef = await addDoc(collection(db, 'modifiers'), cleanObject(newMod));
+        
+        // Audit log
+        logAuditAction(
+          auth.currentUser.uid,
+          auth.currentUser.displayName || auth.currentUser.email || 'Unknown',
+          'CREATE',
+          'Modifier',
+          docRef.id,
+          editingModifier.name || 'Unknown',
+          null,
+          newMod
+        );
       }
       setIsModalOpen(false);
       setEditingModifier({ name: '', price: 0, inventoryItemId: '', quantity: 1 });
@@ -60,29 +96,40 @@ export const ModifierManagement: React.FC<ModifierManagementProps> = ({ inventor
 
   const handleDelete = async (id: string) => {
     if (!auth.currentUser) return;
-    const userId = auth.currentUser.uid;
+    const modToDelete = modifiers.find(m => m.id === id);
     try {
-      await deleteDoc(doc(db, `users/${userId}/modifiers`, id));
+      await deleteDoc(doc(db, 'modifiers', id));
+      // Audit log
+      logAuditAction(
+        auth.currentUser.uid,
+        auth.currentUser.displayName || auth.currentUser.email || 'Unknown',
+        'DELETE' as any,
+        'Modifier',
+        id,
+        modToDelete?.name || 'Unknown',
+        modToDelete,
+        null
+      );
     } catch (err) {
       handleFirestoreError(err, OperationType.DELETE, `modifiers/${id}`);
     }
   };
 
   return (
-    <div className="p-6 bg-main-bg min-h-full">
-      <div className="flex justify-between items-center mb-8">
-        <h2 className="text-3xl font-bold text-text-navy tracking-tight">Modifier Management</h2>
+    <div className="p-4 sm:p-6 bg-main-bg min-h-full">
+      <div className="flex justify-between items-center mb-6 sm:mb-8">
+        <h2 className="text-2xl sm:text-3xl font-bold text-text-navy tracking-tight">Modifier Management</h2>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
         {modifiers.map(mod => (
-          <div key={mod.id} className="bg-card-bg p-6 rounded-2xl border border-border-grey hover:border-accent/50 transition-all shadow-xl group">
-            <div className="flex justify-between items-start mb-4">
+          <div key={mod.id} className="bg-card-bg p-4 sm:p-6 rounded-2xl border border-border-grey hover:border-accent/50 transition-all shadow-lg group relative">
+            <div className="flex justify-between items-start mb-2 sm:mb-4">
               <div>
-                <h3 className="font-bold text-text-navy text-lg">{mod.name}</h3>
-                <p className="text-sm font-bold text-accent mt-1">£{mod.price.toFixed(2)}</p>
+                <h3 className="font-bold text-text-navy text-base sm:text-lg">{mod.name}</h3>
+                <p className="text-xs sm:text-sm font-bold text-accent mt-0.5 sm:mt-1">£{mod.price.toFixed(2)}</p>
               </div>
-              <div className="flex space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
+              <div className="flex space-x-1 sm:opacity-0 group-hover:opacity-100 transition-opacity">
                 <button onClick={() => handleEdit(mod)} className="p-2 text-accent hover:bg-accent/10 rounded-lg transition-colors">
                   <Edit2 className="w-4 h-4" />
                 </button>
@@ -105,9 +152,9 @@ export const ModifierManagement: React.FC<ModifierManagementProps> = ({ inventor
       </div>
 
       {isModalOpen && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-8 z-50">
-          <div className="bg-card-bg p-8 rounded-3xl w-full max-w-md border border-border-grey shadow-2xl">
-            <h3 className="text-2xl font-bold text-text-navy mb-8">
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 sm:p-8 z-50">
+          <div className="bg-card-bg p-6 sm:p-8 rounded-3xl w-full max-w-md border border-border-grey shadow-2xl overflow-y-auto max-h-[90vh]">
+            <h3 className="text-xl sm:text-2xl font-bold text-text-navy mb-6 sm:mb-8">
               {editingModifier.id ? 'Edit Modifier' : 'Add Modifier'}
             </h3>
             <div className="space-y-4">

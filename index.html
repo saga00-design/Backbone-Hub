@@ -3,10 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-    <title>Backbone Hub</title>
+    <title>Backbone POS</title>
     <meta name="description" content="AI-powered inventory management system for modern kitchens and businesses.">
     <meta name="theme-color" content="#0284c7">
-    <link rel="icon" href="https://lucide.dev/favicon.ico">
+    <link rel="icon" href="Backbonehub-ico.png">
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <script>
@@ -91,6 +91,21 @@
           -ms-overflow-style: none;  /* IE and Edge */
           scrollbar-width: none;  /* Firefox */
       }
+      
+      .custom-scrollbar::-webkit-scrollbar {
+        height: 4px;
+        width: 4px;
+      }
+      .custom-scrollbar::-webkit-scrollbar-track {
+        background: transparent;
+      }
+      .custom-scrollbar::-webkit-scrollbar-thumb {
+        background: #D9DDE3;
+        border-radius: 10px;
+      }
+      .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+        background: #7C8799;
+      }
       .markdown-body h1, .markdown-body h2, .markdown-body h3 { font-weight: 700; margin-top: 0.5rem; margin-bottom: 0.25rem; font-size: 1rem; }
       .markdown-body p { margin-bottom: 0.5rem; line-height: 1.5; }
       .markdown-body ul, .markdown-body ol { margin-left: 1.25rem; margin-bottom: 0.5rem; list-style-type: disc; }
@@ -99,6 +114,15 @@
       .markdown-body code { background: rgba(0,0,0,0.05); padding: 0.1rem 0.2rem; border-radius: 0.2rem; font-family: monospace; }
       
       .dark .markdown-body code { background: rgba(255,255,255,0.1); }
+      
+      /* Fix black background on native select in dark mode */
+      select, select option {
+        background-color: var(--card-bg);
+        color: var(--text-navy);
+      }
+      select:focus {
+        background-color: var(--card-bg);
+      }
       
       /* Smooth transitions for theme switching */
       * {
