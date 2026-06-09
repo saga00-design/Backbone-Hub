@@ -1,5 +1,6 @@
 
 import React, { useState, useEffect, useMemo, Component, ReactNode } from 'react';
+import { initializeSystem } from './services/restaurantService';
 import { Dashboard } from './components/Dashboard';
 import { ConfirmationModal } from './components/ConfirmationModal';
 import { InventoryList } from './components/InventoryList';
@@ -11,18 +12,31 @@ import { MenuRecipes } from './components/MenuRecipes';
 import { TrainingCenter } from './components/TrainingCenter';
 import { SalesImport } from './components/SalesImport';
 import { Reports } from './components/Reports';
+import ManagerMode from './components/ManagerMode';
 import { SupplierManager } from './components/SupplierManager';
-import { POSLayout } from './components/POS/POSLayout';
+import { TableManager } from './components/TableManager';
 import { Settings } from './components/Settings';
 import { Orders } from './components/Orders';
-import { InventoryItem, InventoryCategory, Unit, StockCountRecord, Recipe, SalesImportRecord, Supplier, Order, OrderItem, Invoice, MenuCategory, POSOrder, WasteRecord, ExpenseRecord } from './types';
-import { LayoutDashboard, Package, ClipboardCheck, FileInput, Menu, X, ChefHat, TrendingUp, Truck, Settings as SettingsIcon, BookOpen, Sun, Moon, ShoppingCart, AlertCircle, LogIn, LogOut, Monitor, Trash2, Receipt } from 'lucide-react';
+import { InventoryItem, InventoryCategory, Unit, StockCountRecord, Recipe, SalesImportRecord, Supplier, Order, OrderItem, Invoice, MenuCategory, POSOrder, POSPayment, WasteRecord, ExpenseRecord, MovementType, StockMovement, InventoryType, Table, DailyClosure, Forecast, StaffPerformanceRecord, AppPermissions, StaffCertification, AuditLog, StaffMember, MonthlyTarget, LabourShift } from './types';
+import { logAuditAction } from './services/auditService';
+import { LayoutDashboard, Package, ClipboardCheck, FileInput, Menu, X, ChefHat, TrendingUp, Truck, Settings as SettingsIcon, BookOpen, Sun, Moon, ShoppingCart, AlertCircle, LogIn, LogOut, Trash2, Receipt, Megaphone, LayoutList, Zap, PoundSterling, Users } from 'lucide-react';
 import { Toaster, toast } from 'sonner';
-import { auth, db, googleProvider, signInWithPopup, onAuthStateChanged, collection, doc, setDoc, updateDoc, deleteDoc, onSnapshot, handleFirestoreError, OperationType, User, cleanObject } from './firebase';
+import { auth, db, googleProvider, signInWithPopup, onAuthStateChanged, collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, onSnapshot, handleFirestoreError, OperationType, User, cleanObject, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendEmailVerification, sendPasswordResetEmail, signOut, increment, query, where, orderBy, limit, testConnection, LOCATION_ID, writeBatch } from './firebase';
+import { DEFAULT_PERMISSIONS } from './constants';
 import { calculateTotalCost } from './utils/recipeUtils';
+import { convertToBaseUnit, CONVERSION_FACTORS } from './utils/unitConversions';
+import { normalizeCurrency, normalizeTimestamp, normalizeStatus } from './utils/currencyUtils';
 
+import { LivePOS } from './components/LivePOS';
 import { WasteManager } from './components/WasteManager';
 import { ExpenseManager } from './components/ExpenseManager';
+import { ShiftBriefingManager } from './components/ShiftBriefingManager';
+import { POSDashboard } from './components/POSDashboard';
+import { FinancialCommandCenter } from './components/FinancialCommandCenter';
+import { LabourIntelligence } from './components/LabourIntelligence';
+import { StaffingRotaHub } from './components/StaffingRotaHub';
+import { HardHat } from 'lucide-react';
+
 
 // Error Boundary Component
 interface ErrorBoundaryProps {
@@ -99,39 +113,40 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
 // Mock Data
 const INITIAL_ITEMS: InventoryItem[] = [
   // 20 Ingredients
-  { id: 'i1', name: 'Premium Flour', category: 'Ingredient', subCategory: 'Dry Goods', department: 'Kitchen', quantity: 50, unit: 'kg', minStockLevel: 20, pricePerUnit: 2.5, lastUpdated: '2023-10-25', supplier: 'GrainMaster' },
-  { id: 'i2', name: 'Olive Oil', category: 'Ingredient', subCategory: 'Oils & Fats', department: 'Kitchen', quantity: 12, unit: 'L', minStockLevel: 15, pricePerUnit: 18.0, lastUpdated: '2023-10-24', supplier: 'Mediterranean Imports' },
-  { id: 'i3', name: 'Whole Milk', category: 'Ingredient', subCategory: 'Dairy', department: 'Kitchen', quantity: 4, unit: 'L', minStockLevel: 10, pricePerUnit: 1.5, lastUpdated: '2023-10-26', supplier: 'Local Dairy' },
-  { id: 'i4', name: 'Fresh Basil', category: 'Ingredient', subCategory: 'Produce', department: 'Kitchen', quantity: 0.5, unit: 'kg', minStockLevel: 1, pricePerUnit: 22.0, lastUpdated: '2023-10-26', supplier: 'FarmFresh' },
-  { id: 'i5', name: 'Tomato Sauce', category: 'Ingredient', subCategory: 'Canned Goods', department: 'Kitchen', quantity: 20, unit: 'L', minStockLevel: 10, pricePerUnit: 3.5, lastUpdated: '2023-10-25', supplier: 'FarmFresh' },
-  { id: 'i6', name: 'Mozzarella Cheese', category: 'Ingredient', subCategory: 'Dairy', department: 'Kitchen', quantity: 15, unit: 'kg', minStockLevel: 5, pricePerUnit: 8.0, lastUpdated: '2023-10-25', supplier: 'Local Dairy' },
-  { id: 'i7', name: 'Chicken Breast', category: 'Ingredient', subCategory: 'Meat', department: 'Kitchen', quantity: 25, unit: 'kg', minStockLevel: 10, pricePerUnit: 6.5, lastUpdated: '2023-10-25', supplier: 'FarmFresh' },
-  { id: 'i8', name: 'Beef Mince', category: 'Ingredient', subCategory: 'Meat', department: 'Kitchen', quantity: 10, unit: 'kg', minStockLevel: 5, pricePerUnit: 7.5, lastUpdated: '2023-10-25', supplier: 'FarmFresh' },
-  { id: 'i9', name: 'Onions', category: 'Ingredient', subCategory: 'Produce', department: 'Kitchen', quantity: 30, unit: 'kg', minStockLevel: 10, pricePerUnit: 1.2, lastUpdated: '2023-10-25', supplier: 'FarmFresh' },
-  { id: 'i10', name: 'Garlic', category: 'Ingredient', subCategory: 'Produce', department: 'Kitchen', quantity: 5, unit: 'kg', minStockLevel: 2, pricePerUnit: 4.0, lastUpdated: '2023-10-25', supplier: 'FarmFresh' },
-  { id: 'i11', name: 'Spaghetti', category: 'Ingredient', subCategory: 'Dry Goods', department: 'Kitchen', quantity: 40, unit: 'kg', minStockLevel: 15, pricePerUnit: 2.0, lastUpdated: '2023-10-25', supplier: 'GrainMaster' },
-  { id: 'i12', name: 'Eggs', category: 'Ingredient', subCategory: 'Dairy', department: 'Kitchen', quantity: 300, unit: 'pcs', minStockLevel: 100, pricePerUnit: 0.2, lastUpdated: '2023-10-25', supplier: 'Local Dairy' },
-  { id: 'i13', name: 'Butter', category: 'Ingredient', subCategory: 'Dairy', department: 'Kitchen', quantity: 10, unit: 'kg', minStockLevel: 3, pricePerUnit: 5.5, lastUpdated: '2023-10-25', supplier: 'Local Dairy' },
-  { id: 'i14', name: 'Sugar', category: 'Ingredient', subCategory: 'Dry Goods', department: 'Kitchen', quantity: 20, unit: 'kg', minStockLevel: 5, pricePerUnit: 1.5, lastUpdated: '2023-10-25', supplier: 'GrainMaster' },
-  { id: 'i15', name: 'Salt', category: 'Ingredient', subCategory: 'Dry Goods', department: 'Kitchen', quantity: 10, unit: 'kg', minStockLevel: 2, pricePerUnit: 0.8, lastUpdated: '2023-10-25', supplier: 'GrainMaster' },
-  { id: 'i16', name: 'Black Pepper', category: 'Ingredient', subCategory: 'Dry Goods', department: 'Kitchen', quantity: 2, unit: 'kg', minStockLevel: 0.5, pricePerUnit: 15.0, lastUpdated: '2023-10-25', supplier: 'GrainMaster' },
-  { id: 'i17', name: 'Parmesan Cheese', category: 'Ingredient', subCategory: 'Dairy', department: 'Kitchen', quantity: 5, unit: 'kg', minStockLevel: 2, pricePerUnit: 18.0, lastUpdated: '2023-10-25', supplier: 'Local Dairy' },
-  { id: 'i18', name: 'Bacon', category: 'Ingredient', subCategory: 'Meat', department: 'Kitchen', quantity: 8, unit: 'kg', minStockLevel: 3, pricePerUnit: 9.0, lastUpdated: '2023-10-25', supplier: 'FarmFresh' },
-  { id: 'i19', name: 'Heavy Cream', category: 'Ingredient', subCategory: 'Dairy', department: 'Kitchen', quantity: 10, unit: 'L', minStockLevel: 3, pricePerUnit: 4.5, lastUpdated: '2023-10-25', supplier: 'Local Dairy' },
-  { id: 'i20', name: 'Mushrooms', category: 'Ingredient', subCategory: 'Produce', department: 'Kitchen', quantity: 6, unit: 'kg', minStockLevel: 2, pricePerUnit: 5.0, lastUpdated: '2023-10-25', supplier: 'FarmFresh' },
-  // Bar Items
-  { id: 'i21', name: 'Jose Cuervo Tequila', category: 'Ingredient', subCategory: 'Spirits - Tequila', department: 'Bar', quantity: 5, unit: 'bottles', minStockLevel: 2, pricePerUnit: 25.0, lastUpdated: '2023-10-25', supplier: 'BarSupply' },
-  { id: 'i22', name: 'Grey Goose Vodka', category: 'Ingredient', subCategory: 'Spirits - Vodka', department: 'Bar', quantity: 8, unit: 'bottles', minStockLevel: 3, pricePerUnit: 35.0, lastUpdated: '2023-10-25', supplier: 'BarSupply' },
-  { id: 'i23', name: 'Jameson Whiskey', category: 'Ingredient', subCategory: 'Spirits - Whiskey', department: 'Bar', quantity: 10, unit: 'bottles', minStockLevel: 4, pricePerUnit: 30.0, lastUpdated: '2023-10-25', supplier: 'BarSupply' },
-  { id: 'i24', name: 'Tanqueray Gin', category: 'Ingredient', subCategory: 'Spirits - Gin', department: 'Bar', quantity: 6, unit: 'bottles', minStockLevel: 2, pricePerUnit: 28.0, lastUpdated: '2023-10-25', supplier: 'BarSupply' },
-  { id: 'i25', name: 'Bacardi Rum', category: 'Ingredient', subCategory: 'Spirits - Rum', department: 'Bar', quantity: 12, unit: 'bottles', minStockLevel: 5, pricePerUnit: 22.0, lastUpdated: '2023-10-25', supplier: 'BarSupply' },
+  { id: 'i1', name: 'Premium Flour', category: 'Ingredient', subCategory: 'Dry Goods', department: 'Food', inventoryType: 'SOLID', baseUnit: 'g', quantity: 50000, unit: 'kg', unitSize: 1000, packaging: 'bag', minStockLevel: 20000, pricePerUnit: 0.0025, lastUpdated: '2023-10-25', supplier: 'GrainMaster', isActive: true },
+  { id: 'i2', name: 'Olive Oil', category: 'Ingredient', subCategory: 'Oils & Fats', department: 'Food', inventoryType: 'LIQUID', baseUnit: 'ml', quantity: 12000, unit: 'L', unitSize: 1000, packaging: 'bottle', minStockLevel: 15000, pricePerUnit: 0.018, lastUpdated: '2023-10-24', supplier: 'Mediterranean Imports', isActive: true },
+  { id: 'i3', name: 'Whole Milk', category: 'Ingredient', subCategory: 'Dairy', department: 'Food', inventoryType: 'LIQUID', baseUnit: 'ml', quantity: 4000, unit: 'L', unitSize: 1000, packaging: 'bottle', minStockLevel: 10000, pricePerUnit: 0.0015, lastUpdated: '2023-10-26', supplier: 'Local Dairy', isActive: true },
+  { id: 'i4', name: 'Fresh Basil', category: 'Ingredient', subCategory: 'Produce', department: 'Food', inventoryType: 'SOLID', baseUnit: 'g', quantity: 500, unit: 'kg', unitSize: 1000, minStockLevel: 1000, pricePerUnit: 0.022, lastUpdated: '2023-10-26', supplier: 'FarmFresh', isActive: true },
+  { id: 'i5', name: 'Tomato Sauce', category: 'Ingredient', subCategory: 'Canned Goods', department: 'Food', inventoryType: 'LIQUID', baseUnit: 'ml', quantity: 20000, unit: 'L', unitSize: 1000, minStockLevel: 10000, pricePerUnit: 0.0035, lastUpdated: '2023-10-25', supplier: 'FarmFresh', isActive: true },
+  { id: 'i6', name: 'Mozzarella Cheese', category: 'Ingredient', subCategory: 'Dairy', department: 'Food', inventoryType: 'SOLID', baseUnit: 'g', quantity: 15000, unit: 'kg', unitSize: 1000, minStockLevel: 5000, pricePerUnit: 0.008, lastUpdated: '2023-10-25', supplier: 'Local Dairy', isActive: true },
+  { id: 'i7', name: 'Chicken Breast', category: 'Ingredient', subCategory: 'Meat', department: 'Food', inventoryType: 'SOLID', baseUnit: 'g', quantity: 25000, unit: 'kg', unitSize: 1000, minStockLevel: 10000, pricePerUnit: 0.0065, lastUpdated: '2023-10-25', supplier: 'FarmFresh', isActive: true },
+  { id: 'i8', name: 'Beef Mince', category: 'Ingredient', subCategory: 'Meat', department: 'Food', inventoryType: 'SOLID', baseUnit: 'g', quantity: 10000, unit: 'kg', unitSize: 1000, minStockLevel: 5000, pricePerUnit: 0.0075, lastUpdated: '2023-10-25', supplier: 'FarmFresh', isActive: true },
+  { id: 'i9', name: 'Onions', category: 'Ingredient', subCategory: 'Produce', department: 'Food', inventoryType: 'SOLID', baseUnit: 'g', quantity: 30000, unit: 'kg', unitSize: 1000, minStockLevel: 10000, pricePerUnit: 0.0012, lastUpdated: '2023-10-25', supplier: 'FarmFresh', isActive: true },
+  { id: 'i10', name: 'Garlic', category: 'Ingredient', subCategory: 'Produce', department: 'Food', inventoryType: 'SOLID', baseUnit: 'g', quantity: 5000, unit: 'kg', unitSize: 1000, minStockLevel: 2000, pricePerUnit: 0.004, lastUpdated: '2023-10-25', supplier: 'FarmFresh', isActive: true },
+  { id: 'i11', name: 'Spaghetti', category: 'Ingredient', subCategory: 'Dry Goods', department: 'Food', inventoryType: 'SOLID', baseUnit: 'g', quantity: 40000, unit: 'kg', unitSize: 1000, minStockLevel: 15000, pricePerUnit: 0.002, lastUpdated: '2023-10-25', supplier: 'GrainMaster', isActive: true },
+  { id: 'i12', name: 'Eggs', category: 'Ingredient', subCategory: 'Dairy', department: 'Food', inventoryType: 'UNIT', baseUnit: 'pcs', quantity: 300, unit: 'pcs', unitSize: 1, minStockLevel: 100, pricePerUnit: 0.2, lastUpdated: '2023-10-25', supplier: 'Local Dairy', isActive: true },
+  { id: 'i13', name: 'Butter', category: 'Ingredient', subCategory: 'Dairy', department: 'Food', inventoryType: 'SOLID', baseUnit: 'g', quantity: 10000, unit: 'kg', unitSize: 1000, minStockLevel: 3000, pricePerUnit: 0.0055, lastUpdated: '2023-10-25', supplier: 'Local Dairy', isActive: true },
+  { id: 'i14', name: 'Sugar', category: 'Ingredient', subCategory: 'Dry Goods', department: 'Food', inventoryType: 'SOLID', baseUnit: 'g', quantity: 20000, unit: 'kg', unitSize: 1000, minStockLevel: 5000, pricePerUnit: 0.0015, lastUpdated: '2023-10-25', supplier: 'GrainMaster', isActive: true },
+  { id: 'i15', name: 'Salt', category: 'Ingredient', subCategory: 'Dry Goods', department: 'Food', inventoryType: 'SOLID', baseUnit: 'g', quantity: 10000, unit: 'kg', unitSize: 1000, minStockLevel: 2000, pricePerUnit: 0.0008, lastUpdated: '2023-10-25', supplier: 'GrainMaster', isActive: true },
+  { id: 'i16', name: 'Black Pepper', category: 'Ingredient', subCategory: 'Dry Goods', department: 'Food', inventoryType: 'SOLID', baseUnit: 'g', quantity: 2000, unit: 'kg', unitSize: 1000, minStockLevel: 500, pricePerUnit: 0.015, lastUpdated: '2023-10-25', supplier: 'GrainMaster', isActive: true },
+  { id: 'i17', name: 'Parmesan Cheese', category: 'Ingredient', subCategory: 'Dairy', department: 'Food', inventoryType: 'SOLID', baseUnit: 'g', quantity: 5000, unit: 'kg', unitSize: 1000, minStockLevel: 2000, pricePerUnit: 0.018, lastUpdated: '2023-10-25', supplier: 'Local Dairy', isActive: true },
+  { id: 'i18', name: 'Bacon', category: 'Ingredient', subCategory: 'Meat', department: 'Food', inventoryType: 'SOLID', baseUnit: 'g', quantity: 8000, unit: 'kg', unitSize: 1000, minStockLevel: 3000, pricePerUnit: 0.009, lastUpdated: '2023-10-25', supplier: 'FarmFresh', isActive: true },
+  { id: 'i19', name: 'Arroz', category: 'Ingredient', subCategory: 'Dry Goods', department: 'Food', inventoryType: 'SOLID', baseUnit: 'g', quantity: 15000, unit: 'kg', unitSize: 1000, packaging: 'bag', minStockLevel: 5000, pricePerUnit: 0.0025, lastUpdated: '2023-10-27', supplier: 'GrainMaster', isActive: true },
+  { id: 'i20', name: 'Heavy Cream', category: 'Ingredient', subCategory: 'Dairy', department: 'Food', inventoryType: 'LIQUID', baseUnit: 'ml', quantity: 10000, unit: 'L', unitSize: 1000, minStockLevel: 3000, pricePerUnit: 0.0045, lastUpdated: '2023-10-25', supplier: 'Local Dairy', isActive: true },
+  { id: 'i21', name: 'Mushrooms', category: 'Ingredient', subCategory: 'Produce', department: 'Food', inventoryType: 'SOLID', baseUnit: 'g', quantity: 6000, unit: 'kg', unitSize: 1000, minStockLevel: 2000, pricePerUnit: 0.005, lastUpdated: '2023-10-25', supplier: 'FarmFresh', isActive: true },
+  // Beverage Items
+  { id: 'i22', name: 'Jose Cuervo Tequila', category: 'Ingredient', subCategory: 'Spirits - Tequila', department: 'Beverage', inventoryType: 'LIQUID', baseUnit: 'ml', quantity: 3500, unit: 'bottles', unitSize: 700, minStockLevel: 1400, pricePerUnit: 0.0357, lastUpdated: '2023-10-25', supplier: 'BarSupply', isActive: true },
+  { id: 'i23', name: 'Grey Goose Vodka', category: 'Ingredient', subCategory: 'Spirits - Vodka', department: 'Beverage', inventoryType: 'LIQUID', baseUnit: 'ml', quantity: 5600, unit: 'bottles', unitSize: 700, minStockLevel: 2100, pricePerUnit: 0.05, lastUpdated: '2023-10-25', supplier: 'BarSupply', isActive: true },
+  { id: 'i24', name: 'Jameson Whiskey', category: 'Ingredient', subCategory: 'Spirits - Whiskey', department: 'Beverage', inventoryType: 'LIQUID', baseUnit: 'ml', quantity: 7000, unit: 'bottles', unitSize: 700, minStockLevel: 2800, pricePerUnit: 0.0428, lastUpdated: '2023-10-25', supplier: 'BarSupply', isActive: true },
+  { id: 'i25', name: 'Tanqueray Gin', category: 'Ingredient', subCategory: 'Spirits - Gin', department: 'Beverage', inventoryType: 'LIQUID', baseUnit: 'ml', quantity: 4200, unit: 'bottles', unitSize: 700, minStockLevel: 1400, pricePerUnit: 0.04, lastUpdated: '2023-10-25', supplier: 'BarSupply', isActive: true },
+  { id: 'i26', name: 'Bacardi Rum', category: 'Ingredient', subCategory: 'Spirits - Rum', department: 'Beverage', inventoryType: 'LIQUID', baseUnit: 'ml', quantity: 8400, unit: 'bottles', unitSize: 700, minStockLevel: 3500, pricePerUnit: 0.0314, lastUpdated: '2023-10-25', supplier: 'BarSupply', isActive: true },
   // Keep existing non-ingredients
-  { id: '5', name: 'Chef Knife', category: 'Utensil', subCategory: 'Knives', department: 'Kitchen', quantity: 8, unit: 'pcs', minStockLevel: 10, pricePerUnit: 45.0, lastUpdated: '2023-09-15', supplier: 'KitchenPro', totalOwned: 10, brokenQuantity: 2 },
-  { id: '6', name: 'Mixing Bowl (L)', category: 'Utensil', subCategory: 'Prep Tools', department: 'Kitchen', quantity: 15, unit: 'pcs', minStockLevel: 10, pricePerUnit: 12.0, lastUpdated: '2023-09-15', supplier: 'KitchenPro' },
-  { id: '7', name: 'Stand Mixer', category: 'Equipment', subCategory: 'Appliances', department: 'Kitchen', quantity: 3, unit: 'pcs', minStockLevel: 3, pricePerUnit: 350.0, lastUpdated: '2023-01-10', supplier: 'TechChef', totalOwned: 3, brokenQuantity: 0 },
-  { id: '8', name: 'Dinner Plate (10")', category: 'Crockery', subCategory: 'Plates', department: 'Restaurant', quantity: 42, unit: 'pcs', minStockLevel: 40, pricePerUnit: 8.5, lastUpdated: '2023-09-01', supplier: 'RestoSupply', totalOwned: 50, brokenQuantity: 8 },
-  { id: '9', name: 'Soup Bowl', category: 'Crockery', subCategory: 'Bowls', department: 'Restaurant', quantity: 28, unit: 'pcs', minStockLevel: 30, pricePerUnit: 6.0, lastUpdated: '2023-09-01', supplier: 'RestoSupply', totalOwned: 30, brokenQuantity: 2 },
-  { id: '10', name: 'Wine Glass', category: 'Crockery', subCategory: 'Glassware', department: 'Bar', quantity: 35, unit: 'pcs', minStockLevel: 40, pricePerUnit: 4.5, lastUpdated: '2023-09-10', supplier: 'GlassMasters', totalOwned: 48, brokenQuantity: 13 },
+  { id: '5', name: 'Chef Knife', category: 'Utensil', subCategory: 'Knives', department: 'Food', inventoryType: 'UNIT', baseUnit: 'pcs', quantity: 8, unit: 'pcs', unitSize: 1, minStockLevel: 10, pricePerUnit: 45.0, lastUpdated: '2023-09-15', supplier: 'KitchenPro', totalOwned: 10, brokenQuantity: 2, isActive: true },
+  { id: '6', name: 'Mixing Bowl (L)', category: 'Utensil', subCategory: 'Prep Tools', department: 'Food', inventoryType: 'UNIT', baseUnit: 'pcs', quantity: 15, unit: 'pcs', unitSize: 1, minStockLevel: 10, pricePerUnit: 12.0, lastUpdated: '2023-09-15', supplier: 'KitchenPro', isActive: true },
+  { id: '7', name: 'Stand Mixer', category: 'Equipment', subCategory: 'Appliances', department: 'Food', inventoryType: 'UNIT', baseUnit: 'pcs', quantity: 3, unit: 'pcs', unitSize: 1, minStockLevel: 3, pricePerUnit: 350.0, lastUpdated: '2023-01-10', supplier: 'TechChef', totalOwned: 3, brokenQuantity: 0, isActive: true },
+  { id: '8', name: 'Dinner Plate (10")', category: 'Crockery', subCategory: 'Plates', department: 'Restaurant', inventoryType: 'UNIT', baseUnit: 'pcs', quantity: 42, unit: 'pcs', unitSize: 1, minStockLevel: 40, pricePerUnit: 8.5, lastUpdated: '2023-09-01', supplier: 'RestoSupply', totalOwned: 50, brokenQuantity: 8, isActive: true },
+  { id: '9', name: 'Soup Bowl', category: 'Crockery', subCategory: 'Bowls', department: 'Restaurant', inventoryType: 'UNIT', baseUnit: 'pcs', quantity: 28, unit: 'pcs', unitSize: 1, minStockLevel: 30, pricePerUnit: 6.0, lastUpdated: '2023-09-01', supplier: 'RestoSupply', totalOwned: 30, brokenQuantity: 2, isActive: true },
+  { id: '10', name: 'Wine Glass', category: 'Crockery', subCategory: 'Glassware', department: 'Beverage', inventoryType: 'UNIT', baseUnit: 'pcs', quantity: 35, unit: 'pcs', unitSize: 1, minStockLevel: 40, pricePerUnit: 4.5, lastUpdated: '2023-09-10', supplier: 'GlassMasters', totalOwned: 48, brokenQuantity: 13, isActive: true },
 ];
 
 const INITIAL_SUPPLIERS: Supplier[] = [
@@ -148,94 +163,94 @@ const INITIAL_RECIPES: Recipe[] = [
   {
     id: 'b1', name: 'Pizza Dough Batch', description: 'Standard pizza dough', type: 'recipe', category: 'Food', sellingPrice: 0,
     yieldAmount: 10, yieldUnit: 'kg', calories: 25000, lastUpdated: '2023-10-28',
-    ingredients: [ { inventoryItemId: 'i1', quantity: 6, unit: 'kg' }, { inventoryItemId: 'i2', quantity: 0.5, unit: 'L' }, { inventoryItemId: 'i15', quantity: 0.1, unit: 'kg' } ]
+    ingredients: [ { inventoryItemId: 'i1', quantity: 6, unit: 'kg', baseQuantity: 6000 }, { inventoryItemId: 'i2', quantity: 0.5, unit: 'L', baseQuantity: 500 }, { inventoryItemId: 'i15', quantity: 0.1, unit: 'kg', baseQuantity: 100 } ]
   },
   {
     id: 'b2', name: 'Tomato Sauce Batch', description: 'Base tomato sauce for pizza and pasta', type: 'recipe', category: 'Food', sellingPrice: 0,
     yieldAmount: 20, yieldUnit: 'L', calories: 8000, lastUpdated: '2023-10-28',
-    ingredients: [ { inventoryItemId: 'i5', quantity: 18, unit: 'L' }, { inventoryItemId: 'i2', quantity: 1, unit: 'L' }, { inventoryItemId: 'i10', quantity: 0.5, unit: 'kg' }, { inventoryItemId: 'i9', quantity: 2, unit: 'kg' } ]
+    ingredients: [ { inventoryItemId: 'i5', quantity: 18, unit: 'L', baseQuantity: 18000 }, { inventoryItemId: 'i2', quantity: 1, unit: 'L', baseQuantity: 1000 }, { inventoryItemId: 'i10', quantity: 0.5, unit: 'kg', baseQuantity: 500 }, { inventoryItemId: 'i9', quantity: 2, unit: 'kg', baseQuantity: 2000 } ]
   },
   {
     id: 'b3', name: 'Bolognese Sauce Batch', description: 'Rich meat sauce', type: 'recipe', category: 'Food', sellingPrice: 0,
     yieldAmount: 15, yieldUnit: 'L', calories: 15000, lastUpdated: '2023-10-28',
-    ingredients: [ { inventoryItemId: 'i8', quantity: 5, unit: 'kg' }, { inventoryItemId: 'i5', quantity: 8, unit: 'L' }, { inventoryItemId: 'i9', quantity: 1, unit: 'kg' }, { inventoryItemId: 'i10', quantity: 0.2, unit: 'kg' } ]
+    ingredients: [ { inventoryItemId: 'i8', quantity: 5, unit: 'kg', baseQuantity: 5000 }, { inventoryItemId: 'i5', quantity: 8, unit: 'L', baseQuantity: 8000 }, { inventoryItemId: 'i9', quantity: 1, unit: 'kg', baseQuantity: 1000 }, { inventoryItemId: 'i10', quantity: 0.2, unit: 'kg', baseQuantity: 200 } ]
   },
   {
     id: 'b4', name: 'Carbonara Sauce Batch', description: 'Creamy bacon sauce', type: 'recipe', category: 'Food', sellingPrice: 0,
     yieldAmount: 5, yieldUnit: 'L', calories: 12000, lastUpdated: '2023-10-28',
-    ingredients: [ { inventoryItemId: 'i19', quantity: 3, unit: 'L' }, { inventoryItemId: 'i18', quantity: 1, unit: 'kg' }, { inventoryItemId: 'i17', quantity: 0.5, unit: 'kg' }, { inventoryItemId: 'i12', quantity: 10, unit: 'pcs' } ]
+    ingredients: [ { inventoryItemId: 'i19', quantity: 3, unit: 'L', baseQuantity: 3000 }, { inventoryItemId: 'i18', quantity: 1, unit: 'kg', baseQuantity: 1000 }, { inventoryItemId: 'i17', quantity: 0.5, unit: 'kg', baseQuantity: 500 }, { inventoryItemId: 'i12', quantity: 10, unit: 'pcs', baseQuantity: 10 } ]
   },
   {
     id: 'b5', name: 'Mushroom Soup Batch', description: 'Creamy mushroom soup', type: 'recipe', category: 'Food', sellingPrice: 0,
     yieldAmount: 10, yieldUnit: 'L', calories: 6000, lastUpdated: '2023-10-28',
-    ingredients: [ { inventoryItemId: 'i20', quantity: 3, unit: 'kg' }, { inventoryItemId: 'i19', quantity: 2, unit: 'L' }, { inventoryItemId: 'i9', quantity: 1, unit: 'kg' }, { inventoryItemId: 'i13', quantity: 0.5, unit: 'kg' } ]
+    ingredients: [ { inventoryItemId: 'i20', quantity: 3, unit: 'kg', baseQuantity: 3000 }, { inventoryItemId: 'i19', quantity: 2, unit: 'L', baseQuantity: 2000 }, { inventoryItemId: 'i9', quantity: 1, unit: 'kg', baseQuantity: 1000 }, { inventoryItemId: 'i13', quantity: 0.5, unit: 'kg', baseQuantity: 500 } ]
   },
   {
     id: 'b6', name: 'Garlic Butter Batch', description: 'Butter mixed with garlic and herbs', type: 'recipe', category: 'Food', sellingPrice: 0,
     yieldAmount: 2, yieldUnit: 'kg', calories: 14000, lastUpdated: '2023-10-28',
-    ingredients: [ { inventoryItemId: 'i13', quantity: 1.8, unit: 'kg' }, { inventoryItemId: 'i10', quantity: 0.2, unit: 'kg' } ]
+    ingredients: [ { inventoryItemId: 'i13', quantity: 1.8, unit: 'kg', baseQuantity: 1800 }, { inventoryItemId: 'i10', quantity: 0.2, unit: 'kg', baseQuantity: 200 } ]
   },
   {
     id: 'b7', name: 'Chicken Marinade Batch', description: 'Herb and oil marinade for chicken', type: 'recipe', category: 'Food', sellingPrice: 0,
     yieldAmount: 5, yieldUnit: 'L', calories: 40000, lastUpdated: '2023-10-28',
-    ingredients: [ { inventoryItemId: 'i2', quantity: 4, unit: 'L' }, { inventoryItemId: 'i10', quantity: 0.5, unit: 'kg' }, { inventoryItemId: 'i15', quantity: 0.2, unit: 'kg' } ]
+    ingredients: [ { inventoryItemId: 'i2', quantity: 4, unit: 'L', baseQuantity: 4000 }, { inventoryItemId: 'i10', quantity: 0.5, unit: 'kg', baseQuantity: 500 }, { inventoryItemId: 'i15', quantity: 0.2, unit: 'kg', baseQuantity: 200 } ]
   },
   {
     id: 'b8', name: 'Pasta Dough Batch', description: 'Fresh pasta dough', type: 'recipe', category: 'Food', sellingPrice: 0,
     yieldAmount: 5, yieldUnit: 'kg', calories: 15000, lastUpdated: '2023-10-28',
-    ingredients: [ { inventoryItemId: 'i1', quantity: 3.5, unit: 'kg' }, { inventoryItemId: 'i12', quantity: 30, unit: 'pcs' }, { inventoryItemId: 'i2', quantity: 0.1, unit: 'L' } ]
+    ingredients: [ { inventoryItemId: 'i1', quantity: 3.5, unit: 'kg', baseQuantity: 3500 }, { inventoryItemId: 'i12', quantity: 30, unit: 'pcs', baseQuantity: 30 }, { inventoryItemId: 'i2', quantity: 0.1, unit: 'L', baseQuantity: 100 } ]
   },
   {
     id: 'b9', name: 'Bechamel Sauce Batch', description: 'White sauce for lasagna', type: 'recipe', category: 'Food', sellingPrice: 0,
     yieldAmount: 8, yieldUnit: 'L', calories: 9000, lastUpdated: '2023-10-28',
-    ingredients: [ { inventoryItemId: 'i3', quantity: 6, unit: 'L' }, { inventoryItemId: 'i13', quantity: 0.8, unit: 'kg' }, { inventoryItemId: 'i1', quantity: 0.8, unit: 'kg' } ]
+    ingredients: [ { inventoryItemId: 'i3', quantity: 6, unit: 'L', baseQuantity: 6000 }, { inventoryItemId: 'i13', quantity: 0.8, unit: 'kg', baseQuantity: 800 }, { inventoryItemId: 'i1', quantity: 0.8, unit: 'kg', baseQuantity: 800 } ]
   },
   {
     id: 'b10', name: 'Pancake Batter Batch', description: 'Breakfast pancake batter', type: 'recipe', category: 'Food', sellingPrice: 0,
     yieldAmount: 10, yieldUnit: 'L', calories: 18000, lastUpdated: '2023-10-28',
-    ingredients: [ { inventoryItemId: 'i1', quantity: 4, unit: 'kg' }, { inventoryItemId: 'i3', quantity: 5, unit: 'L' }, { inventoryItemId: 'i12', quantity: 20, unit: 'pcs' }, { inventoryItemId: 'i14', quantity: 0.5, unit: 'kg' } ]
+    ingredients: [ { inventoryItemId: 'i1', quantity: 4, unit: 'kg', baseQuantity: 4000 }, { inventoryItemId: 'i3', quantity: 5, unit: 'L', baseQuantity: 5000 }, { inventoryItemId: 'i12', quantity: 20, unit: 'pcs', baseQuantity: 20 }, { inventoryItemId: 'i14', quantity: 0.5, unit: 'kg', baseQuantity: 500 } ]
   },
 
   // 10 Menu Items (type: 'menu_item')
   {
     id: 'm1', name: 'Margherita Pizza', description: 'Classic cheese and tomato pizza with fresh basil', type: 'menu_item', category: 'Food', subCategory: 'Mains', sellingPrice: 12.50, calories: 800, lastUpdated: '2023-10-28',
-    ingredients: [ { inventoryItemId: 'i1', quantity: 0.25, unit: 'kg' }, { inventoryItemId: 'i5', quantity: 0.1, unit: 'L' }, { inventoryItemId: 'i6', quantity: 0.15, unit: 'kg' }, { inventoryItemId: 'i4', quantity: 0.01, unit: 'kg' } ]
+    ingredients: [ { inventoryItemId: 'i1', quantity: 0.25, unit: 'kg', baseQuantity: 250 }, { inventoryItemId: 'i5', quantity: 0.1, unit: 'L', baseQuantity: 100 }, { inventoryItemId: 'i6', quantity: 0.15, unit: 'kg', baseQuantity: 150 }, { inventoryItemId: 'i4', quantity: 0.01, unit: 'kg', baseQuantity: 10 } ]
   },
   {
     id: 'm2', name: 'Spaghetti Bolognese', description: 'Classic Italian meat sauce with spaghetti', type: 'menu_item', category: 'Food', subCategory: 'Mains', sellingPrice: 14.00, calories: 950, lastUpdated: '2023-10-28',
-    ingredients: [ { inventoryItemId: 'i11', quantity: 0.15, unit: 'kg' }, { inventoryItemId: 'i8', quantity: 0.2, unit: 'kg' }, { inventoryItemId: 'i5', quantity: 0.25, unit: 'L' }, { inventoryItemId: 'i17', quantity: 0.02, unit: 'kg' } ]
+    ingredients: [ { inventoryItemId: 'i11', quantity: 0.15, unit: 'kg', baseQuantity: 150 }, { inventoryItemId: 'i8', quantity: 0.2, unit: 'kg', baseQuantity: 200 }, { inventoryItemId: 'i5', quantity: 0.25, unit: 'L', baseQuantity: 250 }, { inventoryItemId: 'i17', quantity: 0.02, unit: 'kg', baseQuantity: 20 } ]
   },
   {
     id: 'm3', name: 'Chicken Alfredo', description: 'Creamy pasta with grilled chicken', type: 'menu_item', category: 'Food', subCategory: 'Mains', sellingPrice: 16.50, calories: 1100, lastUpdated: '2023-10-28',
-    ingredients: [ { inventoryItemId: 'i11', quantity: 0.15, unit: 'kg' }, { inventoryItemId: 'i7', quantity: 0.2, unit: 'kg' }, { inventoryItemId: 'i19', quantity: 0.1, unit: 'L' }, { inventoryItemId: 'i17', quantity: 0.03, unit: 'kg' } ]
+    ingredients: [ { inventoryItemId: 'i11', quantity: 0.15, unit: 'kg', baseQuantity: 150 }, { inventoryItemId: 'i7', quantity: 0.2, unit: 'kg', baseQuantity: 200 }, { inventoryItemId: 'i19', quantity: 0.1, unit: 'L', baseQuantity: 100 }, { inventoryItemId: 'i17', quantity: 0.03, unit: 'kg', baseQuantity: 30 } ]
   },
   {
     id: 'm4', name: 'Mushroom Risotto', description: 'Creamy arborio rice with wild mushrooms', type: 'menu_item', category: 'Food', subCategory: 'Mains', sellingPrice: 15.00, calories: 750, lastUpdated: '2023-10-28',
-    ingredients: [ { inventoryItemId: 'i20', quantity: 0.15, unit: 'kg' }, { inventoryItemId: 'i19', quantity: 0.05, unit: 'L' }, { inventoryItemId: 'i17', quantity: 0.04, unit: 'kg' }, { inventoryItemId: 'i9', quantity: 0.05, unit: 'kg' } ]
+    ingredients: [ { inventoryItemId: 'i20', quantity: 0.15, unit: 'kg', baseQuantity: 150 }, { inventoryItemId: 'i19', quantity: 0.05, unit: 'L', baseQuantity: 50 }, { inventoryItemId: 'i17', quantity: 0.04, unit: 'kg', baseQuantity: 40 }, { inventoryItemId: 'i9', quantity: 0.05, unit: 'kg', baseQuantity: 50 } ]
   },
   {
     id: 'm5', name: 'Spaghetti Carbonara', description: 'Pasta with bacon, egg, and cheese sauce', type: 'menu_item', category: 'Food', subCategory: 'Mains', sellingPrice: 14.50, calories: 1050, lastUpdated: '2023-10-28',
-    ingredients: [ { inventoryItemId: 'i11', quantity: 0.15, unit: 'kg' }, { inventoryItemId: 'i18', quantity: 0.1, unit: 'kg' }, { inventoryItemId: 'i19', quantity: 0.05, unit: 'L' }, { inventoryItemId: 'i17', quantity: 0.03, unit: 'kg' }, { inventoryItemId: 'i12', quantity: 1, unit: 'pcs' } ]
+    ingredients: [ { inventoryItemId: 'i11', quantity: 0.15, unit: 'kg', baseQuantity: 150 }, { inventoryItemId: 'i18', quantity: 0.1, unit: 'kg', baseQuantity: 100 }, { inventoryItemId: 'i19', quantity: 0.05, unit: 'L', baseQuantity: 50 }, { inventoryItemId: 'i17', quantity: 0.03, unit: 'kg', baseQuantity: 30 }, { inventoryItemId: 'i12', quantity: 1, unit: 'pcs', baseQuantity: 1 } ]
   },
   {
     id: 'm6', name: 'Garlic Bread', description: 'Toasted bread with garlic butter', type: 'menu_item', category: 'Food', subCategory: 'Starters', sellingPrice: 5.50, calories: 450, lastUpdated: '2023-10-28',
-    ingredients: [ { inventoryItemId: 'i1', quantity: 0.1, unit: 'kg' }, { inventoryItemId: 'i13', quantity: 0.05, unit: 'kg' }, { inventoryItemId: 'i10', quantity: 0.01, unit: 'kg' } ]
+    ingredients: [ { inventoryItemId: 'i1', quantity: 0.1, unit: 'kg', baseQuantity: 100 }, { inventoryItemId: 'i13', quantity: 0.05, unit: 'kg', baseQuantity: 50 }, { inventoryItemId: 'i10', quantity: 0.01, unit: 'kg', baseQuantity: 10 } ]
   },
   {
     id: 'm7', name: 'Creamy Mushroom Soup', description: 'Bowl of rich mushroom soup', type: 'menu_item', category: 'Food', subCategory: 'Starters', sellingPrice: 7.00, calories: 350, lastUpdated: '2023-10-28',
-    ingredients: [ { inventoryItemId: 'i20', quantity: 0.15, unit: 'kg' }, { inventoryItemId: 'i19', quantity: 0.05, unit: 'L' }, { inventoryItemId: 'i9', quantity: 0.05, unit: 'kg' } ]
+    ingredients: [ { inventoryItemId: 'i20', quantity: 0.15, unit: 'kg', baseQuantity: 150 }, { inventoryItemId: 'i19', quantity: 0.05, unit: 'L', baseQuantity: 50 }, { inventoryItemId: 'i9', quantity: 0.05, unit: 'kg', baseQuantity: 50 } ]
   },
   {
     id: 'm8', name: 'Pancakes with Syrup', description: 'Stack of 3 fluffy pancakes', type: 'menu_item', category: 'Food', subCategory: 'Desserts', sellingPrice: 9.00, calories: 600, lastUpdated: '2023-10-28',
-    ingredients: [ { inventoryItemId: 'i1', quantity: 0.1, unit: 'kg' }, { inventoryItemId: 'i3', quantity: 0.1, unit: 'L' }, { inventoryItemId: 'i12', quantity: 2, unit: 'pcs' }, { inventoryItemId: 'i14', quantity: 0.05, unit: 'kg' } ]
+    ingredients: [ { inventoryItemId: 'i1', quantity: 0.1, unit: 'kg', baseQuantity: 100 }, { inventoryItemId: 'i3', quantity: 0.1, unit: 'L', baseQuantity: 100 }, { inventoryItemId: 'i12', quantity: 2, unit: 'pcs', baseQuantity: 2 }, { inventoryItemId: 'i14', quantity: 0.05, unit: 'kg', baseQuantity: 50 } ]
   },
   {
     id: 'm9', name: 'Grilled Chicken Salad', description: 'Fresh salad with marinated chicken', type: 'menu_item', category: 'Food', subCategory: 'Starters', sellingPrice: 13.50, calories: 550, lastUpdated: '2023-10-28',
-    ingredients: [ { inventoryItemId: 'i7', quantity: 0.2, unit: 'kg' }, { inventoryItemId: 'i2', quantity: 0.02, unit: 'L' }, { inventoryItemId: 'i4', quantity: 0.02, unit: 'kg' } ]
+    ingredients: [ { inventoryItemId: 'i7', quantity: 0.2, unit: 'kg', baseQuantity: 200 }, { inventoryItemId: 'i2', quantity: 0.02, unit: 'L', baseQuantity: 20 }, { inventoryItemId: 'i4', quantity: 0.02, unit: 'kg', baseQuantity: 20 } ]
   },
   {
     id: 'm10', name: 'Lasagna', description: 'Layered pasta with meat and cheese sauce', type: 'menu_item', category: 'Food', subCategory: 'Mains', sellingPrice: 16.00, calories: 850, lastUpdated: '2023-10-28',
-    ingredients: [ { inventoryItemId: 'i11', quantity: 0.1, unit: 'kg' }, { inventoryItemId: 'i8', quantity: 0.15, unit: 'kg' }, { inventoryItemId: 'i5', quantity: 0.1, unit: 'L' }, { inventoryItemId: 'i6', quantity: 0.1, unit: 'kg' }, { inventoryItemId: 'i3', quantity: 0.1, unit: 'L' } ]
+    ingredients: [ { inventoryItemId: 'i11', quantity: 0.1, unit: 'kg', baseQuantity: 100 }, { inventoryItemId: 'i8', quantity: 0.15, unit: 'kg', baseQuantity: 150 }, { inventoryItemId: 'i5', quantity: 0.1, unit: 'L', baseQuantity: 100 }, { inventoryItemId: 'i6', quantity: 0.1, unit: 'kg', baseQuantity: 100 }, { inventoryItemId: 'i3', quantity: 0.1, unit: 'L', baseQuantity: 100 } ]
   },
   // 10 Cocktails (type: 'menu_item', category: 'Beverage')
   {
@@ -364,23 +379,194 @@ const INITIAL_RECIPES: Recipe[] = [
   { id: 'na-3', name: 'Still Water', description: 'Natural Spring Water', type: 'menu_item', category: 'Beverage', subCategory: 'Non-alcoholic', sellingPrice: 2.00, lastUpdated: '2023-10-28', ingredients: [] }
 ];
 
-type View = 'dashboard' | 'inventory' | 'stocktake' | 'invoices' | 'recipes' | 'sales' | 'suppliers' | 'settings' | 'training' | 'orders' | 'pos' | 'reports' | 'waste' | 'expenses';
+type View = 'dashboard' | 'manager' | 'inventory' | 'stocktake' | 'invoices' | 'recipes' | 'sales' | 'suppliers' | 'settings' | 'training' | 'orders' | 'reports' | 'waste' | 'expenses' | 'briefing' | 'tables' | 'pos_dashboard' | 'financial_command' | 'labour' | 'staffing_rota';
 
 export default function App() {
+  const [user, setUser] = useState<User | null>(null);
   const [currentView, setCurrentView] = useState<View>('dashboard');
   const [editRecipeId, setEditRecipeId] = useState<string | null>(null);
+
+  const onNavItemClick = (view: View) => {
+    setCurrentView(view);
+  };
   const [menuCategories, setMenuCategories] = useState<MenuCategory[]>([]);
-  const [items, setItems] = useState<InventoryItem[]>(() => INITIAL_ITEMS.map(item => ({ ...item, vatCode: 'STANDARD_20', vatRate: 20 })));
-  const [suppliers, setSuppliers] = useState<Supplier[]>(INITIAL_SUPPLIERS);
-  const [recipes, setRecipes] = useState<Recipe[]>(() => INITIAL_RECIPES.map(recipe => ({ ...recipe, vatCode: 'STANDARD_20', vatRate: 20 })));
+  const [items, setItems] = useState<InventoryItem[]>([]);
+const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [stockHistory, setStockHistory] = useState<StockCountRecord[]>([]);
   const [salesHistory, setSalesHistory] = useState<SalesImportRecord[]>([]);
   const [wasteRecords, setWasteRecords] = useState<WasteRecord[]>([]);
   const [expenseRecords, setExpenseRecords] = useState<ExpenseRecord[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
+  const [tables, setTables] = useState<Table[]>([]);
   const [posOrders, setPosOrders] = useState<POSOrder[]>([]);
+  const [posTransactions, setPosTransactions] = useState<any[]>([]);
+  const [posTable, setPosTable] = useState<Table | null>(null);
+  const [posPayments, setPosPayments] = useState<POSPayment[]>([]);
+  const [closures, setClosures] = useState<DailyClosure[]>([]);
+  const [permissionsConfig, setPermissionsConfig] = useState<Record<string, AppPermissions>>(DEFAULT_PERMISSIONS);
+  const [forecasts, setForecasts] = useState<Forecast[]>([]);
+  const [staffPerformance, setStaffPerformance] = useState<StaffPerformanceRecord[]>([]);
+  const [staffCertifications, setStaffCertifications] = useState<StaffCertification[]>([]);
+  const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
+  const [monthlyTargets, setMonthlyTargets] = useState<MonthlyTarget[]>([]);
+  const [labourShifts, setLabourShifts] = useState<LabourShift[]>([]);
+  const [staffMembers, setStaffMembers] = useState<StaffMember[]>([]);
+  const [livePosSalesSummary, setLivePosSalesSummary] = useState({
+    totalPaid: 0,
+    grossSales: 0,
+    netSales: 0,
+    vatTotal: 0,
+    serviceChargeTotal: 0,
+    discountTotal: 0,
+    orderCount: 0,
+    salesByPaymentMethod: {} as Record<string, number>
+  });
   const [cart, setCart] = useState<OrderItem[]>([]);
   const [totalRevenue, setTotalRevenue] = useState(0);
+const getBusinessDay = (): string => {
+  const now = new Date();
+  const londonHour = parseInt(
+    now.toLocaleString('en-GB', { timeZone: 'Europe/London', hour: 'numeric', hour12: false })
+  );
+  if (londonHour < 6) {
+    const yesterday = new Date(now);
+    yesterday.setDate(yesterday.getDate() - 1);
+    return yesterday.toLocaleDateString('en-CA', { timeZone: 'Europe/London' });
+  }
+  return now.toLocaleDateString('en-CA', { timeZone: 'Europe/London' });
+};
+  // Helper to safely get date portion from various formats
+  const safeDateSplit = (date: any): string => {
+    if (!date) return '';
+    try {
+      let d: Date;
+      if (date && typeof date === 'object' && 'seconds' in date) {
+        d = new Date(date.seconds * 1000);
+      } else {
+        d = new Date(date);
+      }
+      if (isNaN(d.getTime())) return '';
+      return d.toLocaleDateString('en-CA', { timeZone: 'Europe/London' });
+    } catch (e) {
+      return '';
+    }
+  };
+  
+  // Real-time POS Sales Reporting Layer
+    const liveSalesData = useMemo(() => {
+  const now = new Date();
+const londonHour = parseInt(
+  now.toLocaleString('en-GB', { timeZone: 'Europe/London', hour: 'numeric', hour12: false })
+);
+const today = londonHour < 6
+  ? new Date(now.getTime() - 86400000).toLocaleDateString('en-CA', { timeZone: 'Europe/London' })
+  : now.toLocaleDateString('en-CA', { timeZone: 'Europe/London' });
+
+  const allPaid = posTransactions.filter((t: any) => t.status === 'paid');
+  const todayTx = allPaid.filter((t: any) => t.businessDate === today);
+
+  const sum = (arr: any[], field: string) =>
+    arr.reduce((s: number, t: any) => s + normalizeCurrency(t[field] ?? 0), 0);
+
+  const history = allPaid.map((t: any) => ({
+    id:     t.orderId || t.id,
+    status: 'Paid',
+    total:  normalizeCurrency(t.grandTotal ?? t.totalGross ?? 0),
+    items:  t.items || [],
+    tips:   normalizeCurrency(t.tipsAmount ?? 0),
+    financials: {
+      grossSales:         normalizeCurrency(t.grandTotal         ?? t.totalGross   ?? 0),
+      netSales:           normalizeCurrency(t.subtotal           ?? t.netSales     ?? 0),
+      vatTotal:           normalizeCurrency(t.vatTotal           ?? 0),
+      serviceChargeTotal: normalizeCurrency(t.serviceChargeTotal ?? t.serviceCharge ?? 0),
+      discountTotal:      normalizeCurrency(t.discountTotal      ?? t.discountAmount ?? 0),
+      totalPaid:          normalizeCurrency(t.grandTotal         ?? t.totalGross   ?? 0),
+      paymentMethod:      t.paymentSummary?.primaryPaymentMethod ?? t.paymentMethod ?? 'N/A',
+      paymentTimestamp:   t.paidAt ?? t.createdAt,
+      reference:          t.tableName ? `Table ${t.tableName}` : `Order #${(t.orderId || t.id || '').slice(-4)}`,
+    },
+    payments: t.payments || []
+  }));
+
+  const salesByDay:   Record<string, number> = {};
+  const salesByWeek:  Record<string, number> = {};
+  const salesByMonth: Record<string, number> = {};
+
+  const getWeekNo = (d: Date) => {
+    const date = new Date(d.getTime());
+    date.setHours(0, 0, 0, 0);
+    date.setDate(date.getDate() + 3 - (date.getDay() + 6) % 7);
+    const week1 = new Date(date.getFullYear(), 0, 4);
+    return Math.round(((date.getTime() - week1.getTime()) / 86400000 - 3 + (week1.getDay() + 6) % 7) / 7) + 1;
+  };
+
+  allPaid.forEach((t: any) => {
+    const day = t.businessDate || new Date(t.paidAt || t.createdAt)
+      .toLocaleDateString('en-CA', { timeZone: 'Europe/London' });
+    if (!day) return;
+    const dateObj = new Date(day);
+    const week  = `${dateObj.getFullYear()}-W${getWeekNo(dateObj).toString().padStart(2, '0')}`;
+    const month = day.substring(0, 7);
+    const val   = normalizeCurrency(t.grandTotal ?? t.totalGross ?? 0);
+    salesByDay[day]     = (salesByDay[day]   || 0) + val;
+    salesByWeek[week]   = (salesByWeek[week] || 0) + val;
+    salesByMonth[month] = (salesByMonth[month] || 0) + val;
+  });
+
+  const aggregate = {
+    totalGrossSales:    sum(allPaid,   'grandTotal'),
+    totalNetSales:      sum(allPaid,   'subtotal'),
+    totalVat:           sum(allPaid,   'vatTotal'),
+    totalServiceCharge: sum(allPaid,   'serviceChargeTotal'),
+    totalDiscounts:     sum(allPaid,   'discountTotal'),
+    totalPaid:          sum(allPaid,   'grandTotal'),
+    todayPaid:          sum(todayTx,   'grandTotal'),
+    todayNet:           sum(todayTx,   'subtotal'),
+    todayVat:           sum(todayTx,   'vatTotal'),
+    todaySC:            sum(todayTx,   'serviceChargeTotal'),
+    todayDiscount:      sum(todayTx,   'discountTotal'),
+    todayCovers:        todayTx.reduce((s: number, t: any) => s + (Number(t.covers) || 0), 0),
+    averageOrderValue:  todayTx.length > 0 ? sum(todayTx, 'grandTotal') / todayTx.length : 0,
+    numberOfPaidOrders: todayTx.length,
+    salesByPaymentMethod: allPaid.reduce((acc: any, t: any) => {
+      const m = t.paymentSummary?.primaryPaymentMethod ?? t.paymentMethod ?? 'N/A';
+      acc[m] = (acc[m] || 0) + normalizeCurrency(t.grandTotal ?? t.totalGross ?? 0);
+      return acc;
+    }, {} as Record<string, number>),
+    salesByDay,
+    salesByWeek,
+    salesByMonth
+  };
+
+  return { history, aggregate };
+}, [posTransactions]);
+
+  React.useEffect(() => {
+  if (liveSalesData.aggregate) {
+    setLivePosSalesSummary({
+      totalPaid:          liveSalesData.aggregate.todayPaid,
+      grossSales:         liveSalesData.aggregate.todayPaid,
+      netSales:           liveSalesData.aggregate.todayNet      || 0,
+      vatTotal:           liveSalesData.aggregate.todayVat      || 0,
+      serviceChargeTotal: liveSalesData.aggregate.todaySC       || 0,
+      discountTotal:      liveSalesData.aggregate.todayDiscount || 0,
+      orderCount:         liveSalesData.aggregate.numberOfPaidOrders,
+      salesByPaymentMethod: liveSalesData.aggregate.salesByPaymentMethod
+    });
+  }
+}, [liveSalesData]);
+
+  const combinedTotalRevenue = useMemo(() => {
+    // Return TODAY'S sales specifically for high-visibility dashboard cards to match POS Shift Total
+    return liveSalesData.aggregate.todayPaid;
+  }, [liveSalesData.aggregate.todayPaid]);
+
+  // Explicit aliases for reporting compliance
+  const posPaymentsHistory = liveSalesData.history;
+  const liveSalesSummary = liveSalesData.aggregate;
+  const posRevenueBreakdown = liveSalesData.aggregate.salesByPaymentMethod;
+
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isAddItemModalOpen, setIsAddItemModalOpen] = useState(false);
   const [confirmationModal, setConfirmationModal] = useState<{
@@ -400,26 +586,91 @@ export default function App() {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [storageError, setStorageError] = useState<string | null>(null);
-  const [user, setUser] = useState<User | null>(null);
+
+  // System Permissions Helper
+  const userRole = useMemo(() => {
+    const isAdminEmail = user?.email === 'saga00@gmail.com' || user?.email === 'saga00@live.com' || user?.email === 'famrokha@gmail.com';
+    if (isAdminEmail) return 'Admin';
+
+    // Try to find staff member by email first (allows admins to test roles by adding themselves as staff)
+    const staffMember = staffMembers.find(s => s.email.toLowerCase() === user?.email?.toLowerCase());
+    if (staffMember) return staffMember.role;
+    
+    // Legacy/Fallback
+    const dName = user?.displayName?.toLowerCase() || '';
+    if (dName.includes('manager')) return 'Manager';
+    if (dName.includes('bartender')) return 'Bartender';
+    if (dName.includes('chef')) return 'Chef';
+    
+    return 'Waiter';
+  }, [user, staffMembers]);
+
+  const checkPermission = (module: string, action: string) => {
+    // Admins always have all permissions
+    if (userRole === 'Admin') return true;
+
+    // Hard override for specific staff roles on Table Manager and Stock Orders
+    if ((module === 'tables' || module === 'orders') && (userRole === 'Waiter' || userRole === 'Bartender')) {
+      return false;
+    }
+    
+    const rolePerms = permissionsConfig[userRole];
+    if (!rolePerms) return false;
+    
+    const modulePerms = rolePerms[module as keyof AppPermissions] as any;
+    return !!modulePerms?.[action];
+  };
+
   const [isAuthReady, setIsAuthReady] = useState(false);
+  const [inventorySettings, setInventorySettings] = useState({
+    allowNegativeStock: false,
+    autoUpdateFromInvoices: true,
+    lowStockAlertThreshold: 20
+  });
+
+  // Role Guard Component
+  const RoleGuard: React.FC<{ allowedRoles: string[]; children: React.ReactNode }> = ({ allowedRoles, children }) => {
+    if (!allowedRoles.includes(userRole)) {
+      return (
+        <div className="flex flex-col items-center justify-center h-full p-12 text-center">
+          <AlertCircle className="h-16 w-16 text-error mb-4 opacity-20" />
+          <h2 className="text-2xl font-bold text-text-navy mb-2">Access Denied</h2>
+          <p className="text-text-muted max-w-md">You do not have the required permissions to access this section. Please contact your administrator.</p>
+        </div>
+      );
+    }
+    return <>{children}</>;
+  };
+  const [authMode, setAuthMode] = useState<'login' | 'register' | 'verify'>('login');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [verificationEmail, setVerificationEmail] = useState('');
+  const [isAuthenticating, setIsAuthenticating] = useState(false);
   const [isMigrating, setIsMigrating] = useState(false);
 
   // Helper for safe Firestore access
   const safeFirestoreSet = async (collectionPath: string, docId: string, data: any) => {
     if (!user) return;
     try {
-      await setDoc(doc(db, `users/${user.uid}/${collectionPath}`, docId), cleanObject(data));
+      await setDoc(doc(db, collectionPath, docId), cleanObject({ ...data, locationId: LOCATION_ID }));
     } catch (e) {
-      handleFirestoreError(e, OperationType.WRITE, `users/${user.uid}/${collectionPath}/${docId}`);
+      handleFirestoreError(e, OperationType.WRITE, `${collectionPath}/${docId}`);
     }
   };
 
   const handleLogin = async () => {
+    if (isAuthenticating) return;
+    setIsAuthenticating(true);
     try {
       await signInWithPopup(auth, googleProvider);
       toast.success("Successfully logged in!");
     } catch (e: any) {
       console.error("Login failed:", e);
+      if (e.code === 'auth/cancelled-popup-request' || e.code === 'auth/popup-closed-by-user') {
+        // User cancelled the login, no need for a scary error toast
+        return;
+      }
+      
       if (e.code === 'auth/network-request-failed') {
         toast.error("Login failed: Network error. Please check your internet connection or disable ad-blockers.");
       } else if (e.code === 'auth/popup-blocked') {
@@ -429,12 +680,107 @@ export default function App() {
       } else {
         toast.error(`Login failed: ${e.message}`);
       }
+    } finally {
+      setIsAuthenticating(false);
+    }
+  };
+
+  const handleEmailLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsAuthenticating(true);
+    try {
+      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      const user = userCredential.user;
+      
+      if (!user.emailVerified) {
+        setVerificationEmail(user.email || '');
+        setAuthMode('verify');
+        await signOut(auth);
+        toast.error("Please verify your email before logging in.");
+      } else {
+        setUser(user);
+        toast.success("Logged in successfully!");
+      }
+    } catch (e: any) {
+      console.error("Email login failed:", e);
+      if (e.code === 'auth/invalid-credential') {
+        toast.error("Invalid email or password. Please check your credentials or create an account if you haven't already.");
+      } else if (e.code === 'auth/user-not-found') {
+        toast.error("No account found with this email. Please sign up.");
+      } else if (e.code === 'auth/wrong-password') {
+        toast.error("Incorrect password. Please try again.");
+      } else if (e.code === 'auth/too-many-requests') {
+        toast.error("Too many failed login attempts. Please try again later.");
+      } else if (e.code === 'auth/user-disabled') {
+        toast.error("This account has been disabled. Please contact support.");
+      } else {
+        toast.error(e.message || "Login failed.");
+      }
+    } finally {
+      setIsAuthenticating(false);
+    }
+  };
+
+  const handleEmailRegister = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsAuthenticating(true);
+    try {
+      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      const user = userCredential.user;
+      
+      await sendEmailVerification(user);
+      setVerificationEmail(user.email || '');
+      setAuthMode('verify');
+      
+      // Sign out immediately as per requirement: "do not sign them in automatically"
+      await signOut(auth);
+      
+      toast.success("Registration successful! Please check your email for verification.");
+    } catch (e: any) {
+      console.error("Registration failed:", e);
+      if (e.code === 'auth/email-already-in-use') {
+        toast.error("An account with this email already exists. Please sign in instead.");
+      } else if (e.code === 'auth/invalid-email') {
+        toast.error("Please enter a valid email address.");
+      } else if (e.code === 'auth/weak-password') {
+        toast.error("Password is too weak. Please use at least 6 characters.");
+      } else if (e.code === 'auth/operation-not-allowed') {
+        toast.error("Email/password accounts are not enabled. Please contact support.");
+      } else {
+        toast.error(e.message || "Registration failed.");
+      }
+    } finally {
+      setIsAuthenticating(false);
+    }
+  };
+
+  const handleForgotPassword = async () => {
+    if (!email) {
+      toast.error("Please enter your email address first.");
+      return;
+    }
+    
+    setIsAuthenticating(true);
+    try {
+      await sendPasswordResetEmail(auth, email);
+      toast.success("Password reset email sent! Please check your inbox.");
+    } catch (e: any) {
+      console.error("Password reset failed:", e);
+      if (e.code === 'auth/user-not-found') {
+        toast.error("No account found with this email.");
+      } else if (e.code === 'auth/invalid-email') {
+        toast.error("Please enter a valid email address.");
+      } else {
+        toast.error(e.message || "Failed to send reset email.");
+      }
+    } finally {
+      setIsAuthenticating(false);
     }
   };
 
   const handleLogout = async () => {
     try {
-      await auth.signOut();
+      await signOut(auth);
       // Reset state on logout
       setItems([]);
       setRecipes([]);
@@ -446,6 +792,7 @@ export default function App() {
       setCart([]);
       setWasteRecords([]);
       setExpenseRecords([]);
+      setUser(null);
     } catch (e) {
       console.error("Logout failed:", e);
     }
@@ -457,28 +804,51 @@ export default function App() {
     } else {
       document.documentElement.classList.remove('dark');
     }
-    // Sync dark mode to Firestore
-    if (user) {
-      updateDoc(doc(db, `users/${user.uid}`), cleanObject({ isDarkMode })).catch(() => {});
-    }
-  }, [isDarkMode, user]);
+    // Store locally only — avoids a Firestore write on every toggle
+    try { localStorage.setItem('backbone_dark_mode', String(isDarkMode)); } catch {}
+  }, [isDarkMode]);
+
+  // Lifecycle for system initialization and migration
+  useEffect(() => {
+    if (!isAuthReady || !user) return;
+    
+    // Initial system check/seed
+    // initializeSystem disabled — was seeding fake test data on every load
+// initializeSystem().catch(e => {
+//   console.error("System initialization failed:", e);
+// });
+  }, [isAuthReady, user]);
 
   // Auth state listener
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (u: User | null) => {
-      setUser(u);
+      if (u && !u.emailVerified && u.providerData.some(p => p.providerId === 'password')) {
+        // If logged in via password but not verified, show verification screen
+        setVerificationEmail(u.email || '');
+        setAuthMode('verify');
+        setUser(null); // Treat as not logged in for the rest of the app
+        signOut(auth);
+      } else {
+        setUser(u);
+        if (u) {
+          testConnection().then(() => {
+             // connection test logs internally
+          }).catch(e => {
+             // Silence connection check errors unless desired
+          });
+        }
+      }
       setIsAuthReady(true);
     });
     return () => unsubscribe();
   }, []);
 
-  // Migration and Data Fetching
+  // Migration logic
   useEffect(() => {
     if (!isAuthReady || !user) return;
 
     const userId = user.uid;
 
-    // Check for migration
     const migrateData = async () => {
       const savedItems = localStorage.getItem('inventory_items');
       const savedRecipes = localStorage.getItem('menu_recipes');
@@ -489,13 +859,13 @@ export default function App() {
           if (savedItems) {
             const items = JSON.parse(savedItems);
             for (const item of items) {
-              await setDoc(doc(db, `users/${userId}/inventory`, item.id), cleanObject(item));
+              await setDoc(doc(db, 'inventory', item.id), cleanObject({ ...item, locationId: LOCATION_ID }));
             }
           }
           if (savedRecipes) {
             const recipes = JSON.parse(savedRecipes);
             for (const recipe of recipes) {
-              await setDoc(doc(db, `users/${userId}/recipes`, recipe.id), cleanObject(recipe));
+              await setDoc(doc(db, 'recipes', recipe.id), cleanObject({ ...recipe, locationId: LOCATION_ID }));
             }
           }
           localStorage.removeItem('inventory_items');
@@ -516,59 +886,168 @@ export default function App() {
     migrateData();
 
     // Set up real-time listeners
-    const unsubInventory = onSnapshot(collection(db, `users/${userId}/inventory`), (snapshot: any) => {
-      const data = snapshot.docs.map((doc: any) => doc.data() as InventoryItem);
-      if (data.length > 0) setItems(data);
-      else if (!isMigrating) setItems(INITIAL_ITEMS);
-    }, (err: any) => handleFirestoreError(err, OperationType.LIST, `users/${userId}/inventory`));
+    const unsubInventory = onSnapshot(query(collection(db, 'inventory'), where('locationId', '==', LOCATION_ID)), (snapshot: any) => {
+      const data = snapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() } as InventoryItem));
+      setItems(data);
+    }, (err: any) => handleFirestoreError(err, OperationType.LIST, 'inventory'));
 
-    const unsubRecipes = onSnapshot(collection(db, `users/${userId}/recipes`), (snapshot: any) => {
-      const data = snapshot.docs.map((doc: any) => doc.data() as Recipe);
-      if (data.length > 0) setRecipes(data);
-      else if (!isMigrating) setRecipes(INITIAL_RECIPES);
-    }, (err: any) => handleFirestoreError(err, OperationType.LIST, `users/${userId}/recipes`));
+    const unsubSettings = onSnapshot(doc(db, 'settings', `inventory_${LOCATION_ID}`), (docSnap) => {
+      if (docSnap.exists()) {
+        setInventorySettings(docSnap.data() as any);
+      }
+    });
 
-    const unsubMenuCategories = onSnapshot(collection(db, `users/${userId}/menuCategories`), (snapshot: any) => {
+    const unsubRecipes = onSnapshot(query(collection(db, 'recipes'), where('locationId', '==', LOCATION_ID)), (snapshot: any) => {
+      const data = snapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() } as Recipe));
+      setRecipes(data);
+    }, (err: any) => handleFirestoreError(err, OperationType.LIST, 'recipes'));
+
+    const unsubMenuCategories = onSnapshot(query(collection(db, 'menuCategories'), where('locationId', '==', LOCATION_ID)), (snapshot: any) => {
       const data = snapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() } as MenuCategory));
       setMenuCategories(data);
-    }, (err: any) => handleFirestoreError(err, OperationType.LIST, `users/${userId}/menuCategories`));
+    }, (err: any) => handleFirestoreError(err, OperationType.LIST, 'menuCategories'));
 
-    const unsubSuppliers = onSnapshot(collection(db, `users/${userId}/suppliers`), (snapshot: any) => {
-      const data = snapshot.docs.map((doc: any) => doc.data() as Supplier);
+    const unsubSuppliers = onSnapshot(query(collection(db, 'suppliers'), where('locationId', '==', LOCATION_ID)), (snapshot: any) => {
+      const data = snapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() } as Supplier));
       setSuppliers(data);
-    }, (err: any) => handleFirestoreError(err, OperationType.LIST, `users/${userId}/suppliers`));
+    }, (err: any) => handleFirestoreError(err, OperationType.LIST, 'suppliers'));
 
-    const unsubStockHistory = onSnapshot(collection(db, `users/${userId}/stockCounts`), (snapshot: any) => {
-      const data = snapshot.docs.map((doc: any) => doc.data() as StockCountRecord);
+    const unsubStockHistory = onSnapshot(query(collection(db, 'stockCounts'), where('locationId', '==', LOCATION_ID)), (snapshot: any) => {
+      const data = snapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() } as StockCountRecord));
       setStockHistory(data);
-    }, (err: any) => handleFirestoreError(err, OperationType.LIST, `users/${userId}/stockCounts`));
+    }, (err: any) => handleFirestoreError(err, OperationType.LIST, 'stockCounts'));
 
-    const unsubSalesHistory = onSnapshot(collection(db, `users/${userId}/salesImports`), (snapshot: any) => {
-      const data = snapshot.docs.map((doc: any) => doc.data() as SalesImportRecord);
+    const unsubSalesHistory = onSnapshot(query(collection(db, 'salesImports'), where('locationId', '==', LOCATION_ID)), (snapshot: any) => {
+      const data = snapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() } as SalesImportRecord));
       setSalesHistory(data);
-    }, (err: any) => handleFirestoreError(err, OperationType.LIST, `users/${userId}/salesImports`));
+    }, (err: any) => handleFirestoreError(err, OperationType.LIST, 'salesImports'));
 
-    const unsubPosOrders = onSnapshot(collection(db, `users/${userId}/posOrders`), (snapshot: any) => {
+    const unsubPosOrders = onSnapshot(query(collection(db, 'posOrders'), where('locationId', '==', LOCATION_ID)), (snapshot: any) => {
       const data = snapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() } as POSOrder));
+      console.log(`[Hub POS Sales Debug] posOrders loaded (FILTERED BY LOCATION): ${data.length}`);
+      if (data.length > 0) {
+        console.log(`[Hub POS Sales Debug] Sample posOrder locationId: ${data[0].locationId}`);
+      }
       setPosOrders(data);
-    }, (err: any) => handleFirestoreError(err, OperationType.LIST, `users/${userId}/posOrders`));
+    }, (err: any) => handleFirestoreError(err, OperationType.LIST, 'posOrders'));
 
-    const unsubWaste = onSnapshot(collection(db, `users/${userId}/waste`), (snapshot: any) => {
-      const data = snapshot.docs.map((doc: any) => doc.data() as WasteRecord);
+    const unsubPosTransactions = onSnapshot(
+  query(
+    collection(db, 'posTransactions'),
+    where('locationId', '==', LOCATION_ID)
+  ),
+  (snapshot: any) => {
+    const data = snapshot.docs.map((d: any) => ({ id: d.id, ...d.data() }));
+    setPosTransactions(data);
+  },
+  (err: any) => handleFirestoreError(err, OperationType.LIST, 'posTransactions')
+);
+    const unsubPosPayments = onSnapshot(query(collection(db, 'posPayments'), where('locationId', '==', LOCATION_ID)), (snapshot: any) => {
+      const data = snapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() }));
+      setPosPayments(data);
+    }, (err: any) => handleFirestoreError(err, OperationType.LIST, 'posPayments'));
+
+    const unsubPermissions = onSnapshot(doc(db, 'settings', `permissions_${LOCATION_ID}`), (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        if (data.roles) {
+          // Deep merge with defaults to ensure all modules/actions exist
+          const merged: Record<string, AppPermissions> = { ...DEFAULT_PERMISSIONS };
+          Object.keys(data.roles).forEach(role => {
+            if (merged[role]) {
+              merged[role] = {
+                ...merged[role],
+                ...data.roles[role]
+              };
+              // Even deeper merge for modules
+              Object.keys(data.roles[role]).forEach(module => {
+                if (merged[role][module as keyof AppPermissions]) {
+                  (merged[role] as any)[module] = {
+                    ...(merged[role] as any)[module],
+                    ...data.roles[role][module]
+                  };
+                }
+              });
+            } else {
+              merged[role] = data.roles[role];
+            }
+          });
+          setPermissionsConfig(merged);
+        }
+      } else {
+        // Initialize if not exists
+        safeFirestoreSet('settings', `permissions_${LOCATION_ID}`, {
+          roles: DEFAULT_PERMISSIONS,
+          updatedAt: new Date().toISOString()
+        });
+      }
+    });
+
+    const unsubTables = onSnapshot(query(collection(db, 'tables'), where('locationId', '==', LOCATION_ID)), (snapshot: any) => {
+      const data = snapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() } as Table));
+      setTables(data);
+    }, (err: any) => handleFirestoreError(err, OperationType.LIST, 'tables'));
+
+    const unsubWaste = onSnapshot(query(collection(db, 'waste'), where('locationId', '==', LOCATION_ID)), (snapshot: any) => {
+      const data = snapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() } as WasteRecord));
       setWasteRecords(data);
-    }, (err: any) => handleFirestoreError(err, OperationType.LIST, `users/${userId}/waste`));
+    }, (err: any) => handleFirestoreError(err, OperationType.LIST, 'waste'));
 
-    const unsubExpenses = onSnapshot(collection(db, `users/${userId}/expenses`), (snapshot: any) => {
-      const data = snapshot.docs.map((doc: any) => doc.data() as ExpenseRecord);
+    const unsubClosures = onSnapshot(query(collection(db, 'dailyClosures'), where('locationId', '==', LOCATION_ID), orderBy('date', 'desc'), limit(30)), (snapshot: any) => {
+      const data = snapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() } as DailyClosure));
+      setClosures(data);
+    }, (err: any) => handleFirestoreError(err, OperationType.LIST, 'dailyClosures'));
+
+    const unsubForecasts = onSnapshot(query(collection(db, 'predictions'), where('locationId', '==', LOCATION_ID), orderBy('createdAt', 'desc'), limit(10)), (snapshot: any) => {
+      const data = snapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() } as Forecast));
+      setForecasts(data);
+    }, (err: any) => handleFirestoreError(err, OperationType.LIST, 'predictions'));
+    
+    const unsubStaffPerf = onSnapshot(query(collection(db, 'staffPerformance'), where('locationId', '==', LOCATION_ID), orderBy('date', 'desc'), limit(50)), (snapshot: any) => {
+      const data = snapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() } as StaffPerformanceRecord));
+      setStaffPerformance(data);
+    }, (err: any) => handleFirestoreError(err, OperationType.LIST, 'staffPerformance'));
+
+    const unsubCertifications = onSnapshot(query(collection(db, 'staffCertifications'), where('locationId', '==', LOCATION_ID), orderBy('completedAt', 'desc')), (snapshot: any) => {
+      const data = snapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() } as StaffCertification));
+      setStaffCertifications(data);
+    }, (err: any) => handleFirestoreError(err, OperationType.LIST, 'staffCertifications'));
+
+    const unsubAuditLogs = onSnapshot(query(collection(db, 'auditLogs'), where('locationId', '==', LOCATION_ID), orderBy('timestamp', 'desc'), limit(100)), (snapshot: any) => {
+      const data = snapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() } as AuditLog));
+      setAuditLogs(data);
+    }, (err: any) => handleFirestoreError(err, OperationType.LIST, 'auditLogs'));
+
+    const unsubExpenses = onSnapshot(query(collection(db, 'expenses'), where('locationId', '==', LOCATION_ID)), (snapshot: any) => {
+      const data = snapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() } as ExpenseRecord));
       setExpenseRecords(data);
-    }, (err: any) => handleFirestoreError(err, OperationType.LIST, `users/${userId}/expenses`));
+    }, (err: any) => handleFirestoreError(err, OperationType.LIST, 'expenses'));
+
+    const unsubStats = onSnapshot(doc(db, 'settings', `stats_${LOCATION_ID}`), (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        if (data?.totalRevenue !== undefined) setTotalRevenue(data.totalRevenue);
+      }
+    });
+
+    const unsubMappings = onSnapshot(doc(db, 'settings', `mappings_${LOCATION_ID}`), (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        if (data?.mappings) setItemRecipeMappings(data.mappings);
+      }
+    });
+
+    const unsubLabour = onSnapshot(query(collection(db, 'labourShifts'), where('locationId', '==', LOCATION_ID), orderBy('date', 'desc'), limit(1000)), (snapshot: any) => {
+      const data = snapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() } as LabourShift));
+      setLabourShifts(data);
+    }, (err: any) => handleFirestoreError(err, OperationType.LIST, 'labourShifts'));
 
     const unsubUser = onSnapshot(doc(db, `users/${userId}`), (snapshot: any) => {
       const data = snapshot.data();
       if (data) {
         if (data.isDarkMode !== undefined) setIsDarkMode(data.isDarkMode);
-        if (user.email === 'saga00@gmail.com' && data.role !== 'admin') {
-          updateDoc(doc(db, `users/${userId}`), { role: 'admin' }).catch(console.error);
+        if ((user.email === 'saga00@gmail.com' || user.email === 'famrokha@gmail.com') && data.role !== 'Admin') {
+          setDoc(doc(db, `users/${userId}`), { role: 'Admin' }, { merge: true }).catch(console.error);
         }
       } else {
         setDoc(doc(db, `users/${userId}`), cleanObject({
@@ -577,24 +1056,188 @@ export default function App() {
           displayName: user.displayName || '',
           photoURL: user.photoURL || '',
           isDarkMode: false,
-          role: user.email === 'saga00@gmail.com' ? 'admin' : 'user'
+          role: (user.email === 'saga00@gmail.com' || user.email === 'famrokha@gmail.com') ? 'Admin' : 'Waiter'
         })).catch((err: any) => handleFirestoreError(err, OperationType.WRITE, `users/${userId}`));
       }
     }, (err: any) => handleFirestoreError(err, OperationType.GET, `users/${userId}`));
 
+    const unsubStaff = onSnapshot(query(collection(db, 'staff'), where('locationId', '==', LOCATION_ID)), (snapshot: any) => {
+      const data = snapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() } as StaffMember));
+      setStaffMembers(data);
+
+      snapshot.docs.forEach((d: any) => {
+        const staffData = d.data();
+        if (staffData.email && (staffData.email.toLowerCase() === 'saga00@gmail.com' || staffData.email.toLowerCase() === 'saga00@live.com' || staffData.email.toLowerCase() === 'famrokha@gmail.com')) {
+          if (staffData.role !== 'Admin') {
+            updateDoc(doc(db, 'staff', d.id), { role: 'Admin' }).catch(console.error);
+          }
+        }
+      });
+    }, (err: any) => handleFirestoreError(err, OperationType.LIST, 'staff'));
+
+    const unsubMonthlyTargets = onSnapshot(query(collection(db, 'monthlyTargets'), where('locationId', '==', LOCATION_ID)), (snapshot: any) => {
+      const data = snapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() } as MonthlyTarget));
+      setMonthlyTargets(data);
+    }, (err: any) => handleFirestoreError(err, OperationType.LIST, 'monthlyTargets'));
+
     return () => {
+      unsubPosTransactions();
       unsubInventory();
+      unsubSettings();
       unsubRecipes();
       unsubSuppliers();
       unsubStockHistory();
       unsubSalesHistory();
       unsubPosOrders();
+      unsubPosPayments();
+      unsubTables();
       unsubWaste();
       unsubExpenses();
+      unsubStats();
+      unsubMappings();
       unsubMenuCategories();
       unsubUser();
+      unsubStaff();
+      unsubForecasts();
+      unsubStaffPerf();
+      unsubCertifications();
+      unsubAuditLogs();
+      unsubLabour();
+      unsubMonthlyTargets();
+      unsubPermissions();
+      unsubClosures();
     };
   }, [isAuthReady, user]);
+
+  // Automatic Inventory Depletion for Paid POS Orders
+  useEffect(() => {
+    if (!user || posOrders.length === 0 || recipes.length === 0 || items.length === 0) return;
+
+    const processInventoryDepletion = async () => {
+      const unprocessedOrders = posOrders.filter(o => 
+        normalizeStatus(o.status) === 'Paid' && !o.isInventoryDepleted
+      );
+
+      if (unprocessedOrders.length === 0) return;
+
+      const batchToProcess = unprocessedOrders.slice(0, 10);
+      console.log(`[Inventory Sync] Processing ${batchToProcess.length} of ${unprocessedOrders.length} unprocessed orders.`);
+
+      console.log(`[Inventory Sync] Found ${unprocessedOrders.length} unprocessed Paid orders.`);
+
+      for (const order of batchToProcess) {
+        try {
+          const batch = writeBatch(db);
+          let depletionLog = `[Inventory Sync] Order ${order.id}: `;
+          let hasDeductions = false;
+
+          // 1. Process Inventory
+          for (const item of order.items) {
+            if (item.isVoided) continue;
+
+            const recipe = recipes.find(r => r.id === item.recipeId || r.name === item.name);
+            if (!recipe) {
+              console.warn(`[Inventory Sync] No recipe found for item: ${item.name} (${item.recipeId})`);
+              continue;
+            }
+
+            for (const ingredient of recipe.ingredients) {
+              const inventoryItem = items.find(i => i.id === ingredient.inventoryItemId);
+              if (!inventoryItem) {
+                console.warn(`[Inventory Sync] No inventory item found for ingredient: ${ingredient.inventoryItemId}`);
+                continue;
+              }
+
+              const totalDeduction = (ingredient.baseQuantity || 0) * (item.quantity || 0);
+              if (totalDeduction > 0) {
+                const invRef = doc(db, 'inventory', inventoryItem.id);
+                batch.update(invRef, {
+                  quantity: increment(-totalDeduction),
+                  lastUpdated: new Date().toISOString()
+                });
+                
+                // Log Stock Movement
+                const movementId = `mov-pos-${order.id}-${inventoryItem.id}`;
+                const movementRef = doc(db, 'stockMovements', movementId);
+                batch.set(movementRef, cleanObject({
+                  id: movementId,
+                  productId: inventoryItem.id,
+                  type: 'SALE',
+                  quantityChange: -totalDeduction,
+                  stockBefore: inventoryItem.quantity,
+                  stockAfter: inventoryItem.quantity - totalDeduction,
+                  referenceId: order.id,
+                  referenceType: 'SALE',
+                  createdAt: new Date().toISOString(),
+                  createdBy: 'SYSTEM-POS-SYNC',
+                  locationId: LOCATION_ID,
+                  notes: `POS Sale: ${order.tableNumber ? 'Table ' + order.tableNumber : 'Order #' + order.id.slice(-4)}`
+                }));
+
+                depletionLog += `${inventoryItem.name} (-${totalDeduction}${inventoryItem.baseUnit}) `;
+                hasDeductions = true;
+              }
+            }
+
+            // 2. Process Shift Targets (Item-specific)
+            if (recipe.id) {
+              const itemTargets = await getDocs(query(
+                collection(db, 'shiftTargets'), 
+                where('locationId', '==', LOCATION_ID),
+                where('type', '==', 'Item'),
+                where('targetItemId', '==', recipe.id),
+                where('status', '==', 'Active')
+              ));
+
+              itemTargets.forEach(tDoc => {
+                batch.update(tDoc.ref, {
+                  currentValue: increment(item.quantity || 1)
+                });
+              });
+            }
+          }
+
+          // 3. Process Shift Targets (Revenue)
+          const revenueTargets = await getDocs(query(
+            collection(db, 'shiftTargets'), 
+            where('locationId', '==', LOCATION_ID),
+            where('type', '==', 'Revenue'),
+            where('status', '==', 'Active')
+          ));
+
+          revenueTargets.forEach(tDoc => {
+            batch.update(tDoc.ref, {
+              currentValue: increment(order.total || 0)
+            });
+          });
+
+          // Mark order as depleted
+          const orderRef = doc(db, 'posOrders', order.id);
+          batch.update(orderRef, { isInventoryDepleted: true });
+
+          await batch.commit();
+          if (hasDeductions) {
+            console.log(depletionLog);
+          } else {
+            console.log(`[Inventory Sync] Order ${order.id} processed (No ingredients deducted).`);
+          }
+        } catch (error) {
+          console.error(`[Inventory Sync] Error processing order ${order.id}:`, error);
+        }
+      }
+    };
+
+    processInventoryDepletion();
+  }, [posOrders, recipes, items, user]);
+
+  // Role-based redirection
+  useEffect(() => {
+    if (isAuthReady && user && currentView === 'dashboard') {
+      if (userRole === 'Waiter' || userRole === 'Bartender') {
+        setCurrentView('briefing');
+      }
+    }
+  }, [isAuthReady, user, userRole, currentView]);
 
   // Remove the old localStorage initialization effects
   /*
@@ -609,40 +1252,210 @@ export default function App() {
     safeFirestoreSet('suppliers', supplier.id, supplier);
   };
 
-  const handleUpdateStock = (updates: {id: string, quantity: number}[]) => {
-    const timestamp = new Date().toISOString().split('T')[0];
-    
-    setItems(prev => {
-      const updated = prev.map(item => {
-        const update = updates.find(u => u.id === item.id);
-        if (update) {
-          const updatedItem = { ...item, quantity: update.quantity, lastUpdated: timestamp };
-          safeFirestoreSet('inventory', item.id, updatedItem);
-          return updatedItem;
-        }
-        return item;
-      });
-      return updated;
-    });
-
-    setRecipes(prev => {
-      const updated = prev.map(recipe => {
-        const update = updates.find(u => u.id === `recipe-${recipe.id}`);
-        if (update) {
-          const updatedRecipe = { ...recipe, quantity: update.quantity, lastUpdated: timestamp };
-          safeFirestoreSet('recipes', recipe.id, updatedRecipe);
-          return updatedRecipe;
-        }
-        return recipe;
-      });
-      return updated;
-    });
+  const logStockMovement = async (movement: Omit<StockMovement, 'id' | 'createdAt' | 'createdBy'>) => {
+    if (!user) return;
+    const newMovement: StockMovement = {
+      id: `mov-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+      createdAt: new Date().toISOString(),
+      createdBy: user.uid,
+      ...movement
+    };
+    safeFirestoreSet('stockMovements', newMovement.id, newMovement);
   };
 
-  const handleSalesDeduction = (deductions: { inventoryItemId: string; quantity: number }[], revenue: number) => {
+  const handleUpdateStock = (updates: {id: string, quantity?: number, delta?: number, pricePerUnit?: number}[], type: MovementType = 'ADJUSTMENT', referenceId?: string) => {
+    if (!user) return;
+    const userId = user.uid;
+    const userName = user.displayName || user.email || 'Unknown';
+    const timestamp = new Date().toISOString().split('T')[0];
+    
+    updates.forEach(update => {
+      const isRecipe = update.id.startsWith('recipe-');
+      const id = isRecipe ? update.id.replace('recipe-', '') : update.id;
+      const collectionName = isRecipe ? 'recipes' : 'inventory';
+      
+      const item = isRecipe ? recipes.find(r => r.id === id) : items.find(i => i.id === id);
+      if (item) {
+        const currentQty = (item as any).quantity || 0;
+        let delta = 0;
+        let finalNewQuantity = 0;
+
+        if (update.delta !== undefined) {
+          delta = update.delta;
+          finalNewQuantity = currentQty + delta;
+        } else if (update.quantity !== undefined) {
+          finalNewQuantity = update.quantity;
+          delta = finalNewQuantity - currentQty;
+        } else {
+          return; // Nothing to update
+        }
+        
+        // Enforce negative stock rules
+        if (!inventorySettings.allowNegativeStock && finalNewQuantity < 0) {
+          // If we are adjusting/stockstaking to a negative value, cap at 0
+          if (type === 'ADJUSTMENT' || type === 'STOCKTAKE') {
+            finalNewQuantity = 0;
+            delta = 0 - currentQty;
+          } else {
+            // For sales/receipts, we cap the deduction so it doesn't go below 0
+            // but this is tricky with concurrent increments.
+            // For now, keep the optimistic capping.
+            finalNewQuantity = 0;
+            delta = 0 - currentQty;
+          }
+        }
+        
+        if (delta !== 0 || update.pricePerUnit !== undefined) {
+          logStockMovement({
+            productId: update.id,
+            type,
+            quantityChange: delta,
+            stockBefore: currentQty,
+            stockAfter: finalNewQuantity,
+            referenceId,
+            referenceType: type as any
+          });
+
+          // Audit Log - Only for manual adjustments or significant events
+          if (type === 'ADJUSTMENT' || type === 'STOCKTAKE') {
+            logAuditAction(
+              userId,
+              userName,
+              'UPDATE',
+              isRecipe ? 'Recipe' : 'Inventory',
+              id,
+              (item as any).name,
+              item,
+              { ...item, quantity: finalNewQuantity }
+            );
+          }
+          
+          const docRef = doc(db, collectionName, id);
+          const firestoreUpdates: any = {
+            quantity: increment(delta),
+            lastUpdated: timestamp
+          };
+          
+          if (update.pricePerUnit !== undefined) {
+            firestoreUpdates.pricePerUnit = update.pricePerUnit;
+            // Sync recipe costs if price changed
+            import('./services/inventoryService').then(({ syncRecipePrices }) => {
+              syncRecipePrices(update.id, update.pricePerUnit!, recipes, items);
+            });
+          }
+          
+          setDoc(docRef, cleanObject(firestoreUpdates), { merge: true }).catch(err => handleFirestoreError(err, OperationType.UPDATE, `${collectionName}/${id}`));
+        }
+      }
+    });
+
+    // Optimistic local state updates
+    setItems(prev => prev.map(item => {
+      const update = updates.find(u => u.id === item.id);
+      if (update) {
+        let newQty = item.quantity;
+        if (update.delta !== undefined) {
+          newQty = item.quantity + update.delta;
+        } else if (update.quantity !== undefined) {
+          newQty = update.quantity;
+        }
+
+        if (!inventorySettings.allowNegativeStock && newQty < 0) {
+          newQty = 0;
+        }
+
+        return { 
+          ...item, 
+          quantity: newQty, 
+          pricePerUnit: update.pricePerUnit !== undefined ? update.pricePerUnit : item.pricePerUnit,
+          lastUpdated: timestamp 
+        };
+      }
+      return item;
+    }));
+
+    setRecipes(prev => prev.map(recipe => {
+      const update = updates.find(u => u.id === `recipe-${recipe.id}`);
+      if (update) {
+        let newQty = recipe.quantity || 0;
+        if (update.delta !== undefined) {
+          newQty = (recipe.quantity || 0) + update.delta;
+        } else if (update.quantity !== undefined) {
+          newQty = update.quantity;
+        }
+
+        if (!inventorySettings.allowNegativeStock && newQty < 0) {
+          newQty = 0;
+        }
+        
+        return { 
+          ...recipe, 
+          quantity: newQty, 
+          pricePerUnit: update.pricePerUnit !== undefined ? update.pricePerUnit : (recipe as any).pricePerUnit,
+          lastUpdated: timestamp 
+        };
+      }
+      return recipe;
+    }));
+  };
+
+  // --- Shift Briefing & Performance Linkage ---
+  useEffect(() => {
+    if (!posPayments.length || !user) return;
+
+    const processNewPayments = async () => {
+      // Since POSPayment doesn't have a status field directly, we check for its existence in the paid payments collection
+      // or assume it's paid if it's there. We'll use order status to be safe.
+      const unprocessed = posPayments.filter(p => !p.performanceProcessed);
+      if (unprocessed.length === 0) return;
+
+      const { updateStaffPerformance } = await import('./services/performanceService');
+      
+      for (const payment of unprocessed) {
+        const order = posOrders.find(o => o.id === payment.orderId);
+        // Only process paid orders
+        if (order && normalizeStatus(order.status) === 'Paid') {
+          try {
+            // Trigger performance update
+            await updateStaffPerformance(
+              order.waiterId, 
+              order.customerName || 'Staff',
+              order.items, 
+              recipes
+            );
+
+            // 1. Automated Stock Deduction
+            const { deductStockFromOrder } = await import('./services/inventoryService');
+            await deductStockFromOrder(
+              payment.orderId,
+              order.items,
+              recipes,
+              items
+            );
+
+            // Mark as processed in Firestore
+            await updateDoc(doc(db, 'posPayments', payment.id), {
+              performanceProcessed: true
+            });
+          } catch (err) {
+            console.error("Failed to link payment to performance:", err);
+          }
+        }
+      }
+    };
+
+    processNewPayments();
+  }, [posPayments, posOrders, recipes, user]);
+
+  const handleSalesDeduction = (deductions: { inventoryItemId: string; quantity: number }[], revenue: number, orderId?: string) => {
+    if (!user) return;
+    const userId = user.uid;
+
     setTotalRevenue(prev => {
       const newRevenue = prev + revenue;
-      if (user) updateDoc(doc(db, `users/${user.uid}`), cleanObject({ totalRevenue: newRevenue })).catch(() => {});
+      setDoc(doc(db, 'settings', `stats_${LOCATION_ID}`), { totalRevenue: increment(revenue) }, { merge: true }).catch(() => {
+        setDoc(doc(db, 'settings', `stats_${LOCATION_ID}`), { totalRevenue: revenue, locationId: LOCATION_ID }, { merge: true }).catch(console.error);
+      });
       return newRevenue;
     });
 
@@ -652,18 +1465,37 @@ export default function App() {
         const itemDeductions = deductions.filter(d => d.inventoryItemId === item.id);
         if (itemDeductions.length > 0) {
           const totalDeductionQuantity = itemDeductions.reduce((sum, d) => sum + d.quantity, 0);
-          const newQuantity = Math.max(0, item.quantity - totalDeductionQuantity);
+          
+          const newQuantity = inventorySettings.allowNegativeStock 
+            ? item.quantity - totalDeductionQuantity 
+            : Math.max(0, item.quantity - totalDeductionQuantity);
+            
           const currentRate = item.dailyUsageRate || 0;
           const newRate = (currentRate * 0.7) + (totalDeductionQuantity * 0.3);
 
-          const updatedItem = { 
+          logStockMovement({
+            productId: item.id,
+            type: 'SALE',
+            quantityChange: -totalDeductionQuantity,
+            stockBefore: item.quantity,
+            stockAfter: newQuantity,
+            referenceId: orderId,
+            referenceType: 'SALE'
+          });
+
+          const docRef = doc(db, 'inventory', item.id);
+          setDoc(docRef, {
+            quantity: increment(-totalDeductionQuantity),
+            dailyUsageRate: parseFloat(newRate.toFixed(2)),
+            lastUpdated: new Date().toISOString().split('T')[0]
+          }, { merge: true }).catch(err => handleFirestoreError(err, OperationType.UPDATE, `inventory/${item.id}`));
+
+          return { 
             ...item, 
             quantity: newQuantity,
             dailyUsageRate: parseFloat(newRate.toFixed(2)),
             lastUpdated: new Date().toISOString().split('T')[0] 
           };
-          safeFirestoreSet('inventory', item.id, updatedItem);
-          return updatedItem;
         }
         return item;
       });
@@ -677,14 +1509,32 @@ export default function App() {
         const recipeDeductions = deductions.filter(d => d.inventoryItemId === recipeInventoryId);
         if (recipeDeductions.length > 0) {
           const totalDeductionQuantity = recipeDeductions.reduce((sum, d) => sum + d.quantity, 0);
-          const newQuantity = Math.max(0, (recipe.quantity || 0) - totalDeductionQuantity);
-          const updatedRecipe: Recipe = { 
+          
+          const newQuantity = inventorySettings.allowNegativeStock
+            ? (recipe.quantity || 0) - totalDeductionQuantity
+            : Math.max(0, (recipe.quantity || 0) - totalDeductionQuantity);
+
+          logStockMovement({
+            productId: recipeInventoryId,
+            type: 'SALE',
+            quantityChange: -totalDeductionQuantity,
+            stockBefore: recipe.quantity || 0,
+            stockAfter: newQuantity,
+            referenceId: orderId,
+            referenceType: 'SALE'
+          });
+
+          const docRef = doc(db, 'recipes', recipe.id);
+          setDoc(docRef, {
+            quantity: increment(-totalDeductionQuantity),
+            lastUpdated: new Date().toISOString().split('T')[0]
+          }, { merge: true }).catch(err => handleFirestoreError(err, OperationType.UPDATE, `recipes/${recipe.id}`));
+
+          return { 
             ...recipe, 
             quantity: newQuantity,
             lastUpdated: new Date().toISOString().split('T')[0]
           };
-          safeFirestoreSet('recipes', recipe.id, updatedRecipe);
-          return updatedRecipe;
         }
         return recipe;
       });
@@ -706,49 +1556,54 @@ export default function App() {
   };
 
   const handleAddFromInvoice = (invoice: Invoice) => {
-    const timestamp = Date.now();
-    const convertedItems: InventoryItem[] = invoice.items.map((item: any, idx: number) => ({
-      id: `inv-${timestamp}-${idx}`,
-      name: item.name,
-      category: 'Ingredient',
-      department: 'Kitchen',
-      quantity: item.quantity,
-      unit: item.unit || 'pcs',
-      pricePerUnit: item.price ? (item.price / item.quantity) : 0,
-      minStockLevel: 5,
-      lastUpdated: new Date().toISOString().split('T')[0],
-      supplier: invoice.vendor || 'Unknown'
-    }));
-
-    setItems(prev => [...prev, ...convertedItems]);
-    convertedItems.forEach(item => safeFirestoreSet('inventory', item.id, item));
-    
     setInvoices(prev => [invoice, ...prev]);
     safeFirestoreSet('invoices', invoice.id, invoice);
     
-    toast.success(`Successfully added ${convertedItems.length} items from invoice.`);
-    setCurrentView('inventory');
+    if (invoice.status === 'Processed') {
+      toast.success(`Processed invoice from ${invoice.vendor}.`);
+    } else {
+      toast.success(`Invoice from ${invoice.vendor} saved as Pending.`);
+    }
+    setCurrentView('invoices');
   };
 
-  const handleSaveItem = (itemData: any) => {
+  const handleSaveItem = async (itemData: any) => {
     const timestamp = new Date().toISOString().split('T')[0];
     
     if (editingItem) {
       if (editingItem.id.startsWith('recipe-')) {
         const recipeId = editingItem.id.replace('recipe-', '');
-        setRecipes(prev => {
-          const updated = prev.map(r => 
-            r.id === recipeId 
-              ? { ...r, quantity: itemData.quantity, lastUpdated: timestamp } 
-              : r
-          );
-          const updatedRecipe = updated.find(r => r.id === recipeId);
-          if (updatedRecipe) safeFirestoreSet('recipes', recipeId, updatedRecipe);
-          return updated;
-        });
+        // ... (recipe logic)
       } else {
         // Update existing item
+        const quantityChange = itemData.quantity - editingItem.quantity;
+        if (quantityChange !== 0) {
+          logStockMovement({
+            productId: editingItem.id,
+            type: quantityChange > 0 ? 'RECEIPT' : 'ADJUSTMENT',
+            quantityChange,
+            stockBefore: editingItem.quantity,
+            stockAfter: itemData.quantity,
+            referenceType: quantityChange > 0 ? 'RECEIPT' : 'ADJUSTMENT'
+          });
+        }
+
         const updatedItem = { ...editingItem, ...itemData, lastUpdated: timestamp };
+        
+        // Audit Log
+        if (user) {
+          logAuditAction(
+            user.uid,
+            user.displayName || user.email || 'Unknown',
+            'UPDATE',
+            'Inventory',
+            editingItem.id,
+            editingItem.name,
+            editingItem,
+            updatedItem
+          );
+        }
+
         setItems(prev => prev.map(item => 
           item.id === editingItem.id ? updatedItem : item
         ));
@@ -761,6 +1616,30 @@ export default function App() {
         lastUpdated: timestamp,
         ...itemData
       };
+
+      // Audit Log
+      if (user) {
+        logAuditAction(
+          user.uid,
+          user.displayName || user.email || 'Unknown',
+          'CREATE',
+          'Inventory',
+          newItem.id,
+          newItem.name,
+          null,
+          newItem
+        );
+      }
+
+      logStockMovement({
+        productId: newItem.id,
+        type: 'RECEIPT',
+        quantityChange: newItem.quantity,
+        stockBefore: 0,
+        stockAfter: newItem.quantity,
+        referenceType: 'RECEIPT'
+      });
+
       setItems(prev => [...prev, newItem]);
       safeFirestoreSet('inventory', newItem.id, newItem);
     }
@@ -769,36 +1648,350 @@ export default function App() {
     setEditingItem(undefined);
   };
 
+  const handleBulkAdd = (newItems: Omit<InventoryItem, 'id' | 'lastUpdated'>[]) => {
+    if (!user) return;
+    const timestamp = new Date().toISOString().split('T')[0];
+
+    const itemsWithIds = newItems.map((item, index) => ({
+      ...item,
+      id: `bulk-${Date.now()}-${index}`,
+      lastUpdated: timestamp
+    }));
+
+    setItems(prev => [...prev, ...itemsWithIds]);
+
+    // Save to Firestore
+    itemsWithIds.forEach(item => {
+      safeFirestoreSet('inventory', item.id, item);
+      
+      logStockMovement({
+        productId: item.id,
+        type: 'RECEIPT',
+        quantityChange: item.quantity,
+        stockBefore: 0,
+        stockAfter: item.quantity,
+        referenceType: 'RECEIPT',
+        notes: 'Bulk imported'
+      });
+    });
+  };
+
   const handleEditRecipeFromReport = (id: string) => {
     setEditRecipeId(id);
     setCurrentView('recipes');
   };
 
-  const handleSaveRecipe = (recipe: Recipe) => {
-    setRecipes(prev => {
-      const exists = prev.find(r => r.id === recipe.id);
-      if (exists) {
-        return prev.map(r => r.id === recipe.id ? recipe : r);
-      } else {
-        return [...prev, recipe];
-      }
-    });
-    safeFirestoreSet('recipes', recipe.id, recipe);
+  const mapCategoryId = (recipe: Recipe | null | undefined) => {
+    if (!recipe) return 'mains';
+    const category = (recipe.category || '').toLowerCase();
+    const subCategory = (recipe.subCategory || '').toLowerCase();
+    const course = (recipe.course || '').toLowerCase();
+
+    if (category.includes('beverage') || category.includes('bar')) return 'drinks';
+    if (subCategory.includes('tacos') || category.includes('tacos')) return 'tacos';
+    if (subCategory.includes('starter') || course.includes('1st course') || course.includes('starter')) return 'starters';
+    if (subCategory.includes('dessert') || course.includes('dessert')) return 'desserts';
+    if (subCategory.includes('main') || course.includes('main')) return 'mains';
+
+    return 'mains';
   };
 
-  const handleDeleteRecipe = async (id: string) => {
+  const mapStation = (recipe: Recipe | null | undefined) => {
+    if (!recipe) return 'grill';
+    const category = (recipe.category || '').toLowerCase();
+    const station = (recipe.station || '').toLowerCase();
+
+    if (category.includes('beverage') || category.includes('bar')) return 'beverage';
+    if (station.includes('cold')) return 'cold';
+    if (station.includes('dessert')) return 'dessert';
+    return 'food';
+  };
+
+    const handleSaveRecipe = async (recipe: Recipe) => {
+    // 0) Circular Dependency Check
+    const checkCircular = (startId: string, targetId: string, visited: Set<string>): boolean => {
+      if (startId === targetId) return true;
+      if (visited.has(startId)) return false;
+      visited.add(startId);
+      
+      const r = recipes.find(rec => rec.id === startId);
+      if (!r || !r.ingredients) return false;
+      
+      return r.ingredients.some(ing => {
+        if (ing.inventoryItemId === `recipe-${targetId}`) return true;
+        if (ing.inventoryItemId.startsWith('recipe-')) {
+          return checkCircular(ing.inventoryItemId.replace('recipe-', ''), targetId, new Set(visited));
+        }
+        return false;
+      });
+    };
+
+    if (recipe.id) {
+       const isCircular = recipe.ingredients?.some(ing => {
+         if (ing.inventoryItemId === `recipe-${recipe.id}`) return true;
+         if (ing.inventoryItemId.startsWith('recipe-')) {
+           const depId = ing.inventoryItemId.replace('recipe-', '');
+           return checkCircular(depId, recipe.id, new Set());
+         }
+         return false;
+       });
+
+       if (isCircular) {
+         toast.error("Circular Dependency Detected! This recipe cannot depend on a batch that already depends on it.");
+         return;
+       }
+    }
+
+  const saveStartTime = Date.now();
+  try {
+    const timestamp = new Date().toISOString();
+    
+    // Find old recipe for audit
+    const oldRecipe = recipes.find(r => r.id === recipe.id);
+
+    // 1) Ensure we have a valid Firestore ID
+    // If it's a new recipe, generate a new ID via Firestore collection ref
+    const recipeRef = recipe.id ? doc(db, 'recipes', recipe.id) : doc(collection(db, 'recipes'));
+    const id = recipeRef.id;
+
+    // Use name-based slug
+    const slug = recipe.name.toLowerCase().replace(/\s+/g, "_");
+
+    const normalizedRecipe: any = {
+      ...recipe,
+      slug,
+      lastUpdated: timestamp
+    };
+    // Remove internal id field as we use doc.id now
+    delete normalizedRecipe.id;
+
+    console.log(`%c[DualSave] START: Saving recipe ${id} at ${new Date().toLocaleTimeString()}`, 'color: green; font-weight: bold;');
+    
+    toast.info('Synchronizing with Firestore Hub & POS...');
+
+    // 2) Prepare full recipe doc
+    const recipeDoc = cleanObject({
+      ...normalizedRecipe,
+      locationId: LOCATION_ID,
+      lastUpdated: timestamp
+    });
+
+    // Audit Log
+    if (user) {
+      logAuditAction(
+        user.uid,
+        user.displayName || user.email || 'Unknown',
+        recipe.id ? 'UPDATE' : 'CREATE',
+        'Recipe',
+        id,
+        recipe.name,
+        oldRecipe,
+        recipeDoc
+      );
+    }
+
+    // 3) Prepare POS-ready menu item doc
+    const categoryId = mapCategoryId(recipe);
+    const menuItemDoc = cleanObject({
+      name: recipe.name,
+      slug,
+      categoryId: categoryId,
+      // POS systems expect price in cents (integers)
+      priceGross: Math.round((Number(recipe.sellingPrice) || 0) * 100),
+      vatRate: Number(recipe.vatRate) || 20,
+      active: true,
+      locationId: LOCATION_ID,
+      station: mapStation(recipe),
+      isDrink: categoryId === 'drinks',
+      modifierGroupIds: [],
+      recipeId: id,
+      description: recipe.description || '',
+      imageUrl: recipe.imageUrl || '',
+      lastUpdated: timestamp
+    });
+
+    // We use the same ID for menuItems to maintain stable link, 
+    // unless the item was created through a different flow.
+    // This is consistent with "doc.id as ONLY identifier"
+    const menuItemDocRef = doc(db, 'menuItems', id);
+
+    console.log(`[DualSave] Applying Batch Write to recipes/${id} and menuItems/${id}...`);
+    
+    // 4) Atomic Batch Write
+    const batch = writeBatch(db);
+    batch.set(recipeRef, recipeDoc);
+    batch.set(menuItemDocRef, menuItemDoc);
+    
+    await batch.commit();
+    
+    // 5) Update local state (with id injected for the UI)
+    const savedRecipe = { ...recipeDoc, id } as Recipe;
+    setRecipes(prev => {
+      const exists = prev.find(r => r.id === id);
+      if (exists) {
+        return prev.map(r => r.id === id ? savedRecipe : r);
+      }
+      return [...prev, savedRecipe];
+    });
+
+    toast.success('Successfully saved to Backbone + POS');
+  } catch (err: any) {
+    const duration = Date.now() - saveStartTime;
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    const errorCode = (err as any).code || 'unknown-code';
+    
+    console.error(`%c[DualSave] FATAL ERROR after ${duration}ms:`, 'color: red; font-weight: bold;', err);
+    toast.error(`Firestore Sync Error: ${errorCode}`, { description: errorMessage });
+    
+    try {
+      handleFirestoreError(err, OperationType.WRITE, `batch/recipes+menuItems/${recipe.id}`);
+    } catch (e) {
+      // already reported
+    }
+    throw err;
+  }
+};
+
+  const handleApproveInvoice = (invoice: Invoice) => {
+    if (invoice.status === 'Processed') return; // Already processed
+
+    if (invoice.items.length > 150) {
+      toast.warning("Large invoice detected. Please verify totals carefully.", { duration: 5000 });
+    }
+
+    const timestamp = Date.now();
+    const updates: { id: string; quantity: number; pricePerUnit: number }[] = [];
+    const newItems: InventoryItem[] = [];
+
+    invoice.items.forEach((item, idx) => {
+      const unit = item.unit || 'pcs';
+      const inventoryType = (unit === 'L' || unit === 'ml' || unit === 'cl') ? 'LIQUID' : (unit === 'kg' || unit === 'g') ? 'SOLID' : 'UNIT';
+      const baseUnit = inventoryType === 'LIQUID' ? 'ml' : inventoryType === 'SOLID' ? 'g' : 'pcs';
+      
+      const existingItem = items.find(i => i.name.toLowerCase() === item.name.toLowerCase());
+      const unitSize = existingItem?.unitSize || 1;
+      
+      // Safety Check: Mandatory Unit Size for complex conversions
+      const itemUnit = (unit || 'pcs') as Unit;
+      if (existingItem && itemUnit !== existingItem.baseUnit && unitSize === 1) {
+        toast.error(`Unit Mismatch: ${item.name} is received in ${itemUnit} but stored in ${existingItem.baseUnit}. Please update its Unit Size in Inventory first.`, { duration: 6000 });
+        return;
+      }
+
+      const quantityInBase = convertToBaseUnit(item.quantity, itemUnit, unitSize);
+      const pricePerBase = item.price ? (item.price / quantityInBase) : 0;
+      
+      if (existingItem) {
+        // Price variation warning (>50%)
+        if (existingItem.pricePerUnit > 0) {
+          const variation = Math.abs(pricePerBase - existingItem.pricePerUnit) / existingItem.pricePerUnit;
+          if (variation > 0.5) {
+            toast.warning(`Abnormal price variation for ${item.name}: £${pricePerBase.toFixed(4)}/unit (Previously £${existingItem.pricePerUnit.toFixed(4)})`, { duration: 8000 });
+          }
+        }
+
+        updates.push({
+          id: existingItem.id,
+          quantity: existingItem.quantity + quantityInBase,
+          pricePerUnit: pricePerBase
+        });
+      } else {
+        newItems.push({
+          id: `inv-${timestamp}-${idx}`,
+          name: item.name,
+          category: 'Ingredient',
+          department: 'Food',
+          inventoryType,
+          baseUnit,
+          quantity: quantityInBase,
+          unit: unit,
+          unitSize: 1,
+          pricePerUnit: pricePerBase,
+          minStockLevel: 5,
+          lastUpdated: new Date().toISOString().split('T')[0],
+          supplier: invoice.vendor || 'Unknown',
+          isActive: true
+        });
+      }
+    });
+
+    // Apply updates
+    if (inventorySettings.autoUpdateFromInvoices) {
+      if (updates.length > 0) {
+        handleUpdateStock(updates, 'RECEIPT', invoice.id);
+      }
+      
+      if (newItems.length > 0) {
+        setItems(prev => [...prev, ...newItems]);
+        newItems.forEach(item => {
+          safeFirestoreSet('inventory', item.id, item);
+          logStockMovement({
+            productId: item.id,
+            type: 'RECEIPT',
+            quantityChange: item.quantity,
+            stockBefore: 0,
+            stockAfter: item.quantity,
+            referenceId: invoice.id,
+            referenceType: 'RECEIPT'
+          });
+        });
+      }
+    }
+
+    const updatedInvoice: Invoice = { ...invoice, status: 'Processed' };
+    
+    // Audit Log
+    if (user) {
+      logAuditAction(
+        user.uid,
+        user.displayName || user.email || 'Unknown',
+        'UPDATE',
+        'Invoice',
+        invoice.id,
+        invoice.invoiceNumber || invoice.id,
+        invoice,
+        updatedInvoice
+      );
+    }
+
+    setInvoices(prev => prev.map(inv => inv.id === invoice.id ? updatedInvoice : inv));
+    safeFirestoreSet('invoices', updatedInvoice.id, updatedInvoice);
+    
+    toast.success(`Approved invoice: ${updates.length} updated, ${newItems.length} new items.`);
+  };
+
+  const handleDeleteRecipe = (id: string) => {
+    const recipesUsingThis = recipes.filter(r => r.id !== id && r.ingredients?.some(i => i.inventoryItemId === `recipe-${id}`));
+    
+    let message = 'Are you sure you want to delete this recipe? This action cannot be undone and will remove all associated training data.';
+    if (recipesUsingThis.length > 0) {
+      message = `CRITICAL WARNING: This recipe is used in the following other recipes: ${recipesUsingThis.map(r => r.name).join(', ')}. Deleting it will break these dependencies. Do you still want to proceed?`;
+    }
+
     setConfirmationModal({
       isOpen: true,
       title: 'Delete Recipe',
-      message: 'Are you sure you want to delete this recipe? This action cannot be undone and will remove all associated training data.',
+      message: message,
       variant: 'danger',
       onConfirm: async () => {
+        const recipeToDelete = recipes.find(r => r.id === id);
         setRecipes(prev => prev.filter(r => r.id !== id));
         if (user) {
           try {
-            await deleteDoc(doc(db, `users/${user.uid}/recipes`, id));
+            await deleteDoc(doc(db, 'recipes', id));
+            // Audit Log
+            logAuditAction(
+              user.uid,
+              user.displayName || user.email || 'Unknown',
+              'DELETE' as any,
+              'Recipe',
+              id,
+              recipeToDelete?.name || 'Unknown',
+              recipeToDelete,
+              null
+            );
           } catch (e) {
-            handleFirestoreError(e, OperationType.DELETE, `users/${user.uid}/recipes/${id}`);
+            handleFirestoreError(e, OperationType.DELETE, `recipes/${id}`);
           }
         }
         setConfirmationModal(prev => ({ ...prev, isOpen: false }));
@@ -807,6 +2000,8 @@ export default function App() {
   };
 
   const handleSaveSupplier = (supplier: Supplier) => {
+    const oldSupplier = suppliers.find(s => s.id === supplier.id);
+    
     setSuppliers(prev => {
         const exists = prev.find(s => s.id === supplier.id);
         
@@ -831,16 +2026,41 @@ export default function App() {
             return [...prev, supplier];
         }
     });
+    if (user) {
+      logAuditAction(
+        user.uid,
+        user.displayName || user.email || 'Unknown',
+        oldSupplier ? 'UPDATE' : 'CREATE',
+        'Supplier',
+        supplier.id,
+        supplier.name,
+        oldSupplier,
+        supplier
+      );
+    }
+
     safeFirestoreSet('suppliers', supplier.id, supplier);
   };
 
   const handleDeleteSupplier = async (id: string) => {
+      const supplierToDelete = suppliers.find(s => s.id === id);
       setSuppliers(prev => prev.filter(s => s.id !== id));
       if (user) {
         try {
-          await deleteDoc(doc(db, `users/${user.uid}/suppliers`, id));
+          await deleteDoc(doc(db, 'suppliers', id));
+          // Audit Log
+          logAuditAction(
+            user.uid,
+            user.displayName || user.email || 'Unknown',
+            'DELETE' as any,
+            'Supplier',
+            id,
+            supplierToDelete?.name || 'Unknown',
+            supplierToDelete,
+            null
+          );
         } catch (e) {
-          handleFirestoreError(e, OperationType.DELETE, `users/${user.uid}/suppliers/${id}`);
+          handleFirestoreError(e, OperationType.DELETE, `suppliers/${id}`);
         }
       }
   };
@@ -848,9 +2068,8 @@ export default function App() {
   const handleSaveMapping = (itemName: string, recipeId: string) => {
     const newMappings = { ...itemRecipeMappings, [itemName]: recipeId };
     setItemRecipeMappings(newMappings);
-    // Mappings could be stored in user profile or a separate doc
     if (user) {
-      updateDoc(doc(db, `users/${user.uid}`), cleanObject({ itemRecipeMappings: newMappings })).catch(() => {});
+      setDoc(doc(db, 'settings', `mappings_${LOCATION_ID}`), { mappings: newMappings, locationId: LOCATION_ID }).catch(console.error);
     }
   };
 
@@ -877,29 +2096,86 @@ export default function App() {
     });
   };
 
-  const handlePlaceOrder = (supplier: string, items: OrderItem[]) => {
+  const handlePlaceOrder = (supplier: string, items: OrderItem[], ccEmails: string[] = []) => {
     const newOrder: Order = {
       id: `ord-${Date.now()}`,
       date: new Date().toISOString().split('T')[0],
       supplier,
       items,
       totalAmount: items.reduce((sum, item) => sum + item.quantity * item.pricePerUnit, 0),
-      status: 'Draft'
+      status: 'Draft',
+      ccEmails
     };
+    
     setOrders(prev => [newOrder, ...prev]);
     safeFirestoreSet('orders', newOrder.id, newOrder);
     setCart(prev => prev.filter(item => item.supplier !== supplier));
+    
+    // Audit Log
+    if (user) {
+      logAuditAction(
+        user.uid,
+        user.displayName || user.email || 'Unknown',
+        'CREATE',
+        'Order',
+        newOrder.id,
+        `PO from ${supplier}`,
+        null,
+        newOrder
+      );
+    }
+    
+    if (ccEmails.length > 0) {
+      console.log(`[Order Placement] Notifying CC list: ${ccEmails.join(', ')}`);
+    }
+
+    toast.success(`Order placed with ${supplier}. Total: £${newOrder.totalAmount.toFixed(2)}`);
   };
 
   const handleBulkDelete = async (ids: string[]) => {
     if (!user) return;
     const userId = user.uid;
+    
+    // Check if any items are used in recipes
+    const usedInRecipes: string[] = [];
+    ids.forEach(id => {
+      const used = recipes.some(r => r.ingredients.some(i => i.inventoryItemId === id));
+      if (used) {
+        const itemName = items.find(i => i.id === id)?.name || id;
+        usedInRecipes.push(itemName);
+      }
+    });
+    
+    if (usedInRecipes.length > 0) {
+      if (!window.confirm(`The following items are used in recipes: ${usedInRecipes.join(', ')}. Deleting them will break these recipes. Are you sure you want to proceed?`)) {
+        return;
+      }
+    }
+    
     try {
-      const deletePromises = ids.map(id => deleteDoc(doc(db, `users/${userId}/inventory`, id)));
+      const itemsToDelete = items.filter(i => ids.includes(i.id));
+      const deletePromises = ids.map(id => deleteDoc(doc(db, 'inventory', id)));
       await Promise.all(deletePromises);
+
+      // Audit Log
+      if (user) {
+        itemsToDelete.forEach(item => {
+          logAuditAction(
+            user.uid,
+            user.displayName || user.email || 'Unknown',
+            'DELETE' as any,
+            'Inventory',
+            item.id,
+            item.name,
+            item,
+            null
+          );
+        });
+      }
+
       toast.success(`Successfully deleted ${ids.length} items`);
     } catch (e: any) {
-      handleFirestoreError(e, OperationType.DELETE, `users/${userId}/inventory/bulk`);
+      handleFirestoreError(e, OperationType.DELETE, 'inventory/bulk');
     }
   };
 
@@ -907,11 +2183,11 @@ export default function App() {
     if (!user) return;
     const userId = user.uid;
     try {
-      const updatePromises = ids.map(id => updateDoc(doc(db, `users/${userId}/inventory`, id), cleanObject(updates)));
+      const updatePromises = ids.map(id => setDoc(doc(db, 'inventory', id), cleanObject(updates), { merge: true }));
       await Promise.all(updatePromises);
       toast.success(`Successfully updated ${ids.length} items`);
     } catch (e: any) {
-      handleFirestoreError(e, OperationType.UPDATE, `users/${userId}/inventory/bulk`);
+      handleFirestoreError(e, OperationType.UPDATE, 'inventory/bulk');
     }
   };
 
@@ -919,27 +2195,48 @@ export default function App() {
     setWasteRecords(prev => [record, ...prev]);
     safeFirestoreSet('waste', record.id, record);
     
-    // Deduct from inventory
-    setItems(prev => {
-      const updated = prev.map(item => {
-        if (item.id === record.inventoryItemId) {
-          const updatedItem = { ...item, quantity: Math.max(0, item.quantity - record.quantity), lastUpdated: new Date().toISOString() };
-          safeFirestoreSet('inventory', item.id, updatedItem);
-          return updatedItem;
-        }
-        return item;
-      });
-      return updated;
-    });
+    // Audit Log
+    if (user) {
+      logAuditAction(
+        user.uid,
+        user.displayName || user.email || 'Unknown',
+        'CREATE',
+        'WasteRecord',
+        record.id,
+        `Waste: ${record.itemName}`,
+        null,
+        record
+      );
+    }
+    
+    // Deduct from inventory (check both items and recipes)
+    const item = items.find(i => i.id === record.inventoryItemId);
+    const recipe = recipes.find(r => `recipe-${r.id}` === record.inventoryItemId);
+    
+    if (item || recipe) {
+      handleUpdateStock([{ id: record.inventoryItemId, quantity: Math.max(0, (item?.quantity || recipe?.quantity || 0) - record.baseQuantity) }], 'WASTE', record.id);
+    }
   };
 
   const handleDeleteWaste = async (id: string) => {
+    const recordToDelete = wasteRecords.find(r => r.id === id);
     setWasteRecords(prev => prev.filter(r => r.id !== id));
     if (user) {
       try {
-        await deleteDoc(doc(db, `users/${user.uid}/waste`, id));
+        await deleteDoc(doc(db, 'waste', id));
+        // Audit Log
+        logAuditAction(
+          user.uid,
+          user.displayName || user.email || 'Unknown',
+          'DELETE' as any,
+          'WasteRecord',
+          id,
+          `Waste: ${recordToDelete?.itemName || 'Unknown'}`,
+          recordToDelete,
+          null
+        );
       } catch (e) {
-        handleFirestoreError(e, OperationType.DELETE, `users/${user.uid}/waste/${id}`);
+        handleFirestoreError(e, OperationType.DELETE, `waste/${id}`);
       }
     }
   };
@@ -947,15 +2244,41 @@ export default function App() {
   const handleSaveExpense = (record: ExpenseRecord) => {
     setExpenseRecords(prev => [record, ...prev]);
     safeFirestoreSet('expenses', record.id, record);
+    
+    // Audit Log
+    if (user) {
+      logAuditAction(
+        user.uid,
+        user.displayName || user.email || 'Unknown',
+        'CREATE',
+        'ExpenseRecord',
+        record.id,
+        `Expense: ${record.description}`,
+        null,
+        record
+      );
+    }
   };
 
   const handleDeleteExpense = async (id: string) => {
+    const recordToDelete = expenseRecords.find(r => r.id === id);
     setExpenseRecords(prev => prev.filter(r => r.id !== id));
     if (user) {
       try {
-        await deleteDoc(doc(db, `users/${user.uid}/expenses`, id));
+        await deleteDoc(doc(db, 'expenses', id));
+        // Audit Log
+        logAuditAction(
+          user.uid,
+          user.displayName || user.email || 'Unknown',
+          'DELETE' as any,
+          'ExpenseRecord',
+          id,
+          `Expense: ${recordToDelete?.description || 'Unknown'}`,
+          recordToDelete,
+          null
+        );
       } catch (e) {
-        handleFirestoreError(e, OperationType.DELETE, `users/${user.uid}/expenses/${id}`);
+        handleFirestoreError(e, OperationType.DELETE, `expenses/${id}`);
       }
     }
   };
@@ -990,7 +2313,7 @@ export default function App() {
 
   const NavItem = ({ view, icon: Icon, label }: { view: View, icon: any, label: string }) => (
     <button
-      onClick={() => { setCurrentView(view); setIsSidebarOpen(false); }}
+      onClick={() => { onNavItemClick(view); setIsSidebarOpen(false); }}
       className={`w-full flex items-center px-4 py-3 text-sm font-medium rounded-md transition-colors ${
         currentView === view 
           ? 'bg-accent text-white shadow-sm' 
@@ -1006,22 +2329,33 @@ export default function App() {
     const recipeItems: InventoryItem[] = recipes
       .filter(r => r.type === 'recipe' || r.category === 'Batch' || r.category === 'Prep')
       .map(r => {
-        const totalCost = calculateTotalCost(r.ingredients, items);
-        const costPerUnit = r.yieldAmount && r.yieldAmount > 0 ? totalCost / r.yieldAmount : totalCost;
+        let totalCost = 0;
+        try {
+          totalCost = calculateTotalCost(r.ingredients, items, recipes);
+        } catch (e) {
+          console.error(`Circular dependency cost calculation failed for ${r.name}:`, e);
+          totalCost = 0;
+        }
+        const yieldFactor = CONVERSION_FACTORS[r.yieldUnit as Unit] || 1;
+        const costPerBaseUnit = r.yieldAmount && r.yieldAmount > 0 ? totalCost / (r.yieldAmount * yieldFactor) : totalCost;
         
         return {
           id: `recipe-${r.id}`,
           name: r.name || 'Unnamed Recipe',
           category: (r.category === 'Food' || r.category === 'Prep') ? 'Prep' : 'Batch',
+          inventoryType: (r.yieldUnit === 'L' || r.yieldUnit === 'ml' ? 'LIQUID' : r.yieldUnit === 'kg' || r.yieldUnit === 'g' ? 'SOLID' : 'UNIT') as InventoryType,
+          baseUnit: (r.yieldUnit === 'L' || r.yieldUnit === 'ml' ? 'ml' : r.yieldUnit === 'kg' || r.yieldUnit === 'g' ? 'g' : 'pcs') as Unit,
           quantity: r.quantity || 0,
-          unit: (r.yieldUnit as Unit) || 'portions',
+          unit: (r.yieldUnit as Unit) || 'portions' as Unit,
+          unitSize: 1,
           minStockLevel: 0,
-          pricePerUnit: costPerUnit, // Using COGS as pricePerUnit for batches/preps
+          pricePerUnit: r.pricePerUnit || costPerBaseUnit, // Using stored cost if available, else calculate
           retailPrice: r.sellingPrice || 0,
           lastUpdated: r.lastUpdated,
           imageUrl: r.imageUrl,
           vatCode: r.vatCode,
-          vatRate: r.vatRate
+          vatRate: r.vatRate,
+          isActive: true
         };
       });
     return [...items, ...recipeItems];
@@ -1057,6 +2391,56 @@ export default function App() {
     });
   }, [recipes]);
 
+  // Background Cleanup Task for Orphaned Ingredients (Fix #3)
+  useEffect(() => {
+    if (!isAuthReady || !user || recipes.length === 0 || items.length === 0) return;
+
+    const cleanupOrphanedIngredients = async () => {
+      let cleanedCount = 0;
+      const recipesToUpdate: Recipe[] = [];
+
+      recipes.forEach(recipe => {
+        const validIngredients = recipe.ingredients.filter(ing => {
+          if (ing.inventoryItemId.startsWith('recipe-')) {
+            const subRecipeId = ing.inventoryItemId.replace('recipe-', '');
+            return recipes.some(r => r.id === subRecipeId);
+          }
+          return items.some(i => i.id === ing.inventoryItemId);
+        });
+
+        if (validIngredients.length !== recipe.ingredients.length) {
+          recipesToUpdate.push({ ...recipe, ingredients: validIngredients });
+          cleanedCount += (recipe.ingredients.length - validIngredients.length);
+        }
+      });
+
+      if (recipesToUpdate.length > 0) {
+        console.log(`[Cleanup] Found ${cleanedCount} orphaned ingredients in ${recipesToUpdate.length} recipes. Cleaning up...`);
+        
+        // Use batch to update Firestore
+        const batch = writeBatch(db);
+        recipesToUpdate.forEach(updatedRecipe => {
+          const recipeRef = doc(db, 'recipes', updatedRecipe.id);
+          batch.update(recipeRef, { ingredients: updatedRecipe.ingredients });
+        });
+
+        try {
+          await batch.commit();
+          setRecipes(prev => prev.map(r => {
+            const updated = recipesToUpdate.find(ur => ur.id === r.id);
+            return updated ? updated : r;
+          }));
+          toast.info(`System Cleanup: Removed ${cleanedCount} orphaned ingredients from recipes.`);
+        } catch (error) {
+          console.error("[Cleanup] Failed to save cleaned recipes:", error);
+        }
+      }
+    };
+
+    // Run cleanup once on app start
+    cleanupOrphanedIngredients();
+  }, [isAuthReady, user, items.length, recipes.length]);
+
   if (!isAuthReady) {
     return (
       <div className="min-h-screen bg-main-bg flex items-center justify-center">
@@ -1071,21 +2455,116 @@ export default function App() {
         <div className="bg-card-bg p-8 rounded-2xl shadow-xl max-w-md w-full text-center">
           <div className="mb-6 flex justify-center">
             <img 
-              src="https://picsum.photos/seed/backbone/200/200" 
+              src="Backbonehub-ico.png" 
               alt="Backbone Hub Logo" 
-              className="w-20 h-20 rounded-2xl shadow-sm"
-              referrerPolicy="no-referrer"
+              className="w-20 h-20 rounded-2xl shadow-sm object-contain"
             />
           </div>
-          <h1 className="text-2xl font-bold text-text-navy mb-2">Welcome to Backbone Hub</h1>
-          <p className="text-text-muted mb-8">Please sign in to manage your inventory and recipes securely in the cloud.</p>
-          <button
-            onClick={handleLogin}
-            className="w-full bg-cta text-white py-3 rounded-xl font-semibold hover:opacity-90 transition-colors flex items-center justify-center gap-2"
-          >
-            <LogIn className="w-5 h-5" />
-            Sign in with Google
-          </button>
+          
+          {authMode === 'verify' ? (
+            <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+              <div className="w-16 h-16 bg-accent/10 text-accent rounded-full flex items-center justify-center mx-auto mb-4">
+                <AlertCircle className="w-8 h-8" />
+              </div>
+              <h1 className="text-2xl font-bold text-text-navy mb-4">Verify Your Email</h1>
+              <p className="text-text-muted mb-8">
+                We have sent you a verification email to <span className="font-bold text-text-navy">{verificationEmail}</span>. Please verify it and log in.
+              </p>
+              <button
+                onClick={() => setAuthMode('login')}
+                className="w-full bg-accent text-white py-3 rounded-xl font-semibold hover:opacity-90 transition-colors flex items-center justify-center gap-2"
+              >
+                <LogIn className="w-5 h-5" />
+                Return to Login
+              </button>
+            </div>
+          ) : (
+            <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+              <h1 className="text-2xl font-bold text-text-navy mb-2">Welcome to Backbone Hub</h1>
+              <p className="text-text-muted mb-8">Please sign in to manage your inventory and recipes securely in the cloud.</p>
+              
+              <form onSubmit={authMode === 'login' ? handleEmailLogin : handleEmailRegister} className="space-y-4 mb-6">
+                <div className="text-left">
+                  <label className="block text-xs font-black uppercase tracking-widest text-text-muted mb-1 ml-1">Email Address</label>
+                  <input
+                    type="email"
+                    required
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="w-full bg-main-bg border border-border-grey dark:border-slate-700 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-accent transition-all"
+                    placeholder="name@company.com"
+                  />
+                </div>
+                <div className="text-left">
+                  <div className="flex justify-between items-center mb-1 ml-1">
+                    <label className="block text-xs font-black uppercase tracking-widest text-text-muted">Password</label>
+                    {authMode === 'login' && (
+                      <button
+                        type="button"
+                        onClick={handleForgotPassword}
+                        className="text-[10px] font-bold text-accent hover:underline uppercase tracking-tighter"
+                      >
+                        Forgot Password?
+                      </button>
+                    )}
+                  </div>
+                  <input
+                    type="password"
+                    required
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="w-full bg-main-bg border border-border-grey dark:border-slate-700 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-accent transition-all"
+                    placeholder="••••••••"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={isAuthenticating}
+                  className="w-full bg-accent text-white py-3 rounded-xl font-semibold hover:opacity-90 transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  {isAuthenticating ? (
+                    <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                  ) : (
+                    authMode === 'login' ? 'Sign In' : 'Create Account'
+                  )}
+                </button>
+              </form>
+
+              <div className="relative mb-6">
+                <div className="absolute inset-0 flex items-center">
+                  <div className="w-full border-t border-border-grey dark:border-slate-700"></div>
+                </div>
+                <div className="relative flex justify-center text-xs uppercase">
+                  <span className="bg-card-bg px-2 text-text-muted font-bold">Or continue with</span>
+                </div>
+              </div>
+
+              <button
+                onClick={handleLogin}
+                disabled={isAuthenticating}
+                className="w-full bg-white dark:bg-slate-800 text-text-navy dark:text-white border border-border-grey dark:border-slate-700 py-3 rounded-xl font-semibold hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors flex items-center justify-center gap-2 mb-6 disabled:opacity-50"
+              >
+                {isAuthenticating && authMode === 'login' ? (
+                  <div className="w-5 h-5 border-2 border-accent border-t-transparent rounded-full animate-spin"></div>
+                ) : (
+                  <>
+                    <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-5 h-5" alt="Google" />
+                    Google
+                  </>
+                )}
+              </button>
+
+              <p className="text-sm text-text-muted">
+                {authMode === 'login' ? "Don't have an account?" : "Already have an account?"}{' '}
+                <button
+                  onClick={() => setAuthMode(authMode === 'login' ? 'register' : 'login')}
+                  className="text-accent font-bold hover:underline"
+                >
+                  {authMode === 'login' ? 'Register' : 'Login'}
+                </button>
+              </p>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -1112,7 +2591,7 @@ export default function App() {
         {/* Mobile Header */}
         <div className={`md:hidden border-b px-4 py-3 flex items-center justify-between flex-shrink-0 z-30 transition-colors duration-200 ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-primary-surface border-border-grey'}`}>
           <div className="flex items-center">
-            <img src="https://picsum.photos/seed/backbone/100/100" alt="Logo" className="h-8 w-8 rounded-lg" />
+            <img src="Backbonehub-ico.png" alt="Logo" className="h-8 w-8 rounded-lg object-contain" />
             <div className="ml-2 flex flex-col leading-tight">
               <span className={`text-lg font-bold ${isDarkMode ? 'text-white' : 'text-text-navy'}`}>Backbone Hub</span>
               <span className="text-[10px] font-bold text-text-muted uppercase tracking-widest">Backoffice</span>
@@ -1147,7 +2626,7 @@ export default function App() {
         `}>
           <div className="h-full flex flex-col">
             <div className={`h-20 flex items-center px-6 border-b hidden md:flex flex-shrink-0 transition-colors ${isDarkMode ? 'border-slate-800' : 'border-border-grey'}`}>
-              <img src="https://picsum.photos/seed/backbone/100/100" alt="Logo" className="h-10 w-10 rounded-lg" />
+              <img src="Backbonehub-ico.png" alt="Logo" className="h-10 w-10 rounded-lg object-contain" />
               <div className="ml-3 flex flex-col leading-tight">
                 <span className={`text-xl font-bold ${isDarkMode ? 'text-white' : 'text-text-navy'}`}>Backbone Hub</span>
                 <span className="text-[11px] font-bold text-text-muted uppercase tracking-widest">Backoffice</span>
@@ -1155,23 +2634,29 @@ export default function App() {
             </div>
             
             <nav className="flex-1 px-4 py-4 space-y-1 overflow-y-auto">
-              <NavItem view="dashboard" icon={LayoutDashboard} label="Dashboard" />
-              <NavItem view="inventory" icon={Package} label="Inventory" />
-              <NavItem view="orders" icon={ShoppingCart} label="Orders" />
-              <NavItem view="recipes" icon={ChefHat} label="Menu Recipes" />
-              <NavItem view="training" icon={BookOpen} label="Training" />
-              <NavItem view="sales" icon={TrendingUp} label="Sales Import" />
-              <NavItem view="stocktake" icon={ClipboardCheck} label="Stock Count" />
-              <NavItem view="waste" icon={Trash2} label="Waste Records" />
-              <NavItem view="invoices" icon={FileInput} label="Invoices" />
-              <NavItem view="expenses" icon={Receipt} label="Expenses" />
-              <NavItem view="suppliers" icon={Truck} label="Suppliers" />
-              <NavItem view="reports" icon={TrendingUp} label="Reports" />
-              <NavItem view="pos" icon={Monitor} label="Backbone POS" />
+              {checkPermission('reports', 'viewSales') && <NavItem view="dashboard" icon={LayoutDashboard} label="Dashboard" />}
+              {checkPermission('reports', 'viewFinancials') && <NavItem view="labour" icon={HardHat} label="Labour Import" />}
+              {checkPermission('staffingRota', 'view') && <NavItem view="staffing_rota" icon={Users} label="Staffing & Rota" />}
+              {checkPermission('reports', 'viewFinancials') && <NavItem view="financial_command" icon={PoundSterling} label="Financial Command" />}
+              {checkPermission('reports', 'viewSales') && <NavItem view="pos_dashboard" icon={Zap} label="POS Dashboard" />}
+              {checkPermission('reports', 'viewSales') && <NavItem view="manager" icon={Zap} label="Manager Mode" />}
+              {checkPermission('staff', 'viewBriefing') && <NavItem view="briefing" icon={Megaphone} label="Shift Briefing" />}
+              {checkPermission('inventory', 'view') && <NavItem view="inventory" icon={Package} label="Inventory" />}
+              {checkPermission('orders', 'view') && <NavItem view="orders" icon={ShoppingCart} label="Stock Orders" />}
+              {checkPermission('recipes', 'view') && <NavItem view="recipes" icon={ChefHat} label="Menu Recipes" />}
+              {checkPermission('staff', 'viewTraining') && <NavItem view="training" icon={BookOpen} label="Training" />}
+              {checkPermission('tables', 'view') && <NavItem view="tables" icon={LayoutList} label="Table Manager" />}
+              {checkPermission('reports', 'viewSales') && <NavItem view="sales" icon={TrendingUp} label="Sales Import" />}
+              {checkPermission('stockCount', 'view') && <NavItem view="stocktake" icon={ClipboardCheck} label="Stock Count" />}
+              {checkPermission('inventory', 'edit') && <NavItem view="waste" icon={Trash2} label="Waste Records" />}
+              {checkPermission('inventory', 'processInvoices') && <NavItem view="invoices" icon={FileInput} label="Invoices" />}
+              {checkPermission('reports', 'viewFinancials') && <NavItem view="expenses" icon={Receipt} label="Expenses" />}
+              {checkPermission('inventory', 'manageSuppliers') && <NavItem view="suppliers" icon={Truck} label="Suppliers" />}
+              {checkPermission('reports', 'viewSales') && <NavItem view="reports" icon={TrendingUp} label="Reports" />}
             </nav>
 
             <div className={`p-4 border-t flex-shrink-0 transition-colors ${isDarkMode ? 'border-slate-800' : 'border-border-grey'}`}>
-              <NavItem view="settings" icon={SettingsIcon} label="Settings" />
+              {checkPermission('settings', 'view') && <NavItem view="settings" icon={SettingsIcon} label="Settings" />}
               <div className="mt-4 flex items-center justify-between bg-card-bg dark:bg-slate-800 p-3 rounded-xl border border-border-grey dark:border-slate-700 shadow-sm">
                 <div className="flex items-center min-w-0">
                   {user?.photoURL ? (
@@ -1183,7 +2668,9 @@ export default function App() {
                   )}
                   <div className="ml-3 truncate">
                     <p className={`text-sm font-bold truncate ${isDarkMode ? 'text-slate-100' : 'text-text-navy'}`}>{user?.displayName || 'User'}</p>
-                    <p className="text-[10px] text-text-muted uppercase tracking-wider font-medium">Manager</p>
+                    <p className="text-[10px] text-text-muted uppercase tracking-wider font-medium">
+                      {(user?.email === 'saga00@gmail.com' || user?.email === 'famrokha@gmail.com') ? 'Admin' : 'Staff'}
+                    </p>
                   </div>
                 </div>
                 <button 
@@ -1219,6 +2706,8 @@ export default function App() {
               <div className={`flex flex-col text-text-navy`}>
                 <h1 className="text-xl sm:text-2xl font-bold leading-none">
                   {currentView === 'dashboard' && 'Backbone Hub'}
+                  {currentView === 'financial_command' && 'Financial Command Center'}
+                  {currentView === 'manager' && 'Manager Workflow'}
                   {currentView === 'inventory' && 'Inventory Management'}
                   {currentView === 'orders' && 'Stock Orders'}
                   {currentView === 'recipes' && 'Menu & Recipes'}
@@ -1229,8 +2718,9 @@ export default function App() {
                   {currentView === 'invoices' && 'Invoice Processing'}
                   {currentView === 'expenses' && 'Expense Tracking'}
                   {currentView === 'suppliers' && 'Supplier Management'}
+                  {currentView === 'briefing' && 'Shift Briefing & Performance'}
                   {currentView === 'reports' && 'Business Reports'}
-                  {currentView === 'pos' && 'Backbone POS'}
+                  {currentView === 'staffing_rota' && 'Staffing & Rota Intelligence'}
                   {currentView === 'settings' && 'System Settings'}
                 </h1>
                 {currentView === 'dashboard' && (
@@ -1248,17 +2738,57 @@ export default function App() {
               </button>
             </header>
 
-            {currentView === 'dashboard' && <Dashboard items={combinedItems} salesHistory={salesHistory} totalRevenue={totalRevenue} setCurrentView={setCurrentView} onAddToCart={handleAddToCart} />}
+            {currentView === 'dashboard' && (  
+              <Dashboard
+                items={combinedItems} 
+                salesHistory={salesHistory} 
+                totalRevenue={combinedTotalRevenue} 
+                posPaymentsCount={posPayments.length}
+                databaseId={(db as any)._databaseId?.database}
+                orderCountToday={liveSalesData.aggregate.numberOfPaidOrders}
+                setCurrentView={setCurrentView} 
+                onAddToCart={handleAddToCart} 
+              />
+            )}
+
+            {currentView === 'financial_command' && (
+              <FinancialCommandCenter
+                closures={closures}
+                orders={posOrders}
+                payments={posPayments}
+                staff={staffMembers}
+                monthlyTargets={monthlyTargets}
+                inventory={items}
+                recipes={recipes}
+                forecasts={forecasts}
+                onOpenView={setCurrentView}
+              />
+            )}
+
+            {currentView === 'manager' && (
+              <ManagerMode 
+                inventory={items}
+                payments={posPayments}
+                orders={posOrders}
+                closures={closures}
+                forecasts={forecasts}
+                staffPerformance={staffPerformance}
+                onNavigate={(tab) => setCurrentView(tab as any)}
+              />
+            )}
             
             {currentView === 'inventory' && (
               <InventoryList 
                 items={combinedItems} 
+                recipes={recipes}
                 onAddItem={openAddItemModal} 
                 onEditItem={openEditItemModal}
                 cart={cart}
                 onAddToCart={handleAddToCart}
                 onBulkDelete={handleBulkDelete}
                 onBulkUpdate={handleBulkUpdate}
+                onBulkAdd={handleBulkAdd}
+                checkPermission={checkPermission}
               />
             )}
 
@@ -1266,11 +2796,20 @@ export default function App() {
               <Orders 
                 cart={cart}
                 orders={orders}
+                posOrders={posOrders}
                 suppliers={suppliers}
                 inventoryItems={combinedItems}
+                recipes={recipes}
                 onPlaceOrder={handlePlaceOrder}
                 onUpdateCart={handleAddToCart}
-                onUpdateOrderStatus={(id, status) => setOrders(prev => prev.map(o => o.id === id ? { ...o, status } : o))}
+                onUpdateOrderStatus={(id, status) => {
+                  setOrders(prev => prev.map(o => o.id === id ? { ...o, status } : o));
+                  const order = orders.find(o => o.id === id);
+                  if (order) {
+                    safeFirestoreSet('orders', id, { ...order, status });
+                  }
+                }}
+                checkPermission={checkPermission}
               />
             )}
 
@@ -1284,11 +2823,34 @@ export default function App() {
                 onAddInventoryItem={handleSaveItem}
                 initialEditRecipeId={editRecipeId}
                 onClearInitialEditRecipeId={() => setEditRecipeId(null)}
+                checkPermission={checkPermission}
               />
             )}
 
             {currentView === 'training' && (
-              <TrainingCenter recipes={recipes} inventoryItems={combinedItems} />
+              <TrainingCenter 
+                recipes={recipes} 
+                inventoryItems={combinedItems} 
+                staffId={user?.uid}
+                staffName={user?.displayName || user?.email || 'Unknown'}
+                certifications={staffCertifications}
+                isAdmin={userRole === 'Admin'}
+              />
+            )}
+
+            {currentView === 'pos_dashboard' && (
+              <POSDashboard 
+                orders={posOrders} 
+                payments={posPayments}
+                tables={tables} 
+                forecasts={forecasts} 
+                staff={staffMembers}
+                recipes={recipes}
+                inventory={items}
+                locationId={LOCATION_ID}
+                onNotifyStaff={(m) => toast.info(`Broadcast: ${m}`)}
+                onPushSuggestion={(m) => toast.success(`Pushed to staff: ${m}`)}
+              />
             )}
 
             {currentView === 'sales' && (
@@ -1309,6 +2871,7 @@ export default function App() {
                 onUpdateInventory={handleUpdateStock}
                 history={stockHistory}
                 onSaveRecord={handleSaveStockRecord}
+                checkPermission={checkPermission}
               />
             )}
 
@@ -1319,12 +2882,14 @@ export default function App() {
                 onSaveWaste={handleSaveWaste}
                 onDeleteWaste={handleDeleteWaste}
                 isDarkMode={isDarkMode}
+                checkPermission={checkPermission}
               />
             )}
             
             {currentView === 'invoices' && (
               <InvoiceProcessor 
                 onProcessInvoice={handleAddFromInvoice} 
+                onApproveInvoice={handleApproveInvoice}
                 suppliers={suppliers}
                 invoices={invoices}
                 onUpdateInvoice={(id, updates) => setInvoices(prev => prev.map(inv => inv.id === id ? { ...inv, ...updates } : inv))}
@@ -1352,30 +2917,53 @@ export default function App() {
               />
             )}
 
-            {currentView === 'pos' && (
-              <POSLayout 
-                recipes={recipes} 
-                inventoryItems={combinedItems} 
-                menuCategories={menuCategories}
-                onProcessSales={handleSalesDeduction}
+            {currentView === 'briefing' && (
+              <ShiftBriefingManager recipes={recipes} checkPermission={checkPermission} userRole={userRole} />
+            )}
+
+            {currentView === 'staffing_rota' && (
+              <StaffingRotaHub 
+                staff={staffMembers} 
+                orders={posOrders} 
+                closures={closures} 
+                shifts={labourShifts}
+                onSetCurrentView={setCurrentView}
+              />
+            )}
+
+            {currentView === 'labour' && (
+              <LabourIntelligence staff={staffMembers} orders={posOrders} closures={closures} />
+            )}
+
+            {currentView === 'tables' && (
+              <TableManager 
+                tables={tables} 
+                onTableClick={(table) => setPosTable(table)}
               />
             )}
 
             {currentView === 'reports' && (
               <Reports 
                 posOrders={posOrders}
+                posPayments={posPayments}
+                liveSalesData={liveSalesData}
+                livePosSalesSummary={livePosSalesSummary}
                 inventoryItems={combinedItems}
                 suppliers={suppliers}
                 invoices={invoices}
                 orders={orders}
                 recipes={recipes}
+                wasteRecords={wasteRecords}
+                expenseRecords={expenseRecords}
                 onEditRecipe={handleEditRecipeFromReport}
                 onEditInventoryItem={handleEditInventoryItemFromReport}
               />
             )}
 
             {currentView === 'settings' && (
-              <Settings />
+              <RoleGuard allowedRoles={['Admin', 'Manager']}>
+                <Settings auditLogs={auditLogs} />
+              </RoleGuard>
             )}
 
             <ConfirmationModal
@@ -1406,6 +2994,15 @@ export default function App() {
             className="fixed inset-0 bg-gray-600 bg-opacity-75 z-30 md:hidden"
             onClick={() => setIsSidebarOpen(false)}
           ></div>
+        )}
+
+        {posTable && (
+          <LivePOS 
+            table={posTable}
+            recipes={recipes}
+            onClose={() => setPosTable(null)}
+            existingOrder={posOrders.find(o => (o.tableNumber === (posTable.number || posTable.name) || o.tableName === posTable.name) && (o.status === 'Open' || o.status === 'Sent'))}
+          />
         )}
       </div>
     </ErrorBoundary>

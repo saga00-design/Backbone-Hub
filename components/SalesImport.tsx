@@ -61,10 +61,14 @@ export const SalesImport: React.FC<SalesImportProps> = ({ recipes, inventoryItem
       if (!text) return;
 
       try {
-        // Split by newline handling both \r\n and \n
-        const lines = text.split(/\r\n|\n/);
-        const parsed: SalesItem[] = [];
+        const lines = text.split(/\r\n|\n/).map(l => l.trim()).filter(Boolean);
+        if (lines.length < 2) {
+          setError("Empty or invalid file structure.");
+          return;
+        }
 
+        const parsed: SalesItem[] = [];
+        
         // Helper to split CSV line respecting quotes
         const splitCSVLine = (line: string) => {
             const result = [];
@@ -82,67 +86,76 @@ export const SalesImport: React.FC<SalesImportProps> = ({ recipes, inventoryItem
                 }
             }
             result.push(current);
-            return result;
+            return result.map(s => s.trim().replace(/^"|"$/g, ''));
         };
 
-        for (let i = 0; i < lines.length; i++) {
-          const line = lines[i].trim();
-          if (!line) continue;
+        // Header Detection Logic
+        const firstLineParts = splitCSVLine(lines[0]);
+        let itemIdx = -1;
+        let qtyIdx = -1;
+        let amountIdx = -1;
+
+        // Common header names across different POS systems (Square, Clover, Toast, Lightspeed, Zettle)
+        const itemAliases = ['item', 'name', 'product', 'item name', 'description', 'title'];
+        const qtyAliases = ['qty', 'quantity', 'count', 'total quantity', 'units', 'volume'];
+        const amountAliases = ['amount', 'price', 'total', 'gross', 'sales', 'value', 'net sales', 'total amount'];
+
+        firstLineParts.forEach((header, idx) => {
+            const h = header.toLowerCase().trim();
+            if (itemIdx === -1 && itemAliases.some(a => h.includes(a))) itemIdx = idx;
+            if (qtyIdx === -1 && qtyAliases.some(a => h.includes(a)) && !h.includes('price')) qtyIdx = idx;
+            if (amountIdx === -1 && amountAliases.some(a => h.includes(a)) && h !== 'item') amountIdx = idx;
+        });
+
+        // Fallback for strict order-based parsing if no headers matched or headers missing
+        if (itemIdx === -1) itemIdx = 0;
+        if (qtyIdx === -1) qtyIdx = 2; // Column C fallback
+        if (amountIdx === -1) amountIdx = 3; // Column D fallback
+
+        console.log(`[SalesImport] Header detection: Item=${itemIdx}, Qty=${qtyIdx}, Amount=${amountIdx}`);
+
+        for (let i = 1; i < lines.length; i++) {
+          const parts = splitCSVLine(lines[i]);
+          if (parts.length <= Math.max(itemIdx, qtyIdx)) continue;
           
-          const parts = splitCSVLine(line);
+          const name = parts[itemIdx];
+          const qtyStr = parts[qtyIdx];
+          const amountStr = amountIdx !== -1 && parts[amountIdx] ? parts[amountIdx] : '0';
           
-          // Requirement: Column A (index 0) is Item Name, Column C (index 2) is Total Quantity, Column D (index 3) is Total Amount
-          if (parts.length >= 3) {
-            const name = parts[0].trim().replace(/^"|"$/g, ''); // Column A
-            const qtyStr = parts[2].trim().replace(/^"|"$/g, ''); // Column C
-            const amountStr = parts.length > 3 ? parts[3].trim().replace(/^"|"$/g, '') : '0'; // Column D (Total Amount)
-            
-            // Skip header rows if detected
-            if (name.toLowerCase() === 'item name' || qtyStr.toLowerCase() === 'total quantity' || qtyStr.toLowerCase() === 'quantity') {
-                continue;
+          if (!name || name.toLowerCase() === 'total' || name.toLowerCase() === 'sum') continue;
+
+          const qty = parseFloat(qtyStr.replace(/[^0-9.-]/g, ''));
+          const amount = parseFloat(amountStr.replace(/[^0-9.-]/g, ''));
+          
+          if (!isNaN(qty)) {
+            let recipe: Recipe | undefined;
+
+            if (itemMappings[name]) {
+                recipe = recipes.find(r => r.id === itemMappings[name]);
             }
-
-            const qty = parseFloat(qtyStr);
-            const amount = parseFloat(amountStr.replace(/[£$,]/g, '')); // Remove currency symbols if present
             
-            if (name) {
-              if (isNaN(qty) || isNaN(amount)) {
-                setError(`Invalid data at row ${i + 1}: "${name}" has invalid quantity (${qtyStr}) or amount (${amountStr}). Both must be valid numbers.`);
-                setSalesData([]);
-                return;
-              }
-
-              // Try to find match in recipes (case-insensitive) or mapping
-              let recipe: Recipe | undefined;
-
-              // 1. Check saved mapping
-              if (itemMappings[name]) {
-                  recipe = recipes.find(r => r.id === itemMappings[name]);
-              }
-              
-              // 2. Fallback to name match
-              if (!recipe) {
-                  recipe = recipes.find(r => (r.name || '').toLowerCase() === (name || '').toLowerCase());
-              }
-              
-              parsed.push({
-                itemName: name,
-                quantity: qty,
-                totalAmount: amount,
-                matchedRecipe: recipe
-              });
+            if (!recipe) {
+                recipe = recipes.find(r => (r.name || '').toLowerCase() === (name || '').toLowerCase());
             }
+            
+            parsed.push({
+              itemName: name,
+              quantity: qty,
+              totalAmount: isNaN(amount) ? 0 : amount,
+              matchedRecipe: recipe
+            });
           }
         }
         
         if (parsed.length === 0) {
-            setError("No valid data found. Please ensure CSV has 'Item Name' in Column A and 'Total Quantity' in Column C.");
+            setError("No valid sales data found. Ensure your CSV has Item Name, Quantity, and Sales columns.");
         } else {
             setSalesData(parsed);
             calculateImpact(parsed);
         }
       } catch (err) {
         setError("Failed to parse CSV. Please ensure the file is a valid CSV.");
+        console.error(err);
       }
     };
     reader.readAsText(file);
@@ -222,8 +235,9 @@ export const SalesImport: React.FC<SalesImportProps> = ({ recipes, inventoryItem
       date: new Date().toISOString(),
       fileName: file?.name || 'Unknown CSV',
       totalSales: totalSales,
-      kitchenSales: kitchenSales,
-      barSales: barSales,
+      foodSales: foodSales,
+      beverageSales: beverageSales,
+      nonFbSales: nonFbSales,
       itemsCount: salesData.length,
       matchedCount: salesData.filter(s => s.matchedRecipe).length,
       ingredientsAffected: impactAnalysis.length
@@ -245,23 +259,31 @@ export const SalesImport: React.FC<SalesImportProps> = ({ recipes, inventoryItem
   const unmatchedCount = salesData.length - matchedCount;
   const totalSales = salesData.reduce((sum, item) => sum + (item.totalAmount || 0), 0);
 
-  const kitchenSales = salesData.reduce((sum, item) => {
+  const foodSales = salesData.reduce((sum, item) => {
     if (item.matchedRecipe && item.matchedRecipe.category === 'Food') {
       return sum + (item.totalAmount || 0);
     }
     return sum;
   }, 0);
 
-  const barSales = salesData.reduce((sum, item) => {
+  const beverageSales = salesData.reduce((sum, item) => {
     if (item.matchedRecipe && item.matchedRecipe.category === 'Beverage') {
       return sum + (item.totalAmount || 0);
     }
     return sum;
   }, 0);
 
-  const kitchenPercent = totalSales > 0 ? (kitchenSales / totalSales) * 100 : 0;
-  const barPercent = totalSales > 0 ? (barSales / totalSales) * 100 : 0;
-  const otherPercent = totalSales > 0 ? ((totalSales - kitchenSales - barSales) / totalSales) * 100 : 0;
+  const nonFbSales = salesData.reduce((sum, item) => {
+    if (item.matchedRecipe && item.matchedRecipe.category === 'Non-F&B') {
+      return sum + (item.totalAmount || 0);
+    }
+    return sum;
+  }, 0);
+
+  const foodPercent = totalSales > 0 ? (foodSales / totalSales) * 100 : 0;
+  const beveragePercent = totalSales > 0 ? (beverageSales / totalSales) * 100 : 0;
+  const nonFbPercent = totalSales > 0 ? (nonFbSales / totalSales) * 100 : 0;
+  const otherPercent = totalSales > 0 ? ((totalSales - foodSales - beverageSales - nonFbSales) / totalSales) * 100 : 0;
 
   return (
     <div className="space-y-6">
@@ -271,7 +293,7 @@ export const SalesImport: React.FC<SalesImportProps> = ({ recipes, inventoryItem
           onClick={() => setActiveTab('new')}
           className={`px-6 py-2 text-[10px] font-bold uppercase tracking-widest rounded-lg transition-all ${
             activeTab === 'new' 
-              ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 shadow-sm' 
+              ? 'bg-accent/10 text-accent shadow-sm' 
               : 'text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200 hover:bg-gray-50 dark:hover:bg-slate-800'
           }`}
         >
@@ -281,7 +303,7 @@ export const SalesImport: React.FC<SalesImportProps> = ({ recipes, inventoryItem
           onClick={() => setActiveTab('history')}
           className={`px-6 py-2 text-[10px] font-bold uppercase tracking-widest rounded-lg transition-all ${
             activeTab === 'history' 
-              ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 shadow-sm' 
+              ? 'bg-accent/10 text-accent shadow-sm' 
               : 'text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200 hover:bg-gray-50 dark:hover:bg-slate-800'
           }`}
         >
@@ -301,8 +323,8 @@ export const SalesImport: React.FC<SalesImportProps> = ({ recipes, inventoryItem
           />
           <div className="bg-white dark:bg-slate-900 shadow-2xl rounded-2xl p-8 border border-gray-100 dark:border-slate-800">
             <div className="flex items-center mb-8">
-                <div className="bg-blue-100 dark:bg-blue-900/30 p-4 rounded-2xl mr-5">
-                    <TrendingUp className="h-7 w-7 text-blue-600 dark:text-blue-400" />
+                <div className="bg-accent/10 p-4 rounded-2xl mr-5">
+                    <TrendingUp className="h-7 w-7 text-accent" />
                 </div>
                 <div>
                     <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Sales Import & Stock Deduction</h2>
@@ -314,11 +336,11 @@ export const SalesImport: React.FC<SalesImportProps> = ({ recipes, inventoryItem
             {/* Upload Area */}
             {!file ? (
                 <div 
-                    className="border-2 border-dashed border-gray-200 dark:border-slate-800 rounded-2xl p-16 text-center hover:border-blue-500 dark:hover:border-blue-400 transition-all cursor-pointer bg-gray-50/50 dark:bg-slate-800/50 group"
+                    className="border-2 border-dashed border-gray-200 dark:border-slate-800 rounded-2xl p-16 text-center hover:border-accent transition-all cursor-pointer bg-gray-50/50 dark:bg-slate-800/50 group"
                     onClick={() => fileInputRef.current?.click()}
                 >
                     <div className="bg-white dark:bg-slate-900 w-16 h-16 rounded-2xl shadow-lg flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform">
-                        <Upload className="h-8 w-8 text-blue-500" />
+                        <Upload className="h-8 w-8 text-accent" />
                     </div>
                     <p className="text-sm font-bold text-gray-900 dark:text-white uppercase tracking-widest">Upload Sales CSV</p>
                     <p className="text-xs text-gray-500 dark:text-slate-400 mt-2">Format: CSV with Item Name (Col A), Quantity (Col C), Amount (Col D)</p>
@@ -331,12 +353,12 @@ export const SalesImport: React.FC<SalesImportProps> = ({ recipes, inventoryItem
                     />
                 </div>
             ) : (
-                <div className="flex items-center justify-between bg-blue-50 dark:bg-blue-900/20 p-5 rounded-xl border border-blue-100 dark:border-blue-900/30 mb-8">
+                <div className="flex items-center justify-between bg-accent/10 p-5 rounded-xl border border-accent/20 mb-8">
                     <div className="flex items-center">
                         <div className="bg-white dark:bg-slate-900 p-2 rounded-lg shadow-sm mr-3">
-                            <FileText className="h-5 w-5 text-blue-500" />
+                            <FileText className="h-5 w-5 text-accent" />
                         </div>
-                        <span className="font-bold text-blue-900 dark:text-blue-300">{file.name}</span>
+                        <span className="font-bold text-accent">{file.name}</span>
                     </div>
                     <Button variant="ghost" onClick={() => { setFile(null); setSalesData([]); setImpactAnalysis([]); }} className="text-[10px] font-bold uppercase tracking-widest">Change File</Button>
                 </div>
@@ -356,32 +378,32 @@ export const SalesImport: React.FC<SalesImportProps> = ({ recipes, inventoryItem
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
                   <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl shadow-xl border border-gray-100 dark:border-slate-800">
                     <div className="flex justify-between items-center mb-2">
-                      <span className="text-[10px] font-bold text-gray-400 dark:text-slate-500 uppercase tracking-widest">Kitchen Sales</span>
-                      <span className="text-[10px] font-bold text-blue-600 dark:text-blue-400">{kitchenPercent.toFixed(1)}%</span>
+                      <span className="text-[10px] font-bold text-gray-400 dark:text-slate-500 uppercase tracking-widest">Food Sales</span>
+                      <span className="text-[10px] font-bold text-accent">{foodPercent.toFixed(1)}%</span>
                     </div>
-                    <div className="text-2xl font-bold text-gray-900 dark:text-white">£{kitchenSales.toFixed(2)}</div>
+                    <div className="text-2xl font-bold text-gray-900 dark:text-white">£{foodSales.toFixed(2)}</div>
                     <div className="mt-4 w-full bg-gray-100 dark:bg-slate-800 rounded-full h-2">
-                      <div className="bg-blue-500 h-2 rounded-full transition-all duration-1000" style={{ width: `${kitchenPercent}%` }}></div>
+                      <div className="bg-accent h-2 rounded-full transition-all duration-1000" style={{ width: `${foodPercent}%` }}></div>
                     </div>
                   </div>
                   <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl shadow-xl border border-gray-100 dark:border-slate-800">
                     <div className="flex justify-between items-center mb-2">
-                      <span className="text-[10px] font-bold text-gray-400 dark:text-slate-500 uppercase tracking-widest">Bar Sales</span>
-                      <span className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400">{barPercent.toFixed(1)}%</span>
+                      <span className="text-[10px] font-bold text-gray-400 dark:text-slate-500 uppercase tracking-widest">Beverage Sales</span>
+                      <span className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400">{beveragePercent.toFixed(1)}%</span>
                     </div>
-                    <div className="text-2xl font-bold text-gray-900 dark:text-white">£{barSales.toFixed(2)}</div>
+                    <div className="text-2xl font-bold text-gray-900 dark:text-white">£{beverageSales.toFixed(2)}</div>
                     <div className="mt-4 w-full bg-gray-100 dark:bg-slate-800 rounded-full h-2">
-                      <div className="bg-indigo-500 h-2 rounded-full transition-all duration-1000" style={{ width: `${barPercent}%` }}></div>
+                      <div className="bg-indigo-500 h-2 rounded-full transition-all duration-1000" style={{ width: `${beveragePercent}%` }}></div>
                     </div>
                   </div>
                   <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl shadow-xl border border-gray-100 dark:border-slate-800">
                     <div className="flex justify-between items-center mb-2">
-                      <span className="text-[10px] font-bold text-gray-400 dark:text-slate-500 uppercase tracking-widest">Other / Unmatched</span>
-                      <span className="text-[10px] font-bold text-gray-400 dark:text-slate-500">{otherPercent.toFixed(1)}%</span>
+                      <span className="text-[10px] font-bold text-gray-400 dark:text-slate-500 uppercase tracking-widest">Non-F&B Sales</span>
+                      <span className="text-[10px] font-bold text-gray-400 dark:text-slate-500">{nonFbPercent.toFixed(1)}%</span>
                     </div>
-                    <div className="text-2xl font-bold text-gray-900 dark:text-white">£{(totalSales - kitchenSales - barSales).toFixed(2)}</div>
+                    <div className="text-2xl font-bold text-gray-900 dark:text-white">£{nonFbSales.toFixed(2)}</div>
                     <div className="mt-4 w-full bg-gray-100 dark:bg-slate-800 rounded-full h-2">
-                      <div className="bg-gray-300 dark:bg-slate-700 h-2 rounded-full transition-all duration-1000" style={{ width: `${otherPercent}%` }}></div>
+                      <div className="bg-gray-300 dark:bg-slate-700 h-2 rounded-full transition-all duration-1000" style={{ width: `${nonFbPercent}%` }}></div>
                     </div>
                   </div>
                 </div>
@@ -421,7 +443,7 @@ export const SalesImport: React.FC<SalesImportProps> = ({ recipes, inventoryItem
                                             {editingRow === idx ? (
                                                 <div className="flex items-center space-x-2">
                                                     <select 
-                                                        className="flex-1 text-sm border-gray-200 dark:border-slate-700 rounded-lg focus:ring-blue-500 focus:border-blue-500 p-2 border bg-white dark:bg-slate-800 text-gray-900 dark:text-white"
+                                                        className="flex-1 text-sm border-gray-200 dark:border-slate-700 rounded-lg focus:ring-accent focus:border-accent p-2 border bg-white dark:bg-slate-800 text-gray-900 dark:text-white"
                                                         value={editRecipeId}
                                                         onChange={(e) => setEditRecipeId(e.target.value)}
                                                         autoFocus
@@ -445,7 +467,7 @@ export const SalesImport: React.FC<SalesImportProps> = ({ recipes, inventoryItem
                                                     </span>
                                                     <button 
                                                         onClick={() => handleStartEdit(idx, item.matchedRecipe?.id)}
-                                                        className="text-gray-400 hover:text-blue-600 p-2 rounded-lg opacity-0 group-hover:opacity-100 transition-all hover:bg-blue-50 dark:hover:bg-blue-900/20"
+                                                        className="text-gray-400 hover:text-accent p-2 rounded-lg opacity-0 group-hover:opacity-100 transition-all hover:bg-accent/10"
                                                         title="Edit Mapping"
                                                     >
                                                         <Edit2 className="h-4 w-4" />
@@ -520,7 +542,7 @@ export const SalesImport: React.FC<SalesImportProps> = ({ recipes, inventoryItem
                         </div>
                         <Button 
                             onClick={handleConfirm} 
-                            className="w-full py-4 text-[10px] font-bold uppercase tracking-widest rounded-xl shadow-lg shadow-blue-500/20" 
+                            className="w-full py-4 text-[10px] font-bold uppercase tracking-widest rounded-xl shadow-lg shadow-accent/20" 
                             disabled={impactAnalysis.length === 0}
                         >
                             Confirm & Deduct Stock
@@ -550,7 +572,7 @@ export const SalesImport: React.FC<SalesImportProps> = ({ recipes, inventoryItem
                     <th className="px-8 py-4 text-left text-[10px] font-bold text-gray-500 dark:text-slate-400 uppercase tracking-widest">Date</th>
                     <th className="px-6 py-4 text-left text-[10px] font-bold text-gray-500 dark:text-slate-400 uppercase tracking-widest">File Name</th>
                     <th className="px-6 py-4 text-right text-[10px] font-bold text-gray-500 dark:text-slate-400 uppercase tracking-widest">Total Sales</th>
-                    <th className="px-6 py-4 text-right text-[10px] font-bold text-gray-500 dark:text-slate-400 uppercase tracking-widest">Split (K / B)</th>
+                    <th className="px-6 py-4 text-right text-[10px] font-bold text-gray-500 dark:text-slate-400 uppercase tracking-widest">Split (F / B / N)</th>
                     <th className="px-6 py-4 text-right text-[10px] font-bold text-gray-500 dark:text-slate-400 uppercase tracking-widest">Items / Matched</th>
                     <th className="px-8 py-4 text-right text-[10px] font-bold text-gray-500 dark:text-slate-400 uppercase tracking-widest">Stock Updates</th>
                   </tr>
@@ -568,8 +590,9 @@ export const SalesImport: React.FC<SalesImportProps> = ({ recipes, inventoryItem
                       <td className="px-6 py-5 whitespace-nowrap text-sm text-right font-black text-gray-900 dark:text-white">£{record.totalSales.toFixed(2)}</td>
                       <td className="px-6 py-5 whitespace-nowrap text-sm text-right text-gray-500">
                         <div className="flex flex-col items-end">
-                          <span className="text-[10px] font-bold text-blue-600 dark:text-blue-400 uppercase tracking-wider">K: {((record.kitchenSales / record.totalSales) * 100 || 0).toFixed(0)}%</span>
-                          <span className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 uppercase tracking-wider">B: {((record.barSales / record.totalSales) * 100 || 0).toFixed(0)}%</span>
+                          <span className="text-[10px] font-bold text-accent uppercase tracking-wider">F: {((record.foodSales / record.totalSales) * 100 || 0).toFixed(0)}%</span>
+                          <span className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 uppercase tracking-wider">B: {((record.beverageSales / record.totalSales) * 100 || 0).toFixed(0)}%</span>
+                          <span className="text-[10px] font-bold text-gray-400 dark:text-slate-500 uppercase tracking-wider">N: {((record.nonFbSales / record.totalSales) * 100 || 0).toFixed(0)}%</span>
                         </div>
                       </td>
                       <td className="px-6 py-5 whitespace-nowrap text-sm text-right font-bold text-gray-900 dark:text-white">

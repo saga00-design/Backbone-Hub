@@ -1,16 +1,19 @@
 
 import React, { useMemo, useState } from 'react';
 import { InventoryItem, SalesImportRecord } from '../types';
-import { TrendingUp, AlertTriangle, PoundSterling, Brain, RefreshCw, ArrowRight, Banknote, ShoppingCart, Calendar, Clock, BarChart3, Bot, BookOpen } from 'lucide-react';
+import { TrendingUp, AlertTriangle, PoundSterling, Brain, RefreshCw, ArrowRight, Banknote, ShoppingCart, Calendar, Clock, BarChart3, Bot, BookOpen, Monitor } from 'lucide-react';
 import { Button } from './Button';
 import { GoogleGenAI, Type } from '@google/genai';
-import { handleAiError } from '../services/geminiService';
+import { getAiClient, handleAiError } from '../services/geminiService';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid, Legend } from 'recharts';
 
 interface DashboardProps {
   items: InventoryItem[];
   salesHistory: SalesImportRecord[];
   totalRevenue: number;
+  posPaymentsCount: number;
+  databaseId?: string;
+  orderCountToday: number;
   setCurrentView?: (view: any) => void;
   onAddToCart?: (item: InventoryItem, quantity: number) => void;
 }
@@ -25,27 +28,64 @@ interface Alert {
   targetView?: string;
 }
 
-export const Dashboard: React.FC<DashboardProps> = ({ items, salesHistory, totalRevenue, setCurrentView, onAddToCart }) => {
+export const Dashboard: React.FC<DashboardProps> = ({ 
+  items, 
+  salesHistory, 
+  totalRevenue, 
+  posPaymentsCount,
+  databaseId,
+  orderCountToday,
+  setCurrentView, 
+  onAddToCart 
+}) => {
   const [forecast, setForecast] = useState<string | null>(null);
   const [isForecasting, setIsForecasting] = useState(false);
 
   const handleForecast = async () => {
     setIsForecasting(true);
+    setForecast(null);
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
-      const prompt = `Analyze the following sales history and current inventory levels to forecast future stock needs.
-      Sales History: ${JSON.stringify(salesHistory.slice(0, 20))}
-      Inventory: ${JSON.stringify(items.map(i => ({ name: i.name, quantity: i.quantity, minStockLevel: i.minStockLevel })))}
-      Provide a concise forecast and recommendations for stock needs.`;
+      const ai = getAiClient();
+      
+      // Select items for analysis: focus on low stock or high usage
+      const suspiciousItems = items.filter(i => 
+        (i.quantity <= (i.minStockLevel || 5) * 1.5) || 
+        (i.dailyUsageRate && i.dailyUsageRate > 0)
+      ).slice(0, 15);
+
+      const prompt = `Act as an expert Restaurant Operations & Supply Chain Manager. 
+      Analyze the following data to provide a strategic stock forecast and profitability recommendations.
+      
+      SALES CONTEXT (Last 20 records):
+      ${JSON.stringify(salesHistory.slice(0, 20).map(s => ({ date: s.date, total: s.totalSales, matched: s.matchedCount })))}
+      
+      CRITICAL INVENTORY ITEMS:
+      ${JSON.stringify(suspiciousItems.map(i => ({ 
+        name: i.name, 
+        qty: i.quantity, 
+        min: i.minStockLevel, 
+        usage: i.dailyUsageRate,
+        supplier: i.supplier,
+        expiry: i.expiryDate
+      })))}
+      
+      Please provide:
+      1. URGENT ACTIONS: 3 immediate steps to prevent out-of-stock or waste.
+      2. FORECAST: Predict demand for the next 7 days based on recent sales trends.
+      3. MARGIN PROTECTION: Recommendations on where to cut waste or negotiate better pricing.
+      4. TEAM BRIEFING NOTE: A short one-liner for the staff about inventory focus.
+      
+      Format with bold headers and clear bullet points. Be ruthless about operational efficiency.`;
 
       const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
+        model: 'gemini-3.1-flash-lite-preview',
         contents: prompt,
       });
-      setForecast(response.text || 'No forecast available.');
+      setForecast(response.text || 'No forecast available at this time.');
     } catch (error) {
+      console.error("[Dashboard] AI Forecast Error:", error);
       const message = handleAiError(error);
-      setForecast(message);
+      setForecast(`Analysis Failed: ${message}`);
     } finally {
       setIsForecasting(false);
     }
@@ -53,7 +93,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ items, salesHistory, total
   
   const totalValue = items.reduce((acc, item) => {
     const q = Number(item.quantity) || 0;
-    const p = Number(item.pricePerUnit) || 0;
+    const p = Number(item.averageCostBase || item.pricePerUnit) || 0;
     return acc + (q * p);
   }, 0);
 
@@ -72,7 +112,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ items, salesHistory, total
     const currentValue = acc[key] || 0;
     
     const quantity = Number(item.quantity) || 0;
-    const price = Number(item.pricePerUnit) || 0;
+    const price = Number(item.averageCostBase || item.pricePerUnit) || 0;
     const itemValue = quantity * price;
     
     acc[key] = currentValue + itemValue;
@@ -110,60 +150,59 @@ export const Dashboard: React.FC<DashboardProps> = ({ items, salesHistory, total
                     id: `exp-${item.id}`,
                     type: 'EXPIRY',
                     priority: 'high',
-                    title: item.name,
-                    message: `Item expired on ${item.expiryDate}.`,
-                    action: `Dispose and replace stock from ${item.supplier || 'supplier'}`,
+                    title: `EXPIRED: ${item.name}`,
+                    message: `Item expired on ${item.expiryDate}. Immediate disposal required.`,
+                    action: `Review batch and contact ${item.supplier || 'supplier'} for replacement.`,
                     targetView: 'orders'
                 });
             } else if (diffDays <= 7) {
                 generatedAlerts.push({
-                    id: `exp-${item.id}`,
+                    id: `exp-warn-${item.id}`,
                     type: 'EXPIRY',
                     priority: 'medium',
-                    title: item.name,
+                    title: `EXPIRY SOON: ${item.name}`,
                     message: `Expires in ${diffDays} days (${item.expiryDate}).`,
-                    action: `Use priority or discount`,
+                    action: `Prioritize usage in specials or reduce price.`,
                     targetView: 'inventory'
                 });
             }
         }
 
-        // 2. Stock Level Check
-        let isLowStock = false;
-        let reorderQty = 0;
-        let message = '';
+        // 2. Predictive Stock Level Check (AI Lite)
+        const totalInStock = Number(item.quantity) || 0;
+        const dailyUsage = Number(item.dailyUsageRate) || 0;
+        const minLevel = Number(item.minStockLevel) || 0;
 
-        if (item.dailyUsageRate && item.dailyUsageRate > 0) {
-            const daysRemaining = item.quantity / item.dailyUsageRate;
-            if (daysRemaining < 3) {
-                isLowStock = true;
-                // Target 14 days coverage
-                reorderQty = Math.ceil((item.dailyUsageRate * 14) - item.quantity);
-                message = `Projected to run out in ${daysRemaining.toFixed(1)} days (Usage: ${item.dailyUsageRate} ${item.unit}/day).`;
-            }
-        } else if (item.quantity <= item.minStockLevel) {
-            isLowStock = true;
-            // Target 2x Min Stock if no usage data
-            reorderQty = Math.ceil((item.minStockLevel * 2) - item.quantity);
-            message = `Stock level (${item.quantity} ${item.unit}) below minimum (${item.minStockLevel} ${item.unit}).`;
-        }
-
-        if (isLowStock && reorderQty > 0) {
-             generatedAlerts.push({
-                id: `stock-${item.id}`,
+        if (totalInStock <= minLevel) {
+            generatedAlerts.push({
+                id: `stock-low-${item.id}`,
                 type: 'REORDER',
-                priority: 'high',
-                title: item.name,
-                message: message,
-                action: `Order ${reorderQty} ${item.unit} from ${item.supplier || 'supplier'}`,
+                priority: totalInStock === 0 ? 'high' : 'medium',
+                title: totalInStock === 0 ? `OUT OF STOCK: ${item.name}` : `LOW STOCK: ${item.name}`,
+                message: `${item.name} is at ${totalInStock} ${item.baseUnit}. Min level is ${minLevel}.`,
+                action: totalInStock === 0 ? 'Urgent purchase required' : `Add to reorder list for next ${item.supplier || 'delivery'}`,
                 targetView: 'orders'
             });
+        } else if (dailyUsage > 0) {
+            const daysRemaining = totalInStock / dailyUsage;
+            // Forecast: if we'll hit min stock within 3 days, alert now
+            if (daysRemaining <= 3) {
+                generatedAlerts.push({
+                    id: `stock-fore-${item.id}`,
+                    type: 'REORDER',
+                    priority: 'medium',
+                    title: `RUNNING LOW: ${item.name}`,
+                    message: `Projected to hit critical level in ${daysRemaining.toFixed(1)} days based on usage.`,
+                    action: `Schedule order with ${item.supplier || 'supplier'}`,
+                    targetView: 'orders'
+                });
+            }
         }
     });
 
     return generatedAlerts.sort((a, b) => {
-        if (a.type === 'EXPIRY' && b.type !== 'EXPIRY') return -1;
-        if (a.type !== 'EXPIRY' && b.type === 'EXPIRY') return 1;
+        if (a.priority === 'high' && b.priority !== 'high') return -1;
+        if (a.priority !== 'high' && b.priority === 'high') return 1;
         return 0;
     });
   }, [items]);
@@ -173,7 +212,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ items, salesHistory, total
     return items
       .filter(item => item.dailyUsageRate && item.dailyUsageRate > 0)
       .map(item => {
-        const daysRemaining = Math.floor(item.quantity / item.dailyUsageRate!);
+        const totalInStock = item.quantity || 0;
+        const daysRemaining = Math.floor(totalInStock / item.dailyUsageRate!);
         const status = daysRemaining < 3 ? 'critical' : daysRemaining < 7 ? 'warning' : 'safe';
         return {
           ...item,
@@ -190,8 +230,55 @@ export const Dashboard: React.FC<DashboardProps> = ({ items, salesHistory, total
   return (
     <div className="space-y-6">
       
-      {/* Quick Actions */}
+      {/* Integration Status (Visible for Debugging Sales Reflection) */}
+      <div className="bg-cta/5 border border-cta/10 rounded-2xl p-4 transition-all hover:bg-cta/10">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-cta/10 rounded-lg">
+              <Monitor className="h-4 w-4 text-cta" />
+            </div>
+            <div>
+              <h3 className="text-xs font-black text-text-navy uppercase tracking-tight">System Connectivity</h3>
+              <p className="text-[10px] text-text-muted font-bold uppercase tracking-widest italic">Live POS -&gt; Hub Data Stream</p>
+            </div>
+          </div>
+          
+          <div className="grid grid-cols-2 sm:flex sm:items-center gap-4 sm:gap-8">
+            <div className="flex flex-col">
+              <span className="text-[9px] text-text-muted font-bold uppercase">Database</span>
+              <span className="text-[11px] font-mono font-medium text-text-navy truncate max-w-[120px]" title={databaseId}>{databaseId || 'default'}</span>
+            </div>
+            <div className="flex flex-col">
+              <span className="text-[9px] text-text-muted font-bold uppercase">Payments</span>
+              <span className="text-[11px] font-bold text-text-navy">{posPaymentsCount} Records</span>
+            </div>
+            <div className="flex flex-col">
+              <span className="text-[9px] text-text-muted font-bold uppercase">Today's Hub Volume</span>
+              <span className="text-[11px] font-bold text-text-navy">{orderCountToday} Orders</span>
+            </div>
+            <div className="flex flex-col">
+              <span className="text-[9px] text-text-muted font-bold uppercase">Sync Status</span>
+              <span className="flex items-center gap-1.5">
+                <span className={`h-2 w-2 rounded-full animate-pulse ${posPaymentsCount > 0 ? 'bg-success' : 'bg-warning'}`}></span>
+                <span className="text-[11px] font-bold text-text-navy uppercase tracking-tighter">Live</span>
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      {/* Quick Actions & Stats */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+        <div className="flex items-center p-5 bg-card-bg rounded-2xl shadow-sm border border-border-grey relative overflow-hidden">
+          <div className="p-3 bg-success/10 rounded-xl border border-success/20">
+            <Banknote className="h-5 w-5 text-success" />
+          </div>
+          <div className="ml-4 text-left relative z-10">
+            <p className="text-[10px] text-text-muted font-bold uppercase tracking-widest">Gross Sales (Today)</p>
+            <p className="text-xl font-black text-text-navy tracking-tight">£{totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+          </div>
+        </div>
+
         <button 
           onClick={() => setCurrentView?.('recipes')}
           className="flex items-center p-5 bg-card-bg rounded-2xl shadow-sm border border-border-grey hover:border-accent hover:shadow-lg transition-all group relative overflow-hidden"
@@ -221,20 +308,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ items, salesHistory, total
         </button>
 
         <button 
-          onClick={() => setCurrentView?.('pos')}
-          className="flex items-center p-5 bg-card-bg rounded-2xl shadow-sm border border-border-grey hover:border-accent hover:shadow-lg transition-all group relative overflow-hidden"
-        >
-          <div className="p-3 bg-accent/10 rounded-xl group-hover:bg-accent/20 transition-colors border border-accent/20">
-            <BarChart3 className="h-5 w-5 text-accent" />
-          </div>
-          <div className="ml-4 text-left relative z-10">
-            <p className="text-sm font-black text-text-navy uppercase tracking-tight">Backbone POS</p>
-            <p className="text-[10px] text-text-muted font-bold uppercase tracking-widest mt-0.5">Active Sales</p>
-          </div>
-          <ArrowRight className="ml-auto h-4 w-4 text-text-muted/30 group-hover:text-accent group-hover:translate-x-1 transition-all" />
-        </button>
-
-        <button 
           onClick={() => triggerAIChat("Give me a summary of my business performance")}
           className="flex items-center p-5 bg-card-bg rounded-2xl shadow-sm border border-border-grey hover:border-accent hover:shadow-lg transition-all group relative overflow-hidden"
         >
@@ -242,7 +315,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ items, salesHistory, total
             <Brain className="h-5 w-5 text-accent" />
           </div>
           <div className="ml-4 text-left relative z-10">
-            <p className="text-sm font-black text-text-navy uppercase tracking-tight">AI Insights</p>
+            <div className="flex items-center gap-2">
+              <p className="text-sm font-black text-text-navy uppercase tracking-tight">AI Insights</p>
+              <span className="text-[8px] bg-accent/20 text-accent px-1.5 py-0.5 rounded-full font-black animate-pulse">FAST MODE</span>
+            </div>
             <p className="text-[10px] text-text-muted font-bold uppercase tracking-widest mt-0.5">Strategy & Tips</p>
           </div>
           <ArrowRight className="ml-auto h-4 w-4 text-text-muted/30 group-hover:text-accent group-hover:translate-x-1 transition-all" />
@@ -348,7 +424,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ items, salesHistory, total
               </div>
               <div className="ml-4 w-0 flex-1">
                 <dl>
-                  <dt className="text-[10px] sm:text-xs font-black text-text-muted uppercase tracking-widest truncate">Total Sales</dt>
+                  <dt className="text-[10px] sm:text-xs font-black text-text-muted uppercase tracking-widest truncate">Gross Sales</dt>
                   <dd className="text-base sm:text-xl font-black text-text-navy mt-1">£{totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</dd>
                 </dl>
               </div>

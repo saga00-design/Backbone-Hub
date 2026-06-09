@@ -1,6 +1,23 @@
 
 export type InventoryCategory = string;
-export type Unit = 'kg' | 'g' | 'L' | 'ml' | 'pcs' | 'box' | 'bottles';
+export type InventoryType = string;
+export type Unit = 'kg' | 'g' | 'gr' | 'L' | 'ml' | 'cl' | 'pcs' | 'box' | 'bottles' | 'bags' | 'portions' | 'cans' | 'kegs' | 'servings' | 'cases' | 'packs' | 'custom';
+export type MovementType = 'RECEIPT' | 'SALE' | 'WASTE' | 'ADJUSTMENT' | 'PRODUCTION' | 'TRANSFER' | 'STOCKTAKE';
+
+export interface StockMovement {
+  id: string;
+  productId: string; // inventoryItemId or recipe-recipeId
+  type: MovementType;
+  quantityChange: number; // in base units
+  stockBefore: number;
+  stockAfter: number;
+  costImpact?: number;
+  referenceId?: string; // orderId, invoiceId, wasteId, etc.
+  referenceType?: 'SALE' | 'RECEIPT' | 'WASTE' | 'ADJUSTMENT' | 'PRODUCTION';
+  createdAt: string;
+  createdBy: string;
+  notes?: string;
+}
 
 export type VatCode = 'STANDARD_20' | 'REDUCED_5' | 'ZERO_0' | 'EXEMPT';
 
@@ -16,26 +33,49 @@ export interface InventoryItem {
   category: InventoryCategory;
   subCategory?: string;
   department?: string;
-  quantity: number; // Currently available
-  unit: Unit;
+  inventoryType: InventoryType; // LIQUID, SOLID, or UNIT
+  baseUnit: Unit; // ml, g, or pcs
+  quantity: number; // Current stock in BASE UNITS (ml, g, pcs)
+  unitSize: number; // Size of a single pack in base units
+  unit: Unit; // Unit of the unitSize (L, kg, etc.)
+  packaging?: string; // e.g. bottle, box, pack
   minStockLevel: number;
-  pricePerUnit: number;
-  retailPrice?: number; // Added for retail items or recipes
+  pricePerUnit: number; // Cost per BASE UNIT
+  averageCostBase?: number; // Weighted average cost per base unit
+  retailPrice?: number;
   lastUpdated: string;
   imageUrl?: string;
-  description?: string; // Added for training/upselling info
-  expiryDate?: string; // YYYY-MM-DD
+  description?: string;
+  expiryDate?: string;
   supplier?: string;
   supplierContact?: string;
-  dailyUsageRate?: number; // Estimated usage per day
+  dailyUsageRate?: number;
   barcode?: string;
-  allergies?: string[]; // Added for auto-detection
-  
-  // New fields for Crockery/Equipment tracking
-  totalOwned?: number; // Total quantity owned (Par Stock)
-  brokenQuantity?: number; // Quantity missing/broken
+  allergies?: string[];
+  totalOwned?: number;
+  brokenQuantity?: number;
   vatCode?: VatCode;
   vatRate?: number;
+  yieldFactor?: number; // 0 to 1 (e.g. 0.8 for 80% usable product)
+  priceHistory?: { date: string; price: number }[];
+  storageLocation?: string;
+  isActive: boolean;
+}
+
+export interface StockReceipt {
+  id: string;
+  productId: string;
+  supplierId: string;
+  qtyReceived: number; // Number of packs
+  packSize: number; // Size per pack
+  packUnit: Unit; // Unit of the pack (L, kg, etc.)
+  totalBaseQty: number; // Calculated: qty * size converted to base
+  unitCostNet: number; // Cost per pack
+  totalCostNet: number;
+  costPerBaseUnit: number;
+  invoiceReference?: string;
+  receivedAt: string;
+  enteredBy: string;
 }
 
 export interface Supplier {
@@ -50,8 +90,10 @@ export interface Supplier {
 
 export interface RecipeIngredient {
   inventoryItemId: string;
-  quantity: number; // Quantity used in the recipe
-  unit?: string; // The unit used in the recipe (e.g., kg, g, L, ml)
+  quantity: number; // Input quantity
+  unit: Unit; // Input unit (L, kg, ml, g)
+  baseQuantity: number; // Calculated quantity in base units (ml, g)
+  costAtCreation?: number; // Snapshot of cost per base unit
 }
 
 export type RecipeType = 'recipe' | 'menu_item';
@@ -85,14 +127,19 @@ export interface Recipe {
   vatRate?: number; // Percentage, e.g., 20
   vatCode?: VatCode;
   serviceChargeRate?: number; // Percentage, e.g., 12.5
+  posId?: string; // PLU or Product ID from external POS
+  posCategory?: string; // POS Category mapping
+  marginTarget?: number; // Target GP% for this item
   
   yieldAmount?: number; // For batch recipes
   yieldUnit?: string; // e.g., 'portions', 'L', 'kg'
   quantity?: number; // Current stock quantity for batches/prep
+  pricePerUnit?: number; // Cost per base unit for batches/prep
   calories?: number; // Estimated calories
   station?: Station;
   course?: Course;
   trackAvailability?: boolean;
+  isActive?: boolean;
   availabilityCount?: number;
 
   allergies?: string[];
@@ -109,13 +156,15 @@ export interface Recipe {
   mainPairing?: PairingInfo;
   dessertPairing?: PairingInfo;
 
-  trainingSteps?: { image: string, description: string }[];
+  trainingSteps?: { title?: string, image: string, description: string }[];
+  quizResults?: { [userId: string]: { score: number, total: number, date: string, passed: boolean } };
 
   ingredients: RecipeIngredient[];
   lastUpdated: string;
   sustainabilityScore?: number; // 1-100
   carbonFootprint?: string; // e.g., "Low", "Medium", "High" or specific value
   sustainabilityTips?: string[];
+  allowedModifiers?: string[]; // IDs of available modifiers
 }
 
 export interface StockCount {
@@ -143,6 +192,7 @@ export interface StockCountRecord {
   date: string;
   aiAnalysis: string;
   items: {
+      itemId?: string;
       name: string;
       expected: number;
       actual: number;
@@ -151,11 +201,13 @@ export interface StockCountRecord {
       expectedValue: number;
       actualValue: number;
       varianceValue: number;
+      imageUrl?: string;
   }[];
 }
 
 export interface Invoice {
   id: string;
+  invoiceNumber?: string;
   date: string;
   vendor: string;
   supplierId?: string;
@@ -185,8 +237,9 @@ export interface SalesImportRecord {
   date: string;
   fileName: string;
   totalSales: number;
-  kitchenSales: number; // Food category
-  barSales: number; // Beverage category
+  foodSales: number; // Food category
+  beverageSales: number; // Beverage category
+  nonFbSales: number; // Non-F&B category
   itemsCount: number;
   matchedCount: number;
   ingredientsAffected: number;
@@ -209,45 +262,84 @@ export interface Order {
   items: OrderItem[];
   totalAmount: number;
   status: 'Draft' | 'Sent' | 'Received' | 'Cancelled';
+  ccEmails?: string[];
 }
 
 export type TableStatus = 'Available' | 'Seated' | 'Ordered' | 'Served' | 'Paid';
 export type TableShape = 'Round' | 'Square' | 'Rectangle' | 'Booth';
-export type OrderStatus = 'Open' | 'Paid' | 'Cancelled' | 'Refunded';
+export type OrderStatus = 'Open' | 'Sent' | 'Paid' | 'Cancelled' | 'Refunded';
 export type OrderItemStatus = 'Pending' | 'In Progress' | 'Ready' | 'Served' | 'Void';
-export type Station = 'Bar' | 'Grill' | 'Cold' | 'Dessert';
+export type Station = 'Beverage' | 'Grill' | 'Cold' | 'Dessert' | 'Pizza' | 'Pasta' | 'Saute' | 'Fry' | 'Prep';
 export type Course = '1st Course' | '2nd Course' | '3rd Course' | '4th Course' | '5th Course' | 'Drinks' | 'Starters' | 'Mains' | 'Desserts' | 'Sides';
 
 export interface Table {
   id: string;
-  number: string;
-  capacity: number;
-  x: number;
-  y: number;
-  width?: number; // in grid units
-  height?: number; // in grid units
+  name: string;
+  zoneId: string;
+  seats: number;
+  active: boolean;
+  locationId: string;
+  status: string;
+  createdAt: string;
+  lastUpdated: string;
+  // Optional POS fields for compatibility
+  number?: string;
+  capacity?: number;
+  x?: number;
+  y?: number;
   shape?: TableShape;
-  status: TableStatus;
   currentOrderId?: string;
   waiterId?: string;
   seatedAt?: string;
   lastActionAt?: string;
-  zone?: string; // Added zone field
+  zone?: string;
 }
 
 export interface Modifier {
   id: string;
+  locationId: string;
   name: string;
   price: number;
   inventoryItemId?: string;
   quantity?: number;
+  category?: string;
+  lastUpdated: string;
+}
+
+export interface StaffCertification {
+  id: string;
+  locationId: string;
+  staffId: string;
+  staffName: string;
+  recipeId: string;
+  recipeName: string;
+  score: number;
+  total: number;
+  passed: boolean;
+  completedAt: string;
+}
+
+export interface AuditLog {
+  id: string;
+  locationId: string;
+  userId: string;
+  userName: string;
+  action: string;
+  targetType: 'Inventory' | 'Recipe' | 'Modifier' | 'Settings' | 'Supplier' | 'Invoice' | 'Order' | 'WasteRecord' | 'ExpenseRecord' | 'Section';
+  targetId: string;
+  targetName: string;
+  oldValue?: any;
+  newValue?: any;
+  timestamp: string;
 }
 
 export interface POSOrderItem {
   id: string;
+  itemId?: string;
   recipeId: string;
   name: string;
   price: number;
+  priceGross?: number; // Price in cents
   quantity: number;
   modifiers: Modifier[];
   vatCode?: VatCode;
@@ -258,6 +350,7 @@ export interface POSOrderItem {
   discountReason?: string;
   isVoided?: boolean;
   voidReason?: string;
+  isInventoryDepleted?: boolean;
   status: OrderItemStatus;
   station: Station;
   course: Course;
@@ -268,23 +361,41 @@ export interface POSOrderItem {
 
 export interface POSOrder {
   id: string;
+  locationId: string;
   tableId?: string; // undefined for takeaway
   tableNumber?: string;
   customerName?: string;
+  tableName?: string;
+  waiterName?: string;
   type: 'Dine-In' | 'Takeaway' | 'Delivery';
   platform?: string; // e.g. UberEats, Deliveroo, Direct
   status: OrderStatus;
   items: POSOrderItem[];
   subtotal: number;
+  net_total?: number;
   vat: number;
   serviceCharge: number;
+  service_charge?: number;
   total: number;
+  amount?: number;
   tips: number;
   waiterId: string;
+  isInventoryDepleted?: boolean;
   createdAt: string;
   updatedAt: string;
   paidAt?: string;
   payments: Payment[];
+  financials?: {
+    grossSales?: number;
+    netSales?: number;
+    vatTotal?: number;
+    serviceChargeTotal?: number;
+    discountTotal?: number;
+    totalPaid?: number;
+    paymentTimestamp?: string | any;
+    zeroRatedSales?: number;
+    exemptSales?: number;
+  };
 }
 
 export interface Payment {
@@ -294,30 +405,127 @@ export interface Payment {
   timestamp: string;
 }
 
+export interface POSPayment extends Payment {
+  orderId: string;
+  locationId: string;
+  performanceProcessed?: boolean;
+  totalPaid?: number;
+  amountPaid?: number;
+  grossSales?: number;
+  netSales?: number;
+  vatTotal?: number;
+  serviceChargeTotal?: number;
+  discountTotal?: number;
+  tips?: number;
+  paymentMethod?: string;
+}
+
+export interface StaffPerformanceMetrics {
+  totalSales: number;
+  averageSpend: number;
+  itemsPerOrder: number;
+  drinksPerTable: number;
+  cocktailsSold: number;
+  premiumRatio: number;
+  speedOrdersPerHour: number;
+  tableTurnaroundTime: number;
+  upsellingSuccessRate: number;
+  complaintsCount: number;
+  ticketTime: number;
+  errorRate: number;
+  wasteLogged: number;
+}
+
+export interface TrainingModule {
+  id: string;
+  title: string;
+  description: string;
+  category: string;
+  impactMetric: keyof StaffPerformanceMetrics;
+  targetImprovement: number; // e.g. 10 for 10%
+  points: number;
+  estimatedTime: string;
+}
+
+export interface Badge {
+  id: string;
+  name: string;
+  description: string;
+  icon: string; // lucide icon name
+  type: 'Training' | 'Performance' | 'Hybrid';
+  requirement?: string;
+}
+
+export interface SalaryChange {
+  date: string;
+  rate: number;
+  reason: string;
+}
+
 export interface StaffMember {
   id: string;
   firstName: string;
   lastName: string;
   email: string;
-  role: 'Admin' | 'Manager' | 'Staff' | 'Waiter' | 'Chef';
-  permissions: string[];
+  role: 'Admin' | 'Manager' | 'Waiter' | 'Chef' | 'Bartender';
   pin: string; // 4 digits
-  hourlyRate: number;
-  trainingProgress: Record<string, number>; // category -> level (0-100)
   active: boolean;
-  isClockedIn: boolean;
-  lastClockIn?: string; // ISO date
-  performanceMetrics?: {
-    averageTicketValue: number;
-    upsellRate: number;
+  locationId: string;
+  department?: string;
+  hourlyRate: number;
+  salaryChanges?: SalaryChange[];
+
+  permissions: AppPermissions;
+
+  allowedStations: string[]; // ['food', 'beverage', 'non_fb']
+
+  trainingSummary: {
+    level: number;
+    completedModules: number;
+    totalModules: number;
+    requiredOutstanding: number;
+    lastUpdated: string | null;
   };
+
+  certifications: string[];
+  createdAt: string;
+  lastUpdated: string;
+
+  // Legacy / Hub Specific
+  isClockedIn?: boolean;
+  lastClockIn?: string;
+  performanceMetrics?: StaffPerformanceMetrics;
+  performanceScore?: number;
+  managerRating?: number;
+  scoreTrend?: 'up' | 'down' | 'stable';
+  rank?: number;
+  badges?: string[];
+  completedModules?: string[];
+  salaryHistory?: SalaryChange[];
+  trainingProgress?: Record<string, number>;
 }
+
+export interface ClockInRecord {
+  id: string;
+  staffId: string;
+  staffName: string;
+  locationId: string;
+  clockIn: string; // ISO string
+  clockOut?: string; // ISO string
+  hourlyRateAtTime: number;
+  totalHours?: number;
+  totalCost?: number;
+  status: 'active' | 'completed' | 'verified';
+  breakMinutes?: number;
+}
+
 
 export interface WasteRecord {
   id: string;
   inventoryItemId: string;
   itemName: string;
-  quantity: number;
+  quantity: number; // in display unit
+  baseQuantity: number; // in base unit
   unit: Unit;
   reason: string;
   cost: number;
@@ -339,4 +547,706 @@ export interface ExpenseRecord {
   staffId: string;
   staffName?: string;
   status: 'Pending' | 'Approved' | 'Rejected';
+}
+
+// --- Shift Briefing & Performance ---
+
+export type ShiftType = 'Lunch' | 'Dinner' | 'All Day';
+export type BriefingItemType = 'Urgent Alert' | 'Special' | 'Recommendation' | 'Service Note';
+export type UnavailableStatus = 'Active' | 'Low Stock' | 'Unavailable (86)';
+
+export interface BriefingItem {
+  id: string;
+  type: BriefingItemType;
+  title: string;
+  content: string;
+  price?: number;
+  shift: ShiftType;
+  roles: string[]; // ['waiter', 'bartender', 'chef', 'manager', 'all']
+  startDate: string;
+  endDate: string;
+  isActive: boolean;
+  priority: 'High' | 'Medium' | 'Low';
+  reason?: string;
+  createdBy: string;
+  createdAt: string;
+  locationId: string;
+}
+
+export interface UnavailableItem {
+  id: string;
+  menuItemId: string; // From recipes (menu_item)
+  name: string;
+  status: UnavailableStatus;
+  reason?: string;
+  expectedReturn?: string;
+  quantityRemaining?: number;
+  locationId: string;
+  updatedAt: string;
+}
+
+export interface ShiftTarget {
+  id: string;
+  type: 'Item' | 'Revenue' | 'Behavior';
+  title: string;
+  description: string;
+  targetValue: number;
+  currentValue: number;
+  unit?: string; // e.g. 'margaritas', '£', 'desserts'
+  targetItemId?: string; // ID of the recipe/item to track
+  roles: string[];
+  shift: ShiftType;
+  status: 'Active' | 'Completed' | 'Expired';
+  startDate: string;
+  endDate: string;
+  createdBy: string;
+  createdAt: string;
+  locationId: string;
+}
+
+export type ChallengeType = 'Product Push' | 'Sales Race' | 'Quality Challenge' | 'Team vs Team' | 'Upsell Warrior';
+
+export interface ShiftChallenge {
+  id: string;
+  title: string;
+  description: string;
+  type: ChallengeType;
+  rules: {
+    targetItemIds?: string[]; // IDs of items that give points
+    pointsPerItem?: number;
+    pointsPerUpsell?: number;
+    pointsPerAvgSpend?: number;
+    pointsPerFastService?: number;
+    pointsPenaltyComplaint?: number;
+    pointsPenaltyVoid?: number;
+  };
+  rewards: {
+    description: string;
+    value?: string;
+    type: 'Bonus' | 'Perk' | 'Badge' | 'Priority';
+  };
+  startDate: string;
+  endDate: string;
+  shift: ShiftType;
+  roles: string[];
+  isActive: boolean;
+  locationId: string;
+  createdBy: string;
+  createdAt: string;
+}
+
+export type ShiftBriefingType = 'Urgent Alert' | 'Special' | 'Recommendation' | 'Service Note'; // Alias for BriefingItemType if needed
+
+export interface StaffShiftPerformance {
+  id: string; // staffId_date_shift
+  staffId: string;
+  staffName: string;
+  shiftDate: string; // was date
+  shift: ShiftType;
+  points: number;
+  salesCount: number; // was sales
+  totalRevenue: number; // added
+  upsellCount: number; // added
+  itemsSold: Record<string, number>; // itemId -> count
+  complaints: number;
+  voids: number;
+  avgSpend: number;
+  rank: number;
+  lastUpdated: string;
+  locationId: string;
+}
+
+export enum ClosureType {
+  DAY = 'day',
+  SHIFT = 'shift'
+}
+
+export interface DailyClosure {
+  id: string;
+  locationId: string;
+  type: ClosureType;
+  date: string;
+  shiftName?: string;
+  periodStart: string;
+  periodEnd: string;
+  closedBy: {
+    staffId: string;
+    name: string;
+  };
+  totals: {
+    grossSales: number;
+    netSales: number;
+    vat: {
+      collected: number;
+      payable: number;
+    };
+    serviceCharge: {
+      collected: number;
+      pending: number;
+    };
+    cogs: number;
+    labour: number;
+    expenses: number;
+    profitBeforeVAT: number;
+    vatLiability: number;
+    realProfitAfterVAT: number;
+    
+    vatTotal: number; // legacy compatibility
+    serviceChargeTotal: number; // legacy compatibility
+    discountTotal: number;
+    totalPaid: number;
+    orderCount: number;
+    profit: number; // legacy compatibility
+    tips: number;
+    averageOrderValue: number;
+    salesByCategory?: Record<string, number>;
+    cogsByCategory?: Record<string, number>;
+  };
+  insights?: {
+    lowMarginItems: { name: string; margin: number; volume: number }[];
+    topItems: { name: string; revenue: number; profit: number }[];
+    topStaff: { name: string; metric: string; value: string }[];
+    slowHours: { hour: string; revenue: number }[];
+    discountAlerts: { staffName: string; ratio: number; amount: number }[];
+    profitWarnings: string[];
+  };
+  actions?: {
+    pricing: { itemName: string; currentMargin: number; currentPrice: number; suggestedPrice: number; suggestion: string }[];
+    staffing: { hour: string; action: 'increase' | 'decrease'; suggestion: string }[];
+    promotions: { hour: string; suggestion: string }[];
+    riskAlerts: { type: string; message: string; severity: 'high' | 'medium' }[];
+  };
+  profitReport?: {
+    revenue: number;
+    cogs: number;
+    grossProfit: number;
+    grossMargin: number;
+  };
+  vatReport?: {
+    grossSales: number;
+    netSales: number;
+    vatTotal: number;
+    serviceChargeGross: number;
+    serviceChargeNet: number;
+    serviceChargeVAT: number;
+    discountGross: number;
+    discountNet: number; // Impact on net
+    discountVATImpact: number;
+  };
+  breakdowns: {
+    byPaymentMethod: Record<string, number>;
+    byStaff: {
+      staffId: string;
+      staffName: string;
+      role: string;
+      orders: number;
+      grossSales: number;
+      netSales: number;
+      vat: number;
+      serviceCharge: number;
+      discounts: number;
+      averageOrderValue: number;
+    }[];
+    byHour: {
+      hour: number;
+      totalPaid: number;
+      orderCount: number;
+      grossSales: number;
+      netSales: number;
+      vat: number;
+    }[];
+  };
+  meta: {
+    totalOrders: number;
+    totalPayments: number;
+    createdAt: string;
+  };
+}
+
+export interface StaffingForecast {
+  id: string;
+  locationId: string;
+  date: string;
+  shift: ShiftType;
+  forecastSales: number;
+  departments: {
+    foh: number;
+    bar: number;
+    kitchen: number;
+  };
+  labourBudget: number;
+  expectedLabourPercent: number;
+  recommendedStaff: {
+    role: string;
+    count: number;
+  }[];
+  createdAt: string;
+}
+
+export interface RotaShift {
+  id: string;
+  staffId: string;
+  staffName: string;
+  role: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+  breakMinutes: number;
+  estimatedCost: number;
+  department: string;
+}
+
+export interface Rota {
+  id: string;
+  locationId: string;
+  weekStarting: string; // ISO date (Monday)
+  shifts: RotaShift[];
+  status: 'Draft' | 'Published';
+  approvedBy?: string;
+  approvedAt?: string;
+  totalEstimatedLabour: number;
+  totalForecastSales: number;
+  targetLabourPercent: number;
+  createdAt: string;
+}
+
+export interface RotaSuggestion {
+  id: string;
+  locationId: string;
+  weekStarting: string;
+  suggestedShifts: Omit<RotaShift, 'id'>[];
+  confidence: number;
+  reasoning: string;
+  generatedAt: string;
+}
+
+export interface StaffAvailability {
+  id: string; // staffId
+  locationId: string;
+  weeklyPreferences: {
+    day: 0 | 1 | 2 | 3 | 4 | 5 | 6;
+    preference: 'Unavailable' | 'Preferred' | 'Neutral';
+  }[];
+  unavailableDates: {
+    date: string;
+    reason: string;
+    type: 'Holiday' | 'Sick' | 'Personal';
+  }[];
+  maxWeeklyHours: number;
+}
+
+export interface LabourBudgetRecord {
+  id: string;
+  locationId: string;
+  date: string;
+  forecastSales: number;
+  targetLabourPercent: number;
+  maxLabourSpend: number;
+  actualScheduledSpend: number;
+  variance: number;
+}
+
+export type ForecastType = 'day' | 'week' | 'month' | 'quarter';
+
+export interface Forecast {
+  id: string;
+  locationId: string;
+  type: ForecastType;
+  periodStart: string;
+  periodEnd: string;
+  forecast: {
+    revenue: number;
+    orders: number;
+    cogs: number;
+    profit: number;
+    margin: number;
+  };
+  trends: {
+    growthRate: number;
+    avgDailySales: number;
+    bestDay?: string;
+    worstDay?: string;
+    weekdayPattern?: Record<string, number>;
+  };
+  createdAt: string;
+}
+
+export interface StaffIncentiveConfig {
+  id: string;
+  locationId: string;
+  tiers: {
+    platinum: { minScore: number; rewardType: 'cash' | 'voucher' | 'custom'; rewardValue: string | number; label: string };
+    gold: { minScore: number; rewardType: 'cash' | 'voucher' | 'custom'; rewardValue: string | number; label: string };
+    silver: { minScore: number; rewardType: 'cash' | 'voucher' | 'custom'; rewardValue: string | number; label: string };
+  };
+  updatedAt: string;
+}
+
+export interface MenuEngineeringRecord {
+  id: string;
+  locationId: string;
+  itemId: string;
+  name: string;
+  category: string;
+  metrics: {
+    quantitySold: number;
+    revenue: number;
+    profit: number;
+    avgPrice: number;
+    unitCost: number;
+    margin: number;
+    marginPercent: number;
+    popularityIndex: number; // item sales / total category sales
+  };
+  classification: 'star' | 'plowhorse' | 'puzzle' | 'dog';
+  action: string;
+  optimization?: {
+    suggestedPrice: number;
+    currentPrice: number;
+    priceChangePercent: number;
+    estimatedProfitImpact: number;
+    priority: 'high' | 'medium' | 'low';
+  };
+  insights: {
+    pricing?: string;
+    optimization?: string;
+    promotion?: string;
+  };
+  lastUpdated: string;
+}
+
+export interface AutomationSettings {
+  id: string;
+  automationMode: 'off' | 'suggest' | 'auto';
+  maxPriceChangePercent: number;
+  lastUpdated: string;
+}
+
+export interface AutomationLog {
+  id: string;
+  action: string;
+  category: 'pricing' | 'inventory' | 'staff';
+  targetId: string;
+  targetName: string;
+  oldValue: any;
+  newValue: any;
+  timestamp: string;
+  mode: string;
+  status: 'pending' | 'applied' | 'rejected';
+}
+
+export interface ShiftBriefingNote {
+  id: string;
+  title: string;
+  message: string;
+  date: string;
+  shift: ShiftType;
+  author: string;
+  locationId: string;
+  lastUpdated: string;
+  challenges?: string[];
+  focusOfDay?: string;
+  items86?: string[];
+  targets?: {
+    floor?: {
+      totalSalesTarget?: string;
+      dessertTarget?: string;
+    };
+    bar?: {
+      cocktailTarget?: string;
+      premiumDrinkTarget?: string;
+    };
+    kitchen?: {
+      avgPrepTimeTarget?: string;
+    };
+    individual?: {
+      salesTarget?: string;
+      dessertTarget?: string;
+      cocktailTarget?: string;
+    };
+  };
+  specials?: string[];
+  managerAlerts?: string[];
+  isActiveOnPOS?: boolean;
+}
+
+export interface ShiftReport {
+  id: string;
+  locationId: string;
+  shiftDate: string;
+  shiftType: ShiftType;
+  totalRevenue: number;
+  totalPoints: number;
+  topPerformerId: string;
+  topPerformerName: string;
+  itemSales: Record<string, number>;
+  targetsReached: number;
+  closedBy: string;
+  timestamp: string;
+}
+
+export interface StaffPerformanceRecord {
+  id: string;
+  locationId: string;
+  staffId: string;
+  staffName: string;
+  date: string; // ISO date of closure
+  metrics: {
+    totalSales: number;
+    orders: number;
+    avgOrderValue: number;
+    discounts: number;
+    discountRatio: number;
+    marginContribution: number;
+  };
+  score: number;
+  tier: 'platinum' | 'gold' | 'silver' | 'training';
+  createdAt: string;
+}
+
+export interface VATTracker {
+  id: string; // date string
+  locationId: string;
+  date: string;
+  vatCollected: number; // From sales
+  vatOnExpenses: number; // From supplier invoices / expenses
+  vatPayable: number; // vatCollected - vatOnExpenses
+  lastUpdated: string;
+}
+
+export interface ServiceChargeTracker {
+  id: string; // date string
+  locationId: string;
+  date: string;
+  totalServiceCharge: number;
+  distributed: number;
+  pending: number; // totalServiceCharge - distributed
+  lastUpdated: string;
+}
+
+export interface StaffEarnings {
+  id: string; // staffId_date
+  staffId: string;
+  date: string;
+  locationId: string;
+  basePay: number;
+  serviceChargeShare: number;
+  totalEarnings: number;
+  timestamp: string;
+}
+
+export interface MonthlyTarget {
+  id: string; // month-year
+  locationId: string;
+  revenue: number;
+  cogs: number;
+  labour: number;
+  expenses: number;
+  expectedVat: number;
+  expectedServiceCharge: number;
+  targetProfit: number;
+  month: number; // 0-11
+  year: number;
+  updatedAt: string;
+}
+
+export interface VATReturn {
+  id: string;
+  locationId: string;
+  periodStart: string;
+  periodEnd: string;
+  status: 'Draft' | 'Submitted';
+  box1: number; // VAT on sales
+  box2: number; // VAT on EU acquisitions
+  box3: number; // Total VAT (Box 1 + Box 2)
+  box4: number; // VAT on purchases
+  box5: number; // Net VAT to pay (Box 3 - Box 4)
+  box6: number; // Net sales ex VAT
+  box7: number; // Net purchases ex VAT
+  box8: number; // EU sales ex VAT
+  box9: number; // EU purchases ex VAT
+  createdAt: string;
+  submittedAt?: string;
+}
+
+export interface ShiftInsight {
+  id: string;
+  type: 'sales' | 'timing' | 'staff' | 'menu' | 'inventory';
+  priority: 'high' | 'medium' | 'low';
+  message: string;
+  reason: string;
+  action: string;
+  timestamp: string;
+  locationId: string;
+}
+
+export interface CashflowRecord {
+  id: string; // date string
+  locationId: string;
+  date: string;
+  cashIn: number;
+  cashOut: number;
+  liabilitiesPaid: number;
+  netCashflow: number;
+  openingBalance: number;
+  closingBalance: number;
+  safeCash: number; // Cash - VAT - Service Charges - Upcoming Liabilities
+  timestamp: string;
+}
+
+export interface Liability {
+  id: string;
+  locationId: string;
+  type: 'VAT' | 'Rent' | 'Suppliers' | 'Wages' | 'Utilities' | 'Rates' | 'Other';
+  name: string;
+  amount: number;
+  dueDate: string;
+  status: 'Pending' | 'Paid' | 'Overdue';
+  isRecurring: boolean;
+  frequency?: 'Monthly' | 'Quarterly' | 'Yearly';
+  createdAt: string;
+}
+
+export interface AIAction {
+  id: string;
+  locationId: string;
+  type: 'Sales' | 'Labour' | 'COGS' | 'Menu' | 'Marketing';
+  recommendation: string;
+  reason: string;
+  priority: 'High' | 'Medium' | 'Low';
+  expectedImpact: string;
+  status: 'Draft' | 'Approved' | 'Rejected' | 'Executed';
+  approvedBy?: string;
+  approvedAt?: string;
+  executedAt?: string;
+  impactAchieved?: number;
+  timestamp: string;
+}
+
+export interface SystemAlert {
+  id: string;
+  locationId: string;
+  type: 'Profit' | 'VAT' | 'Cashflow' | 'Labour' | 'Service' | 'Stock' | 'Sales';
+  severity: 'Critical' | 'Warning' | 'Info';
+  message: string;
+  description: string;
+  isRead: boolean;
+  timestamp: string;
+}
+
+export interface AppPermissions {
+  inventory: {
+    view: boolean;
+    create: boolean;
+    edit: boolean;
+    delete: boolean;
+    manageSuppliers: boolean;
+    viewCosts: boolean;
+    processInvoices: boolean;
+  };
+  orders: {
+    view: boolean;
+    create: boolean;
+    edit: boolean;
+    delete: boolean;
+    managePOS: boolean;
+    voidItems: boolean;
+    applyDiscounts: boolean;
+  };
+  recipes: {
+    view: boolean;
+    create: boolean;
+    edit: boolean;
+    delete: boolean;
+    viewCosts: boolean;
+    manageMenuEngineering: boolean;
+  };
+  reports: {
+    viewSales: boolean;
+    viewFinancials: boolean;
+    viewStaffPerformance: boolean;
+    viewFoodSafety: boolean;
+    exportData: boolean;
+  };
+  staff: {
+    viewProfiles: boolean;
+    editProfiles: boolean;
+    editSalaries: boolean;
+    manageRoles: boolean;
+    viewTraining: boolean;
+    viewBriefing: boolean;
+    manageBriefing: boolean;
+    viewBriefingTargets: boolean;
+    viewBriefingChallenges: boolean;
+    viewBriefing86: boolean;
+    viewBriefingPerformance: boolean;
+  };
+  settings: {
+    view: boolean;
+    managePermissions: boolean;
+    manageAutomation: boolean;
+  };
+  stockCount: {
+    view: boolean;
+    startCount: boolean;
+    editCount: boolean;
+    deleteCount: boolean;
+    viewVariances: boolean;
+    finalizeCount: boolean;
+  };
+  tables: {
+    view: boolean;
+    editLayout: boolean;
+    manageZones: boolean;
+    seatCustomers: boolean;
+    transferOrders: boolean;
+    closeTable: boolean;
+  };
+  staffingRota: {
+    view: boolean;
+    manageForecasts: boolean;
+    buildRota: boolean;
+    approveRota: boolean;
+    viewBudgets: boolean;
+    manageAvailability: boolean;
+  };
+}
+
+export interface LabourShift {
+  id: string;
+  staffId?: string | null; // matched staff from staffProfiles
+  employeeName: string;
+  role: string;
+  department?: string | null;
+  date: string;
+  clockIn: string;
+  clockOut: string;
+  breakMinutes: number;
+  durationHours: number;
+  wageRate: number;
+  totalCost: number;
+  locationId: string;
+  importedAt: string;
+  source: string; // e.g. "Time Tracker Pro CSV"
+}
+
+export interface LabourForecasting {
+  id: string;
+  locationId: string;
+  date: string;
+  expectedSales: number;
+  recommendedStaffing: {
+    role: string;
+    count: number;
+  }[];
+  efficiencyTarget: number;
+  historicalLabourPercent: number;
+  createdAt: string;
+}
+
+export interface SystemPermissions {
+  id: 'permissions_config';
+  locationId: string;
+  roles: Record<string, AppPermissions>;
+  updatedAt: string;
 }

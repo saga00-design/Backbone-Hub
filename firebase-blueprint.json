@@ -6,6 +6,7 @@
       "type": "object",
       "properties": {
         "id": { "type": "string" },
+        "locationId": { "type": "string" },
         "name": { "type": "string" },
         "category": { "type": "string" },
         "subCategory": { "type": "string" },
@@ -21,7 +22,20 @@
         "supplier": { "type": "string" },
         "supplierContact": { "type": "string" },
         "dailyUsageRate": { "type": "number" },
+        "yieldFactor": { "type": "number" },
+        "storageLocation": { "type": "string" },
+        "priceHistory": { 
+          "type": "array", 
+          "items": { 
+            "type": "object",
+            "properties": {
+              "date": { "type": "string" },
+              "price": { "type": "number" }
+            }
+          }
+        },
         "barcode": { "type": "string" },
+        "averagePurchasePrice": { "type": "number" },
         "allergies": { "type": "array", "items": { "type": "string" } },
         "totalOwned": { "type": "number" },
         "brokenQuantity": { "type": "number" }
@@ -34,6 +48,7 @@
       "type": "object",
       "properties": {
         "id": { "type": "string" },
+        "locationId": { "type": "string" },
         "name": { "type": "string" },
         "description": { "type": "string" },
         "type": { "type": "string", "enum": ["recipe", "menu_item"] },
@@ -55,13 +70,40 @@
             "properties": {
               "inventoryItemId": { "type": "string" },
               "quantity": { "type": "number" },
-              "unit": { "type": "string" }
+              "unit": { "type": "string" },
+              "baseQuantity": { "type": "number" },
+              "costAtCreation": { "type": "number" }
             }
           }
         },
+        "posId": { "type": "string" },
+        "posCategory": { "type": "string" },
+        "marginTarget": { "type": "number" },
+        "lastCostUpdate": { "type": "string" },
         "lastUpdated": { "type": "string" }
       },
       "required": ["id", "name", "sellingPrice", "ingredients", "lastUpdated"]
+    },
+    "MenuItem": {
+      "title": "Menu Item",
+      "description": "A POS-synchronized menu item mapping",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "recipeId": { "type": "string" },
+        "name": { "type": "string" },
+        "slug": { "type": "string" },
+        "categoryId": { "type": "string" },
+        "priceGross": { "type": "number", "description": "Price in cents" },
+        "vatRate": { "type": "number" },
+        "active": { "type": "boolean" },
+        "locationId": { "type": "string" },
+        "station": { "type": "string" },
+        "isDrink": { "type": "boolean" },
+        "imageUrl": { "type": "string" },
+        "lastUpdated": { "type": "string" }
+      },
+      "required": ["id", "recipeId", "name", "priceGross"]
     },
     "Supplier": {
       "title": "Supplier",
@@ -69,6 +111,7 @@
       "type": "object",
       "properties": {
         "id": { "type": "string" },
+        "locationId": { "type": "string" },
         "name": { "type": "string" },
         "contactName": { "type": "string" },
         "email": { "type": "string" },
@@ -84,6 +127,7 @@
       "type": "object",
       "properties": {
         "id": { "type": "string" },
+        "locationId": { "type": "string" },
         "date": { "type": "string" },
         "supplier": { "type": "string" },
         "totalAmount": { "type": "number" },
@@ -98,6 +142,7 @@
       "type": "object",
       "properties": {
         "id": { "type": "string" },
+        "locationId": { "type": "string" },
         "date": { "type": "string" },
         "vendor": { "type": "string" },
         "totalAmount": { "type": "number" },
@@ -113,6 +158,7 @@
       "type": "object",
       "properties": {
         "id": { "type": "string" },
+        "locationId": { "type": "string" },
         "date": { "type": "string" },
         "aiAnalysis": { "type": "string" },
         "items": { "type": "array", "items": { "type": "object" } }
@@ -125,11 +171,13 @@
       "type": "object",
       "properties": {
         "id": { "type": "string" },
+        "locationId": { "type": "string" },
         "date": { "type": "string" },
         "fileName": { "type": "string" },
         "totalSales": { "type": "number" },
-        "kitchenSales": { "type": "number" },
-        "barSales": { "type": "number" },
+        "foodSales": { "type": "number" },
+        "beverageSales": { "type": "number" },
+        "nonFbSales": { "type": "number" },
         "itemsCount": { "type": "number" },
         "matchedCount": { "type": "number" },
         "ingredientsAffected": { "type": "number" }
@@ -156,16 +204,16 @@
       "type": "object",
       "properties": {
         "id": { "type": "string" },
-        "number": { "type": "string" },
-        "capacity": { "type": "number" },
-        "x": { "type": "number" },
-        "y": { "type": "number" },
-        "status": { "type": "string", "enum": ["Available", "Seated", "Ordered", "Served", "Paid"] },
-        "currentOrderId": { "type": "string" },
-        "waiterId": { "type": "string" },
-        "seatedAt": { "type": "string" }
+        "name": { "type": "string" },
+        "zoneId": { "type": "string" },
+        "seats": { "type": "number" },
+        "active": { "type": "boolean" },
+        "locationId": { "type": "string" },
+        "status": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "lastUpdated": { "type": "string" }
       },
-      "required": ["id", "number", "status"]
+      "required": ["id", "name", "zoneId", "seats", "active", "locationId", "status", "createdAt", "lastUpdated"]
     },
     "POSOrder": {
       "title": "POS Order",
@@ -173,20 +221,40 @@
       "type": "object",
       "properties": {
         "id": { "type": "string" },
+        "locationId": { "type": "string" },
         "tableId": { "type": "string" },
+        "tableName": { "type": "string" },
+        "orderNumber": { "type": "string" },
         "type": { "type": "string", "enum": ["Dine-In", "Takeaway", "Delivery"] },
-        "status": { "type": "string", "enum": ["Open", "Paid", "Cancelled", "Refunded"] },
-        "items": { "type": "array", "items": { "type": "object" } },
+        "status": { "type": "string", "enum": ["Open", "Sent", "Paid", "Cancelled", "Refunded"] },
+        "items": { 
+          "type": "array", 
+          "items": { 
+            "type": "object",
+            "properties": {
+              "menuItemId": { "type": "string" },
+              "name": { "type": "string" },
+              "quantity": { "type": "number" },
+              "price": { "type": "number" },
+              "modifiers": { "type": "array", "items": { "type": "string" } },
+              "notes": { "type": "string" },
+              "status": { "type": "string", "enum": ["Pending", "Cooking", "Served", "Void"] }
+            }
+          } 
+        },
         "subtotal": { "type": "number" },
         "vat": { "type": "number" },
         "serviceCharge": { "type": "number" },
         "total": { "type": "number" },
         "tips": { "type": "number" },
         "waiterId": { "type": "string" },
+        "waiterName": { "type": "string" },
         "createdAt": { "type": "string" },
         "updatedAt": { "type": "string" },
         "paidAt": { "type": "string" },
-        "payments": { "type": "array", "items": { "type": "object" } }
+        "paymentMethod": { "type": "string", "enum": ["Cash", "Card", "Mixed", "Other"] },
+        "payments": { "type": "array", "items": { "type": "object" } },
+        "isInventoryDepleted": { "type": "boolean", "description": "Flag to track if HUB has processed this for stock" }
       },
       "required": ["id", "status", "items", "total", "createdAt"]
     },
@@ -196,14 +264,42 @@
       "type": "object",
       "properties": {
         "id": { "type": "string" },
-        "name": { "type": "string" },
-        "role": { "type": "string", "enum": ["Waiter", "Bartender", "Chef", "Manager"] },
+        "locationId": { "type": "string" },
+        "firstName": { "type": "string" },
+        "lastName": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string", "enum": ["Admin", "Manager", "Staff", "Waiter", "Chef", "Bartender"] },
         "pin": { "type": "string" },
         "hourlyRate": { "type": "number" },
         "trainingProgress": { "type": "object" },
-        "active": { "type": "boolean" }
+        "active": { "type": "boolean" },
+        "performanceScore": { "type": "number" },
+        "managerRating": { "type": "number" },
+        "scoreTrend": { "type": "string", "enum": ["up", "down", "stable"] },
+        "badges": { "type": "array", "items": { "type": "string" } },
+        "completedModules": { "type": "array", "items": { "type": "string" } },
+        "salaryHistory": { "type": "array", "items": { "type": "object" } }
       },
-      "required": ["id", "name", "role", "pin"]
+      "required": ["id", "firstName", "lastName", "role", "pin"]
+    },
+    "ClockInRecord": {
+      "title": "Clock In Record",
+      "description": "Records of staff working hours",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "staffId": { "type": "string" },
+        "staffName": { "type": "string" },
+        "locationId": { "type": "string" },
+        "clockIn": { "type": "string" },
+        "clockOut": { "type": "string" },
+        "hourlyRateAtTime": { "type": "number" },
+        "totalHours": { "type": "number" },
+        "totalCost": { "type": "number" },
+        "status": { "type": "string", "enum": ["active", "completed", "verified"] },
+        "breakMinutes": { "type": "number" }
+      },
+      "required": ["id", "staffId", "clockIn", "status"]
     },
     "WasteRecord": {
       "title": "Waste Record",
@@ -211,6 +307,7 @@
       "type": "object",
       "properties": {
         "id": { "type": "string" },
+        "locationId": { "type": "string" },
         "inventoryItemId": { "type": "string" },
         "quantity": { "type": "number" },
         "unit": { "type": "string" },
@@ -220,9 +317,369 @@
         "staffId": { "type": "string" }
       },
       "required": ["id", "inventoryItemId", "quantity", "date"]
+    },
+    "BriefingItem": {
+      "title": "Briefing Item",
+      "description": "A shift briefing announcement or special",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "locationId": { "type": "string" },
+        "type": { "type": "string", "enum": ["Urgent Alert", "Special", "Recommendation", "Service Note"] },
+        "title": { "type": "string" },
+        "content": { "type": "string" },
+        "price": { "type": "number" },
+        "shift": { "type": "string", "enum": ["Lunch", "Dinner", "All Day"] },
+        "roles": { "type": "array", "items": { "type": "string" } },
+        "priority": { "type": "string", "enum": ["High", "Medium", "Low"] },
+        "isActive": { "type": "boolean" },
+        "startDate": { "type": "string" },
+        "endDate": { "type": "string" }
+      },
+      "required": ["id", "locationId", "type", "title", "content"]
+    },
+    "ShiftTarget": {
+      "title": "Shift Target",
+      "description": "A measurable goal for the shift",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "locationId": { "type": "string" },
+        "type": { "type": "string", "enum": ["Item", "Revenue", "Behavior"] },
+        "title": { "type": "string" },
+        "targetValue": { "type": "number" },
+        "currentValue": { "type": "number" },
+        "shift": { "type": "string", "enum": ["Lunch", "Dinner", "All Day"] },
+        "status": { "type": "string", "enum": ["Active", "Completed", "Expired"] }
+      },
+      "required": ["id", "locationId", "type", "title", "targetValue"]
+    },
+    "ShiftChallenge": {
+      "title": "Shift Challenge",
+      "description": "A staff competition",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "locationId": { "type": "string" },
+        "title": { "type": "string" },
+        "type": { "type": "string", "enum": ["Product Push", "Sales Race", "Quality Challenge", "Team vs Team"] },
+        "isActive": { "type": "boolean" },
+        "startDate": { "type": "string" },
+        "endDate": { "type": "string" }
+      },
+      "required": ["id", "locationId", "title", "type", "isActive"]
+    },
+    "StaffShiftPerformance": {
+      "title": "Staff Shift Performance",
+      "description": "Real-time performance ranking and points",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "locationId": { "type": "string" },
+        "staffId": { "type": "string" },
+        "points": { "type": "number" },
+        "sales": { "type": "number" },
+        "rank": { "type": "number" }
+      },
+      "required": ["id", "locationId", "staffId", "points"]
+    },
+    "Modifier": {
+      "title": "Modifier",
+      "description": "A menu item modifier like extra toppings or sides",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "locationId": { "type": "string" },
+        "name": { "type": "string" },
+        "price": { "type": "number" },
+        "inventoryItemId": { "type": "string" },
+        "quantity": { "type": "number" },
+        "category": { "type": "string" },
+        "lastUpdated": { "type": "string" }
+      },
+      "required": ["id", "locationId", "name", "price"]
+    },
+    "StaffCertification": {
+      "title": "Staff Certification",
+      "description": "A record of a staff member passing a training quiz",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "locationId": { "type": "string" },
+        "staffId": { "type": "string" },
+        "staffName": { "type": "string" },
+        "recipeId": { "type": "string" },
+        "recipeName": { "type": "string" },
+        "score": { "type": "number" },
+        "total": { "type": "number" },
+        "passed": { "type": "boolean" },
+        "completedAt": { "type": "string" }
+      },
+      "required": ["id", "locationId", "staffId", "recipeId", "passed"]
+    },
+    "AuditLog": {
+      "title": "Audit Log",
+      "description": "A record of a manual change made by a user",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "locationId": { "type": "string" },
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "action": { "type": "string" },
+        "targetType": { "type": "string" },
+        "targetId": { "type": "string" },
+        "targetName": { "type": "string" },
+        "oldValue": { "type": "object" },
+        "newValue": { "type": "object" },
+        "timestamp": { "type": "string" }
+      },
+      "required": ["id", "locationId", "userId", "action", "timestamp"]
+    },
+    "UnavailableItem": {
+      "title": "Unavailable Item",
+      "description": "86'd menu item",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "locationId": { "type": "string" },
+        "menuItemId": { "type": "string" },
+        "status": { "type": "string", "enum": ["Active", "Low Stock", "Unavailable (86)"] }
+      },
+      "required": ["id", "locationId", "menuItemId", "status"]
+    },
+    "BriefingAcknowledgement": {
+      "title": "Briefing Acknowledgement",
+      "description": "Record of a staff member viewing and acknowledging a shift briefing",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "locationId": { "type": "string" },
+        "staffId": { "type": "string" },
+        "staffName": { "type": "string" },
+        "acknowledgedAt": { "type": "string" }
+      },
+      "required": ["id", "locationId", "staffId", "acknowledgedAt"]
+    },
+    "DailyClosure": {
+      "title": "Daily Closure",
+      "description": "A record of a closed day or shift with financial summaries",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "locationId": { "type": "string" },
+        "type": { "type": "string", "enum": ["day", "shift"] },
+        "date": { "type": "string" },
+        "shiftName": { "type": "string" },
+        "periodStart": { "type": "string" },
+        "periodEnd": { "type": "string" },
+        "closedBy": {
+          "type": "object",
+          "properties": {
+            "staffId": { "type": "string" },
+            "name": { "type": "string" }
+          }
+        },
+        "totals": {
+          "type": "object",
+          "properties": {
+            "grossSales": { "type": "number" },
+            "netSales": { "type": "number" },
+            "vatTotal": { "type": "number" },
+            "serviceChargeTotal": { "type": "number" },
+            "discountTotal": { "type": "number" },
+            "totalPaid": { "type": "number" },
+            "orderCount": { "type": "number" },
+            "averageOrderValue": { "type": "number" }
+          }
+        },
+        "breakdowns": {
+          "type": "object",
+          "properties": {
+            "byPaymentMethod": { "type": "object" },
+            "byStaff": { "type": "object" },
+            "byHour": { "type": "object" }
+          }
+        },
+        "meta": {
+          "type": "object",
+          "properties": {
+            "totalOrders": { "type": "number" },
+            "totalPayments": { "type": "number" },
+            "createdAt": { "type": "string" }
+          }
+        }
+      },
+      "required": ["id", "locationId", "type", "date", "periodStart", "periodEnd", "totals"]
+    },
+    "StaffingForecast": {
+      "title": "Staffing Forecast",
+      "description": "Predicted staffing needs based on demand",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "locationId": { "type": "string" },
+        "date": { "type": "string" },
+        "shift": { "type": "string", "enum": ["Lunch", "Dinner", "All Day"] },
+        "forecastSales": { "type": "number" },
+        "departments": {
+          "type": "object",
+          "properties": {
+            "foh": { "type": "number" },
+            "bar": { "type": "number" },
+            "kitchen": { "type": "number" }
+          }
+        },
+        "labourBudget": { "type": "number" },
+        "expectedLabourPercent": { "type": "number" },
+        "recommendedStaff": {
+          "type": "array",
+          "items": { "type": "object" }
+        },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "locationId", "date", "shift", "forecastSales"]
+    },
+    "Rota": {
+      "title": "Rota",
+      "description": "A weekly staff rota",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "locationId": { "type": "string" },
+        "weekStarting": { "type": "string" },
+        "shifts": { "type": "array", "items": { "type": "object" } },
+        "status": { "type": "string", "enum": ["Draft", "Published"] },
+        "approvedBy": { "type": "string" },
+        "approvedAt": { "type": "string" },
+        "totalEstimatedLabour": { "type": "number" },
+        "totalForecastSales": { "type": "number" },
+        "targetLabourPercent": { "type": "number" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "locationId", "weekStarting", "status"]
+    },
+    "RotaSuggestion": {
+      "title": "Rota Suggestion",
+      "description": "AI-generated rota suggestion",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "locationId": { "type": "string" },
+        "weekStarting": { "type": "string" },
+        "suggestedShifts": { "type": "array", "items": { "type": "object" } },
+        "confidence": { "type": "number" },
+        "reasoning": { "type": "string" },
+        "generatedAt": { "type": "string" }
+      },
+      "required": ["id", "locationId", "weekStarting"]
+    },
+    "StaffAvailability": {
+      "title": "Staff Availability",
+      "description": "Staff preferences and unavailability",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "locationId": { "type": "string" },
+        "weeklyPreferences": { "type": "array", "items": { "type": "object" } },
+        "unavailableDates": { "type": "array", "items": { "type": "object" } },
+        "maxWeeklyHours": { "type": "number" }
+      },
+      "required": ["id", "locationId"]
+    },
+    "ShiftBriefing": {
+      "title": "Shift Briefing Note",
+      "description": "Specific briefing notes pulling from shiftBriefings collection",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "locationId": { "type": "string" },
+        "title": { "type": "string" },
+        "message": { "type": "string" },
+        "date": { "type": "string" },
+        "shift": { "type": "string" },
+        "author": { "type": "string" },
+        "lastUpdated": { "type": "string" },
+        "challenges": { "type": "array", "items": { "type": "string" } },
+        "focusOfDay": { "type": "string" },
+        "items86": { "type": "array", "items": { "type": "string" } },
+        "targets": {
+          "type": "object",
+          "properties": {
+            "floor": {
+              "type": "object",
+              "properties": {
+                "totalSalesTarget": { "type": "string" },
+                "dessertTarget": { "type": "string" }
+              }
+            },
+            "bar": {
+              "type": "object",
+              "properties": {
+                "cocktailTarget": { "type": "string" },
+                "premiumDrinkTarget": { "type": "string" }
+              }
+            },
+            "kitchen": {
+              "type": "object",
+              "properties": {
+                "avgPrepTimeTarget": { "type": "string" }
+              }
+            },
+            "individual": {
+              "type": "object",
+              "properties": {
+                "salesTarget": { "type": "string" },
+                "dessertTarget": { "type": "string" },
+                "cocktailTarget": { "type": "string" }
+              }
+            }
+          }
+        },
+        "specials": { "type": "array", "items": { "type": "string" } },
+        "managerAlerts": { "type": "array", "items": { "type": "string" } },
+        "isActiveOnPOS": { "type": "boolean" }
+      },
+      "required": ["id", "title", "message"]
+    },
+    "LabourBudgetRecord": {
+      "title": "Labour Budget Record",
+      "description": "Target vs Actual labour tracking",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "locationId": { "type": "string" },
+        "date": { "type": "string" },
+        "forecastSales": { "type": "number" },
+        "targetLabourPercent": { "type": "number" },
+        "maxLabourSpend": { "type": "number" },
+        "actualScheduledSpend": { "type": "number" },
+        "variance": { "type": "number" }
+      },
+      "required": ["id", "locationId", "date"]
     }
   },
   "firestore": {
+    "/staffingForecasts/{date}": {
+      "schema": "StaffingForecast",
+      "description": "Daily staffing forecasts"
+    },
+    "/rotas/{weekStarting}": {
+      "schema": "Rota",
+      "description": "Weekly rotas"
+    },
+    "/rotaSuggestions/{suggestionId}": {
+      "schema": "RotaSuggestion",
+      "description": "AI-suggested rotas"
+    },
+    "/staffAvailability/{staffId}": {
+      "schema": "StaffAvailability",
+      "description": "Staff availability and preferences"
+    },
+    "/labourBudgets/{budgetId}": {
+      "schema": "LabourBudgetRecord",
+      "description": "Labour budget tracking records"
+    },
     "/users/{userId}": {
       "schema": "UserProfile",
       "description": "User profile document"
@@ -270,6 +727,142 @@
     "/users/{userId}/waste": {
       "schema": "WasteRecord",
       "description": "Inventory waste records"
+    },
+    "/staffProfiles/{staffId}": {
+      "schema": "StaffMember",
+      "description": "Global staff profiles"
+    },
+    "/menuCategories/{categoryId}": {
+      "schema": "object",
+      "description": "Global menu categories"
+    },
+    "/menuItems/{itemId}": {
+      "schema": "MenuItem",
+      "description": "Global menu items mapping back to recipes for POS"
+    },
+    "/tables/{tableId}": {
+      "schema": "Table",
+      "description": "Global restaurant tables"
+    },
+    "/posOrders/{orderId}": {
+      "schema": "POSOrder",
+      "description": "Global POS orders"
+    },
+    "/kdsTickets/{ticketId}": {
+      "schema": "object",
+      "description": "Kitchen Display System tickets"
+    },
+    "/barKdsTickets/{ticketId}": {
+      "schema": "object",
+      "description": "Bar Kitchen Display System tickets"
+    },
+    "/inventory/{itemId}": {
+      "schema": "InventoryItem",
+      "description": "Global inventory items"
+    },
+    "/recipes/{recipeId}": {
+      "schema": "Recipe",
+      "description": "Global recipes"
+    },
+    "/suppliers/{supplierId}": {
+      "schema": "Supplier",
+      "description": "Global suppliers"
+    },
+    "/orders/{orderId}": {
+      "schema": "Order",
+      "description": "Global purchase orders"
+    },
+    "/invoices/{invoiceId}": {
+      "schema": "Invoice",
+      "description": "Global invoices"
+    },
+    "/stockCounts/{countId}": {
+      "schema": "StockCountRecord",
+      "description": "Global stock count records"
+    },
+    "/salesImports/{importId}": {
+      "schema": "SalesImportRecord",
+      "description": "Global sales import records"
+    },
+    "/waste/{wasteId}": {
+      "schema": "WasteRecord",
+      "description": "Global waste records"
+    },
+    "/shiftBriefings/{briefingId}": {
+      "schema": "ShiftBriefing",
+      "description": "New briefing collection requested by user for manual data management"
+    },
+    "/briefingItems/{itemId}": {
+      "schema": "BriefingItem",
+      "description": "Daily operational briefing items"
+    },
+    "/shiftTargets/{targetId}": {
+      "schema": "ShiftTarget",
+      "description": "Daily operational targets"
+    },
+    "/shiftChallenges/{challengeId}": {
+      "schema": "ShiftChallenge",
+      "description": "Staff shift challenges"
+    },
+    "/staffShiftPerformance/{perfId}": {
+      "schema": "StaffShiftPerformance",
+      "description": "Staff performance and points per shift"
+    },
+    "/modifiers/{modId}": {
+      "schema": "Modifier",
+      "description": "Menu item modifiers"
+    },
+    "/staffCertifications/{certId}": {
+      "schema": "StaffCertification",
+      "description": "Staff training quiz results"
+    },
+    "/auditLogs/{logId}": {
+      "schema": "AuditLog",
+      "description": "Audit logs for manual actions"
+    },
+    "/unavailableItems/{itemId}": {
+      "schema": "UnavailableItem",
+      "description": "86'd menu items"
+    },
+    "/briefingAcknowledgements/{ackId}": {
+      "schema": "BriefingAcknowledgement",
+      "description": "Staff briefing acknowledgements"
+    },
+    "/dailyClosures/{closureId}": {
+      "schema": "DailyClosure",
+      "description": "Permanent records of daily or shift closures"
+    },
+    "/clockInRecords/{recordId}": {
+      "schema": "ClockInRecord",
+      "description": "Staff clock in and out records for labour tracking"
+    },
+    "/systemSettings/{settingId}": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "automationMode": { "type": "string", "enum": ["off", "suggest", "auto"] },
+          "maxPriceChangePercent": { "type": "number" },
+          "lastUpdated": { "type": "string" }
+        }
+      },
+      "description": "Global system configurations"
+    },
+    "/automationLogs/{logId}": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "action": { "type": "string" },
+          "category": { "type": "string" },
+          "targetId": { "type": "string" },
+          "targetName": { "type": "string" },
+          "oldValue": { "type": "object" },
+          "newValue": { "type": "object" },
+          "timestamp": { "type": "string" },
+          "mode": { "type": "string" },
+          "status": { "type": "string" }
+        }
+      },
+      "description": "Audit logs for automated actions"
     }
   }
 }

@@ -47,7 +47,7 @@ export const ConfirmationModal: React.FC<ConfirmationModalProps> = ({
                 <div className={`p-3 rounded-2xl ${
                   variant === 'danger' ? 'bg-red-500/10 text-red-500' : 
                   variant === 'warning' ? 'bg-amber-500/10 text-amber-500' : 
-                  'bg-blue-500/10 text-blue-500'
+                  'bg-accent/10 text-accent'
                 }`}>
                   <AlertTriangle className="h-6 w-6" />
                 </div>
@@ -71,7 +71,7 @@ export const ConfirmationModal: React.FC<ConfirmationModalProps> = ({
                   className={`flex-1 rounded-xl py-3 text-[10px] font-bold uppercase tracking-widest shadow-lg ${
                     variant === 'danger' ? 'bg-red-500 hover:bg-red-600 shadow-red-500/20' : 
                     variant === 'warning' ? 'bg-amber-500 hover:bg-amber-600 shadow-amber-500/20' : 
-                    'bg-[#486581] hover:bg-[#5a7a9a] shadow-[#486581]/20'
+                    'bg-accent hover:bg-accent/90 shadow-accent/20'
                   }`}
                 >
                   {confirmLabel}

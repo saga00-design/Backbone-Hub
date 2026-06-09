@@ -1,40 +1,52 @@
 
 import React, { useState, useEffect } from 'react';
-import { InventoryItem, InventoryCategory, OrderItem } from '../types';
+import { InventoryItem, InventoryCategory, OrderItem, Unit, InventoryType, Recipe } from '../types';
 import { 
   Search, Filter, Plus, Calendar, AlertTriangle, Pencil, Clock, Tag, 
-  HeartCrack, TrendingUp, AlertCircle, Minus, Building, Settings2, Check, X, Receipt 
+  HeartCrack, TrendingUp, AlertCircle, Minus, Building, Settings2, Check, X, Receipt,
+  Download, Upload, FileText, Trash2
 } from 'lucide-react';
+import Papa from 'papaparse';
 import { Button } from './Button';
 import { toast } from 'sonner';
 import { DEFAULT_DEPARTMENTS } from '../constants';
+import { formatDisplayValue, formatPricePerUnit, convertToBaseUnit } from '../utils/unitConversions';
 
 interface InventoryListProps {
   items: InventoryItem[];
+  recipes: Recipe[];
   onAddItem: () => void;
   onEditItem: (item: InventoryItem) => void;
   cart: OrderItem[];
   onAddToCart: (item: InventoryItem, quantity: number) => void;
   onBulkDelete?: (ids: string[]) => void;
   onBulkUpdate?: (ids: string[], updates: Partial<InventoryItem>) => void;
+  onBulkAdd?: (items: Omit<InventoryItem, 'id' | 'lastUpdated'>[]) => void;
+  checkPermission: (module: string, action: string) => boolean;
 }
 
 export const InventoryList: React.FC<InventoryListProps> = ({ 
   items, 
+  recipes,
   onAddItem, 
   onEditItem, 
   cart, 
   onAddToCart,
   onBulkDelete,
-  onBulkUpdate
+  onBulkUpdate,
+  onBulkAdd,
+  checkPermission
 }) => {
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
   // Initialize from localStorage or default
   const [searchTerm, setSearchTerm] = useState(() => localStorage.getItem('inv_search') || '');
   const [categoryFilter, setCategoryFilter] = useState(() => localStorage.getItem('inv_filter') || 'All');
   const [departmentFilter, setDepartmentFilter] = useState('All');
   const [subCategoryFilter, setSubCategoryFilter] = useState('All');
   const [expiryFilter, setExpiryFilter] = useState('All');
+  const [stockLevelFilter, setStockLevelFilter] = useState<'All' | 'Low Stock' | 'Out of Stock' | 'Healthy'>('All');
   const [vatFilter, setVatFilter] = useState<'All' | 'Has VAT' | 'No VAT' | 'Missing'>('All');
+  const [activeTab, setActiveTab] = useState<'List' | 'Restock'>('List');
   const [sortField, setSortField] = useState<string>('Item');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
@@ -42,10 +54,13 @@ export const InventoryList: React.FC<InventoryListProps> = ({
   const [showColumnSelector, setShowColumnSelector] = useState(false);
   const [visibleColumns, setVisibleColumns] = useState<string[]>(() => {
     const saved = localStorage.getItem('inv_columns');
-    return saved ? JSON.parse(saved) : ['Item', 'Category', 'Stock Level', 'COGS', 'Retail Price', 'VAT', 'Value', 'Order'];
+    return saved ? JSON.parse(saved) : ['Status', 'Item', 'Category', 'Stock Quantity', 'Size', 'Unit', 'Price/Unit', 'Total Cost', 'Retail Price', 'VAT', 'Order'];
   });
 
-  const allColumns = ['Item', 'Category', 'Stock Level', 'Supplier', 'Expiry Status', 'COGS', 'Retail Price', 'VAT', 'Value', 'Order'];
+  const allColumns = ['Status', 'Item', 'Category', 'Stock Quantity', 'Size', 'Unit', 
+    ...(checkPermission('inventory', 'viewCosts') ? ['Price/Unit', 'Total Cost', 'Retail Price', 'VAT'] : []),
+    'Supplier', 'Storage Location', 'Expiry Status', 'Order'
+  ];
 
   const toggleColumn = (col: string) => {
     setVisibleColumns(prev => {
@@ -73,7 +88,7 @@ export const InventoryList: React.FC<InventoryListProps> = ({
 
   // Dynamically extract all unique categories from items
   const availableCategories = Array.from(new Set(items.map(i => i.category).filter(Boolean))).sort();
-  const defaultCategories = ['Ingredient', 'Crockery', 'Utensil', 'Equipment', 'Prep', 'Batch'];
+  const defaultCategories = ['Food', 'Beverage', 'Non-F&B', 'Ingredient', 'Crockery', 'Utensil', 'Equipment', 'Prep', 'Batch'];
   // Combine defaults with available, ensure uniqueness
   const filterOptions = Array.from(new Set([...defaultCategories, ...availableCategories]));
 
@@ -94,6 +109,12 @@ export const InventoryList: React.FC<InventoryListProps> = ({
   };
 
   const filteredItems = items.filter(item => {
+    // Tab Filter
+    if (activeTab === 'Restock') {
+      const isLow = item.quantity <= (item.minStockLevel || 0);
+      if (!isLow) return false;
+    }
+    
     const matchesSearch = (item.name || '').toLowerCase().includes((searchTerm || '').toLowerCase());
     const matchesCategory = categoryFilter === 'All' || item.category === categoryFilter;
     const matchesSubCategory = subCategoryFilter === 'All' || item.subCategory === subCategoryFilter;
@@ -118,33 +139,55 @@ export const InventoryList: React.FC<InventoryListProps> = ({
       else if (vatFilter === 'Missing') matchesVat = !item.vatCode;
     }
 
-    return matchesSearch && matchesCategory && matchesSubCategory && matchesExpiry && matchesDepartment && matchesVat;
+    let matchesStockLevel = true;
+    if (stockLevelFilter !== 'All') {
+      const isOut = item.quantity <= 0;
+      const isLow = !isOut && item.quantity <= (item.minStockLevel || 0);
+      const isHealthy = !isOut && !isLow;
+      
+      if (stockLevelFilter === 'Out of Stock') matchesStockLevel = isOut;
+      else if (stockLevelFilter === 'Low Stock') matchesStockLevel = isLow;
+      else if (stockLevelFilter === 'Healthy') matchesStockLevel = isHealthy;
+    }
+
+    return matchesSearch && matchesCategory && matchesSubCategory && matchesExpiry && matchesDepartment && matchesVat && matchesStockLevel;
   }).sort((a, b) => {
     let comparison = 0;
     switch (sortField) {
+      case 'Status':
+        const getStatusRank = (qty: number, min: number) => {
+          if (qty <= 0) return 3;
+          if (qty <= min) return 2;
+          return 1;
+        };
+        comparison = getStatusRank(a.quantity, a.minStockLevel || 0) - getStatusRank(b.quantity, b.minStockLevel || 0);
+        break;
       case 'Item':
         comparison = (a.name || '').localeCompare(b.name || '');
         break;
       case 'Category':
         comparison = (a.category || '').localeCompare(b.category || '');
         break;
-      case 'Stock Level':
+      case 'Stock Quantity':
         comparison = (a.quantity || 0) - (b.quantity || 0);
         break;
-      case 'COGS':
+      case 'Size':
+        comparison = (a.unitSize || 0) - (b.unitSize || 0);
+        break;
+      case 'Unit':
+        comparison = (a.unit || '').localeCompare(b.unit || '');
+        break;
+      case 'Price/Unit':
         comparison = (a.pricePerUnit || 0) - (b.pricePerUnit || 0);
         break;
-      case 'Retail Price':
-        comparison = (a.retailPrice || 0) - (b.retailPrice || 0);
-        break;
-      case 'VAT':
-        comparison = (a.vatCode || '').localeCompare(b.vatCode || '');
-        break;
-      case 'Value':
+      case 'Total Cost':
         comparison = ((a.quantity || 0) * (a.pricePerUnit || 0)) - ((b.quantity || 0) * (b.pricePerUnit || 0));
         break;
       case 'Supplier':
         comparison = (a.supplier || '').localeCompare(b.supplier || '');
+        break;
+      case 'Storage Location':
+        comparison = (a.storageLocation || '').localeCompare(b.storageLocation || '');
         break;
       case 'Expiry Status':
         const daysA = getDaysUntilExpiry(a.expiryDate) ?? 9999;
@@ -203,28 +246,299 @@ export const InventoryList: React.FC<InventoryListProps> = ({
     };
   };
 
-  const formatQuantity = (qty: number) => {
-    return parseFloat(qty.toFixed(3));
+  const formatQuantity = (qty: number, type: InventoryType) => {
+    const display = formatDisplayValue(qty, type);
+    return `${Number(display.value.toFixed(3))} ${display.unit}`;
+  };
+
+  const formatStockQuantity = (item: InventoryItem) => {
+    if (!item.unitSize || item.unitSize === 0) return formatQuantity(item.quantity, item.inventoryType);
+    const packs = item.quantity / item.unitSize;
+    const roundedPacks = Number(packs.toFixed(2));
+    
+    if (item.packaging) {
+      const pluralSuffix = roundedPacks !== 1 ? 's' : '';
+      // Simple pluralization for common cases
+      let label = item.packaging;
+      if (roundedPacks !== 1) {
+        if (label.toLowerCase().endsWith('y')) label = label.slice(0, -1) + 'ies';
+        else if (label.toLowerCase().endsWith('x') || label.toLowerCase().endsWith('s')) label = label + 'es';
+        else label = label + 's';
+      }
+      return `${roundedPacks} ${label}`;
+    }
+    
+    return `${roundedPacks} ${item.unit}`;
+  };
+
+  const formatPackSize = (item: InventoryItem) => {
+    if (!item.unitSize) return 1;
+    const factor = convertToBaseUnit(1, item.unit);
+    return Number((item.unitSize / factor).toFixed(3));
+  };
+
+  const formatPricePerPack = (item: InventoryItem) => {
+    const factor = convertToBaseUnit(1, item.unit);
+    const pricePerPack = item.pricePerUnit * factor;
+    
+    // Format with at least 2 decimals, up to 4 if needed
+    const formattedPrice = pricePerPack.toLocaleString('en-GB', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 4
+    });
+    
+    return `£${formattedPrice}`;
+  };
+
+  const calculateTotalCost = (item: InventoryItem) => {
+    return (item.quantity || 0) * (item.pricePerUnit || 0);
+  };
+
+  const handleExport = () => {
+    const exportData = items.map(item => {
+      const factor = convertToBaseUnit(1, item.unit);
+      const stockPacks = item.unitSize > 0 ? item.quantity / item.unitSize : 0;
+      const sizeInUnit = item.unitSize / factor;
+      const priceInUnit = item.pricePerUnit * factor;
+
+      return {
+        'Name': item.name,
+        'Category': item.category,
+        'SubCategory': item.subCategory || '',
+        'Department': item.department || '',
+        'InventoryType': item.inventoryType,
+        'StockQuantity': stockPacks.toFixed(2),
+        'Packaging': item.packaging || '',
+        'BaseSize': sizeInUnit.toFixed(3),
+        'BaseUnit': item.unit,
+        'PricePerUnit': priceInUnit.toFixed(4),
+        'MinStockLevel': item.minStockLevel,
+        'Supplier': item.supplier || '',
+        'StorageLocation': item.storageLocation || '',
+        'Barcode': item.barcode || '',
+        'ExpiryDate': item.expiryDate || ''
+      };
+    });
+
+    const csv = Papa.unparse(exportData);
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', `inventory-export-${new Date().toISOString().split('T')[0]}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    Papa.parse(file, {
+      header: true,
+      skipEmptyLines: true,
+      complete: (results) => {
+        const importedItems: Omit<InventoryItem, 'id' | 'lastUpdated'>[] = [];
+        let errors = 0;
+
+        results.data.forEach((row: any) => {
+          try {
+            const name = row['Name'];
+            const category = row['Category'];
+            const inventoryType = (row['InventoryType'] || 'SOLID').toUpperCase();
+            const stockPacks = parseFloat(row['StockQuantity']) || 0;
+            const packaging = row['Packaging'] || 'pcs';
+            const baseSize = parseFloat(row['BaseSize']) || 1;
+            const baseUnit = (row['BaseUnit'] || 'kg') as Unit;
+            const pricePerUnit = parseFloat(row['PricePerUnit']) || 0;
+
+            if (!name || !category) {
+              errors++;
+              return;
+            }
+
+            const baseQtyPerPack = convertToBaseUnit(baseSize, baseUnit);
+            const totalBaseQty = stockPacks * baseQtyPerPack;
+            const unitFactor = convertToBaseUnit(1, baseUnit);
+            const pPerBaseUnit = unitFactor > 0 ? pricePerUnit / unitFactor : 0;
+
+            importedItems.push({
+              name,
+              category,
+              subCategory: row['SubCategory'],
+              department: row['Department'],
+              inventoryType,
+              baseUnit: inventoryType === 'LIQUID' ? 'ml' : (inventoryType === 'SOLID' ? 'g' : 'pcs'),
+              quantity: totalBaseQty,
+              unit: baseUnit,
+              unitSize: baseQtyPerPack,
+              packaging,
+              pricePerUnit: pPerBaseUnit,
+              minStockLevel: parseFloat(row['MinStockLevel']) || 0,
+              supplier: row['Supplier'],
+              storageLocation: row['StorageLocation'],
+              barcode: row['Barcode'],
+              expiryDate: row['ExpiryDate'],
+              isActive: true
+            });
+          } catch (err) {
+            errors++;
+          }
+        });
+
+        if (importedItems.length > 0) {
+          onBulkAdd?.(importedItems);
+          toast.success(`Successfully imported ${importedItems.length} items.${errors > 0 ? ` (${errors} errors)` : ''}`);
+        } else {
+          toast.error("No valid items found in CSV.");
+        }
+        
+        if (fileInputRef.current) fileInputRef.current.value = '';
+      }
+    });
+  };
+
+  const downloadTemplate = () => {
+    const templateData = [{
+      'Name': 'Example Item',
+      'Category': 'Ingredient',
+      'SubCategory': 'Dry Goods',
+      'Department': 'Food',
+      'InventoryType': 'SOLID',
+      'StockQuantity': '10',
+      'Packaging': 'bag',
+      'BaseSize': '1.0',
+      'BaseUnit': 'kg',
+      'PricePerUnit': '2.50',
+      'MinStockLevel': '5',
+      'Supplier': 'Supplier Name',
+      'StorageLocation': 'Main Store',
+      'Barcode': '123456789',
+      'ExpiryDate': '2024-12-31'
+    }];
+
+    const csv = Papa.unparse(templateData);
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', 'inventory-template.csv');
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   return (
     <div className="bg-card-bg shadow-2xl rounded-3xl flex flex-col h-full border border-border-grey overflow-hidden">
       <div className="px-8 py-6 border-b border-border-grey bg-primary-surface sm:flex sm:items-center sm:justify-between">
-        <div>
-          <h3 className="text-xl font-bold text-text-navy tracking-tight">Current Inventory</h3>
-          <p className="text-[10px] font-bold text-text-muted uppercase tracking-widest mt-1">Manage your stock and supplies</p>
+        <div className="flex items-center gap-4">
+          <div>
+            <div className="flex items-center gap-3">
+              <h3 className="text-xl font-bold text-text-navy tracking-tight">Current Inventory</h3>
+              <div className="flex items-center gap-1.5 px-2 py-0.5 bg-success/10 border border-success/20 rounded-lg shadow-sm">
+                <Check className="h-3 w-3 text-success font-black" />
+                <span className="text-[10px] font-black text-success uppercase tracking-widest">Cloud Protected</span>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 mt-1">
+              <p className="text-[10px] font-bold text-text-muted uppercase tracking-widest">Manage your stock and supplies</p>
+              <span className="bg-accent/10 text-accent px-2 py-0.5 rounded-full text-[9px] font-black uppercase whitespace-nowrap">
+                {items.length} Total Items
+              </span>
+            </div>
+          </div>
         </div>
-        <div className="mt-4 sm:mt-0 sm:ml-4">
-          <Button 
-            onClick={onAddItem} 
-            className="bg-accent hover:opacity-90 text-white px-6 py-2 rounded-xl flex items-center shadow-lg shadow-accent/20 transition-all font-bold uppercase tracking-widest text-[10px]"
-          >
-            <Plus className="-ml-1 mr-2 h-4 w-4" />
-            Add Item
-          </Button>
+        <div className="mt-4 sm:mt-0 sm:ml-4 flex flex-wrap gap-2">
+          {checkPermission('inventory', 'edit') && (
+            <>
+              <Button 
+                onClick={downloadTemplate} 
+                className="bg-white dark:bg-slate-900 text-gray-500 dark:text-slate-400 border border-gray-200 dark:border-slate-800 hover:bg-gray-50 dark:hover:bg-slate-800 px-4 py-2 rounded-xl flex items-center shadow-sm transition-all font-bold uppercase tracking-widest text-[10px]"
+                title="Download CSV Template"
+              >
+                <FileText className="-ml-1 mr-2 h-4 w-4" />
+                Template
+              </Button>
+              <Button 
+                onClick={handleExport} 
+                className="bg-white dark:bg-slate-900 text-gray-500 dark:text-slate-400 border border-gray-200 dark:border-slate-800 hover:bg-gray-50 dark:hover:bg-slate-800 px-4 py-2 rounded-xl flex items-center shadow-sm transition-all font-bold uppercase tracking-widest text-[10px]"
+              >
+                <Download className="-ml-1 mr-2 h-4 w-4" />
+                Export
+              </Button>
+              <Button 
+                onClick={() => fileInputRef.current?.click()} 
+                className="bg-white dark:bg-slate-900 text-gray-500 dark:text-slate-400 border border-gray-200 dark:border-slate-800 hover:bg-gray-50 dark:hover:bg-slate-800 px-4 py-2 rounded-xl flex items-center shadow-sm transition-all font-bold uppercase tracking-widest text-[10px]"
+              >
+                <Upload className="-ml-1 mr-2 h-4 w-4" />
+                Import
+              </Button>
+              <input 
+                type="file" 
+                ref={fileInputRef} 
+                className="hidden" 
+                accept=".csv" 
+                onChange={handleImport} 
+              />
+            </>
+          )}
+          {checkPermission('inventory', 'create') && (
+            <Button 
+              onClick={onAddItem} 
+              className="bg-accent hover:opacity-90 text-white px-6 py-2 rounded-xl flex items-center shadow-lg shadow-accent/20 transition-all font-bold uppercase tracking-widest text-[10px]"
+            >
+              <Plus className="-ml-1 mr-2 h-4 w-4" />
+              Add Item
+            </Button>
+          )}
         </div>
       </div>
       
+      <div className="px-8 py-4 border-b border-border-grey bg-white/50 flex gap-4">
+        <button 
+          onClick={() => setActiveTab('List')}
+          className={`px-4 py-2 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all ${activeTab === 'List' ? 'bg-text-navy text-white shadow-lg' : 'text-text-muted hover:bg-gray-100'}`}
+        >
+          Full Inventory
+        </button>
+        <button 
+          onClick={() => setActiveTab('Restock')}
+          className={`flex items-center gap-2 px-4 py-2 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all ${activeTab === 'Restock' ? 'bg-cta text-white shadow-lg' : 'text-text-muted hover:bg-gray-100'}`}
+        >
+          <AlertCircle className="w-3 h-3" />
+          Restock Needed
+          {items.filter(i => i.quantity <= (i.minStockLevel || 0)).length > 0 && (
+            <span className="ml-1 bg-white text-cta px-1.5 py-0.5 rounded-full text-[8px]">
+              {items.filter(i => i.quantity <= (i.minStockLevel || 0)).length}
+            </span>
+          )}
+        </button>
+        {activeTab === 'Restock' && filteredItems.length > 0 && (
+          <Button 
+            onClick={() => {
+              filteredItems.forEach(item => {
+                const missing = (item.minStockLevel || 0) - item.quantity;
+                if (missing > 0) {
+                  // Calculate packs needed
+                  const factor = convertToBaseUnit(1, item.unit);
+                  const baseMissing = missing * factor;
+                  const packsToOrder = Math.ceil(baseMissing / (item.unitSize || 1));
+                  onAddToCart(item, packsToOrder);
+                }
+              });
+              toast.success(`added missing stock for ${filteredItems.length} items to order`);
+            }}
+            className="ml-auto flex items-center gap-2 px-4 py-2 bg-text-navy text-white text-[10px] font-black uppercase tracking-widest rounded-xl hover:scale-105 transition-all shadow-lg"
+          >
+            <TrendingUp className="w-3 h-3 rotate-45" />
+            Order All Missing
+          </Button>
+        )}
+      </div>
+
       <div className="p-6 border-b border-border-grey bg-secondary-surface flex flex-col lg:flex-row gap-6">
         <div className="relative rounded-xl shadow-sm flex-1">
           <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
@@ -291,6 +605,22 @@ export const InventoryList: React.FC<InventoryListProps> = ({
 
             <div className="relative rounded-xl shadow-sm min-w-[160px]">
                 <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                    <AlertTriangle className="h-4 w-4 text-text-muted" />
+                </div>
+                <select
+                    className="bg-card-bg border-border-grey text-text-navy focus:ring-accent focus:border-accent block w-full pl-10 text-sm rounded-xl py-3 border appearance-none"
+                    value={stockLevelFilter}
+                    onChange={(e) => setStockLevelFilter(e.target.value as any)}
+                >
+                    <option value="All">All Stock Levels</option>
+                    <option value="Healthy">Healthy Stock</option>
+                    <option value="Low Stock">Low Stock</option>
+                    <option value="Out of Stock">Out of Stock</option>
+                </select>
+            </div>
+
+            <div className="relative rounded-xl shadow-sm min-w-[160px]">
+                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
                     <Clock className="h-4 w-4 text-text-muted" />
                 </div>
                 <select
@@ -331,8 +661,8 @@ export const InventoryList: React.FC<InventoryListProps> = ({
                 </Button>
                 
                 {showColumnSelector && (
-                    <div className="absolute right-0 mt-3 w-56 bg-card-bg rounded-2xl shadow-2xl z-50 border border-border-grey p-3 overflow-hidden">
-                        <div className="text-[10px] font-bold text-text-muted px-3 py-2 uppercase tracking-widest border-b border-border-grey mb-2">Show/Hide Columns</div>
+                    <div className="absolute right-0 mt-3 w-56 bg-card-bg rounded-2xl shadow-2xl z-50 border border-border-grey p-3 max-h-[350px] overflow-y-auto custom-scrollbar">
+                        <div className="text-[10px] font-bold text-text-muted px-3 py-2 uppercase tracking-widest border-b border-border-grey mb-2 sticky top-0 bg-card-bg z-10">Show/Hide Columns</div>
                         <div className="space-y-1">
                           {allColumns.map(col => (
                               <label key={col} className="flex items-center px-3 py-2 hover:bg-primary-surface rounded-xl cursor-pointer transition-colors group">
@@ -345,7 +675,7 @@ export const InventoryList: React.FC<InventoryListProps> = ({
                                     />
                                     <Check className="absolute h-3 w-3 text-white left-1 opacity-0 peer-checked:opacity-100 transition-opacity pointer-events-none" />
                                   </div>
-                                  <span className="ml-3 text-sm text-text-navy group-hover:text-accent transition-colors">{col}</span>
+                                  <span className="ml-3 text-sm text-text-navy group-hover:text-accent transition-colors">{col === 'Value' ? 'Total Value' : col}</span>
                               </label>
                           ))}
                         </div>
@@ -360,6 +690,7 @@ export const InventoryList: React.FC<InventoryListProps> = ({
                 setSubCategoryFilter('All');
                 setDepartmentFilter('All');
                 setExpiryFilter('All');
+                setStockLevelFilter('All');
                 setVatFilter('All');
               }}
               className="h-full w-full lg:w-auto bg-transparent border border-cta/30 text-cta hover:bg-error/10 font-bold uppercase tracking-widest text-[10px] py-3 rounded-xl"
@@ -407,9 +738,24 @@ export const InventoryList: React.FC<InventoryListProps> = ({
                 variant="secondary"
                 className="bg-transparent border border-cta/30 text-cta hover:bg-error/10 px-4 py-1.5 rounded-lg font-bold uppercase tracking-widest text-[9px]"
                 onClick={() => {
-                  if (confirm(`Are you sure you want to delete ${selectedItems.size} items?`)) {
+                  const ids = Array.from(selectedItems);
+                  const usedInRecipes: string[] = [];
+                  ids.forEach(id => {
+                    const itemName = items.find(i => i.id === id)?.name || id;
+                    const rList = recipes.filter(r => r.ingredients?.some(ing => ing.inventoryItemId === id));
+                    if (rList.length > 0) {
+                      usedInRecipes.push(`${itemName} (in ${rList.map(r => r.name).join(', ')})`);
+                    }
+                  });
+
+                  let confirmMsg = `Are you sure you want to delete ${selectedItems.size} items?`;
+                  if (usedInRecipes.length > 0) {
+                    confirmMsg = `CRITICAL WARNING: The following items are used in active recipes:\n\n${usedInRecipes.join('\n')}\n\nDeleting them will break these recipes. Proceed anyway?`;
+                  }
+
+                  if (confirm(confirmMsg)) {
                     if (onBulkDelete) {
-                      onBulkDelete(Array.from(selectedItems));
+                      onBulkDelete(ids);
                     } else {
                       toast.error(`Bulk deleted ${selectedItems.size} items`);
                     }
@@ -428,10 +774,12 @@ export const InventoryList: React.FC<InventoryListProps> = ({
 
         {/* Desktop Table View */}
         <div className="hidden md:block">
-          <table className="min-w-full divide-y divide-border-grey">
-            <thead className="bg-secondary-surface">
-              <tr>
-                <th scope="col" className="px-8 py-4 text-left">
+          <div className="overflow-x-auto custom-scrollbar">
+            <table className="min-w-full divide-y divide-border-grey table-fixed lg:table-auto">
+              <thead className="bg-secondary-surface sticky top-0 z-10 backdrop-blur-md bg-white/90">
+                <tr>
+                  <th scope="col" className="px-3 py-2 text-left text-[9px] font-bold text-text-muted uppercase tracking-widest w-10">#</th>
+                  <th scope="col" className="px-3 py-2 text-left">
                   <div className="relative flex items-center">
                     <input 
                       type="checkbox" 
@@ -442,10 +790,24 @@ export const InventoryList: React.FC<InventoryListProps> = ({
                     <Check className="absolute h-3 w-3 text-white left-1 opacity-0 peer-checked:opacity-100 transition-opacity pointer-events-none" />
                   </div>
                 </th>
+                {visibleColumns.includes('Status') && (
+                  <th 
+                    scope="col" 
+                    className="px-3 py-2 text-left text-[9px] font-bold text-text-muted uppercase tracking-widest cursor-pointer hover:text-accent transition-colors group"
+                    onClick={() => toggleSort('Status')}
+                  >
+                    <div className="flex items-center">
+                      Status
+                      {sortField === 'Status' && (
+                        <TrendingUp className={`ml-1.5 h-3 w-3 transition-transform ${sortOrder === 'desc' ? 'rotate-180' : ''}`} />
+                      )}
+                    </div>
+                  </th>
+                )}
                 {visibleColumns.includes('Item') && (
                   <th 
                     scope="col" 
-                    className="px-8 py-4 text-left text-[10px] font-bold text-text-muted uppercase tracking-widest cursor-pointer hover:text-accent transition-colors group"
+                    className="px-3 py-2 text-left text-[9px] font-bold text-text-muted uppercase tracking-widest cursor-pointer hover:text-accent transition-colors group"
                     onClick={() => toggleSort('Item')}
                   >
                     <div className="flex items-center">
@@ -459,7 +821,7 @@ export const InventoryList: React.FC<InventoryListProps> = ({
                 {visibleColumns.includes('Category') && (
                   <th 
                     scope="col" 
-                    className="px-8 py-4 text-left text-[10px] font-bold text-text-muted uppercase tracking-widest cursor-pointer hover:text-accent transition-colors group"
+                    className="px-3 py-2 text-left text-[9px] font-bold text-text-muted uppercase tracking-widest cursor-pointer hover:text-accent transition-colors group"
                     onClick={() => toggleSort('Category')}
                   >
                     <div className="flex items-center">
@@ -470,15 +832,71 @@ export const InventoryList: React.FC<InventoryListProps> = ({
                     </div>
                   </th>
                 )}
-                {visibleColumns.includes('Stock Level') && (
+                {visibleColumns.includes('Stock Quantity') && (
                   <th 
                     scope="col" 
-                    className="px-8 py-4 text-left text-[10px] font-bold text-text-muted uppercase tracking-widest cursor-pointer hover:text-accent transition-colors group"
-                    onClick={() => toggleSort('Stock Level')}
+                    className="px-3 py-2 text-left text-[9px] font-bold text-text-muted uppercase tracking-widest cursor-pointer hover:text-accent transition-colors group"
+                    onClick={() => toggleSort('Stock Quantity')}
                   >
                     <div className="flex items-center">
-                      Stock Level
-                      {sortField === 'Stock Level' && (
+                      Stock Quantity
+                      {sortField === 'Stock Quantity' && (
+                        <TrendingUp className={`ml-1.5 h-3 w-3 transition-transform ${sortOrder === 'desc' ? 'rotate-180' : ''}`} />
+                      )}
+                    </div>
+                  </th>
+                )}
+                {visibleColumns.includes('Size') && (
+                  <th 
+                    scope="col" 
+                    className="px-3 py-2 text-left text-[9px] font-bold text-text-muted uppercase tracking-widest cursor-pointer hover:text-accent transition-colors group"
+                    onClick={() => toggleSort('Size')}
+                  >
+                    <div className="flex items-center">
+                      Size
+                      {sortField === 'Size' && (
+                        <TrendingUp className={`ml-1.5 h-3 w-3 transition-transform ${sortOrder === 'desc' ? 'rotate-180' : ''}`} />
+                      )}
+                    </div>
+                  </th>
+                )}
+                {visibleColumns.includes('Unit') && (
+                  <th 
+                    scope="col" 
+                    className="px-3 py-2 text-left text-[9px] font-bold text-text-muted uppercase tracking-widest cursor-pointer hover:text-accent transition-colors group"
+                    onClick={() => toggleSort('Unit')}
+                  >
+                    <div className="flex items-center">
+                      Unit
+                      {sortField === 'Unit' && (
+                        <TrendingUp className={`ml-1.5 h-3 w-3 transition-transform ${sortOrder === 'desc' ? 'rotate-180' : ''}`} />
+                      )}
+                    </div>
+                  </th>
+                )}
+                {visibleColumns.includes('Price/Unit') && (
+                  <th 
+                    scope="col" 
+                    className="px-3 py-2 text-left text-[9px] font-bold text-text-muted uppercase tracking-widest cursor-pointer hover:text-accent transition-colors group"
+                    onClick={() => toggleSort('Price/Unit')}
+                  >
+                    <div className="flex items-center">
+                      Price/Unit
+                      {sortField === 'Price/Unit' && (
+                        <TrendingUp className={`ml-1.5 h-3 w-3 transition-transform ${sortOrder === 'desc' ? 'rotate-180' : ''}`} />
+                      )}
+                    </div>
+                  </th>
+                )}
+                {visibleColumns.includes('Total Cost') && (
+                  <th 
+                    scope="col" 
+                    className="px-3 py-2 text-left text-[9px] font-bold text-text-muted uppercase tracking-widest cursor-pointer hover:text-accent transition-colors group"
+                    onClick={() => toggleSort('Total Cost')}
+                  >
+                    <div className="flex items-center">
+                      Total Cost
+                      {sortField === 'Total Cost' && (
                         <TrendingUp className={`ml-1.5 h-3 w-3 transition-transform ${sortOrder === 'desc' ? 'rotate-180' : ''}`} />
                       )}
                     </div>
@@ -487,7 +905,7 @@ export const InventoryList: React.FC<InventoryListProps> = ({
                 {visibleColumns.includes('Supplier') && (
                   <th 
                     scope="col" 
-                    className="px-8 py-4 text-left text-[10px] font-bold text-text-muted uppercase tracking-widest cursor-pointer hover:text-accent transition-colors group"
+                    className="px-3 py-2 text-left text-[9px] font-bold text-text-muted uppercase tracking-widest cursor-pointer hover:text-accent transition-colors group"
                     onClick={() => toggleSort('Supplier')}
                   >
                     <div className="flex items-center">
@@ -498,29 +916,29 @@ export const InventoryList: React.FC<InventoryListProps> = ({
                     </div>
                   </th>
                 )}
-                {visibleColumns.includes('Expiry Status') && (
-                  <th 
+                {visibleColumns.includes('Storage Location') && (
+                   <th 
                     scope="col" 
-                    className="px-8 py-4 text-left text-[10px] font-bold text-text-muted uppercase tracking-widest cursor-pointer hover:text-accent transition-colors group"
-                    onClick={() => toggleSort('Expiry Status')}
+                    className="px-3 py-2 text-left text-[9px] font-bold text-text-muted uppercase tracking-widest cursor-pointer hover:text-accent transition-colors group"
+                    onClick={() => toggleSort('Storage Location')}
                   >
                     <div className="flex items-center">
-                      Expiry Status
-                      {sortField === 'Expiry Status' && (
+                      Location
+                      {sortField === 'Storage Location' && (
                         <TrendingUp className={`ml-1.5 h-3 w-3 transition-transform ${sortOrder === 'desc' ? 'rotate-180' : ''}`} />
                       )}
                     </div>
                   </th>
                 )}
-                {visibleColumns.includes('COGS') && (
+                {visibleColumns.includes('Expiry Status') && (
                   <th 
                     scope="col" 
-                    className="px-8 py-4 text-left text-[10px] font-bold text-text-muted uppercase tracking-widest cursor-pointer hover:text-accent transition-colors group"
-                    onClick={() => toggleSort('COGS')}
+                    className="px-3 py-2 text-left text-[9px] font-bold text-text-muted uppercase tracking-widest cursor-pointer hover:text-accent transition-colors group"
+                    onClick={() => toggleSort('Expiry Status')}
                   >
                     <div className="flex items-center">
-                      COGS
-                      {sortField === 'COGS' && (
+                      Expiry
+                      {sortField === 'Expiry Status' && (
                         <TrendingUp className={`ml-1.5 h-3 w-3 transition-transform ${sortOrder === 'desc' ? 'rotate-180' : ''}`} />
                       )}
                     </div>
@@ -529,7 +947,7 @@ export const InventoryList: React.FC<InventoryListProps> = ({
                 {visibleColumns.includes('Retail Price') && (
                   <th 
                     scope="col" 
-                    className="px-8 py-4 text-left text-[10px] font-bold text-text-muted uppercase tracking-widest cursor-pointer hover:text-accent transition-colors group"
+                    className="px-3 py-2 text-left text-[9px] font-bold text-text-muted uppercase tracking-widest cursor-pointer hover:text-accent transition-colors group"
                     onClick={() => toggleSort('Retail Price')}
                   >
                     <div className="flex items-center">
@@ -543,7 +961,7 @@ export const InventoryList: React.FC<InventoryListProps> = ({
                 {visibleColumns.includes('VAT') && (
                   <th 
                     scope="col" 
-                    className="px-8 py-4 text-left text-[10px] font-bold text-text-muted uppercase tracking-widest cursor-pointer hover:text-accent transition-colors group"
+                    className="px-3 py-2 text-left text-[9px] font-bold text-text-muted uppercase tracking-widest cursor-pointer hover:text-accent transition-colors group"
                     onClick={() => toggleSort('VAT')}
                   >
                     <div className="flex items-center">
@@ -554,26 +972,12 @@ export const InventoryList: React.FC<InventoryListProps> = ({
                     </div>
                   </th>
                 )}
-                {visibleColumns.includes('Value') && (
-                  <th 
-                    scope="col" 
-                    className="px-8 py-4 text-left text-[10px] font-bold text-text-muted uppercase tracking-widest cursor-pointer hover:text-accent transition-colors group"
-                    onClick={() => toggleSort('Value')}
-                  >
-                    <div className="flex items-center">
-                      Value
-                      {sortField === 'Value' && (
-                        <TrendingUp className={`ml-1.5 h-3 w-3 transition-transform ${sortOrder === 'desc' ? 'rotate-180' : ''}`} />
-                      )}
-                    </div>
-                  </th>
-                )}
-                {visibleColumns.includes('Order') && <th scope="col" className="px-8 py-4 text-center text-[10px] font-bold text-text-muted uppercase tracking-widest">Order</th>}
-                <th scope="col" className="px-8 py-4 text-right text-[10px] font-bold text-text-muted uppercase tracking-widest">Action</th>
+                {visibleColumns.includes('Order') && <th scope="col" className="px-3 py-2 text-center text-[9px] font-bold text-text-muted uppercase tracking-widest">Order</th>}
+                <th scope="col" className="px-3 py-2 text-right text-[9px] font-bold text-text-muted uppercase tracking-widest">Action</th>
               </tr>
             </thead>
             <tbody className="bg-card-bg divide-y divide-border-grey">
-              {filteredItems.map((item) => {
+              {filteredItems.map((item, index) => {
                 const expiryStatus = getExpiryStatus(item.expiryDate);
                 const hasTotalOwned = item.totalOwned !== undefined && item.totalOwned > 0;
                 const cartItem = cart.find(c => c.inventoryItemId === item.id);
@@ -581,10 +985,18 @@ export const InventoryList: React.FC<InventoryListProps> = ({
                 return (
                   <tr 
                     key={item.id} 
-                    className={`hover:bg-primary-surface group transition-colors cursor-pointer ${selectedItems.has(item.id) ? 'bg-accent/5' : ''}`}
+                    className={`hover:bg-primary-surface group transition-colors cursor-pointer ${
+                      selectedItems.has(item.id) ? 'bg-accent/5' : 
+                      item.quantity <= 0 ? 'bg-cta/5 hover:bg-cta/10' :
+                      item.quantity <= (item.minStockLevel || 0) ? 'bg-warning/5 hover:bg-warning/10' : 
+                      ''
+                    }`}
                     onClick={() => onEditItem(item)}
                   >
-                    <td className="px-8 py-6 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                    <td className="px-3 py-2 whitespace-nowrap text-[10px] font-bold text-text-muted w-10">
+                      {index + 1}
+                    </td>
+                    <td className="px-3 py-2 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                       <div className="relative flex items-center">
                         <input 
                           type="checkbox" 
@@ -595,25 +1007,49 @@ export const InventoryList: React.FC<InventoryListProps> = ({
                         <Check className="absolute h-3 w-3 text-white left-1 opacity-0 peer-checked:opacity-100 transition-opacity pointer-events-none" />
                       </div>
                     </td>
+                    {visibleColumns.includes('Status') && (
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        {item.quantity <= 0 ? (
+                           <span className="px-2 py-0.5 inline-flex text-[9px] font-bold uppercase tracking-widest rounded-md bg-cta/10 text-cta border border-cta/30">
+                            Out of Stock
+                          </span>
+                        ) : item.quantity <= (item.minStockLevel || 0) ? (
+                          <span className="px-3 py-1 inline-flex text-[10px] font-bold uppercase tracking-widest rounded-lg bg-warning/10 text-warning border border-warning/30">
+                            Low Stock
+                          </span>
+                        ) : (
+                          <span className="px-3 py-1 inline-flex text-[10px] font-bold uppercase tracking-widest rounded-lg bg-success/10 text-success border border-success/30">
+                            Healthy
+                          </span>
+                        )}
+                      </td>
+                    )}
                     {visibleColumns.includes('Item') && (
-                      <td className="px-8 py-6 whitespace-nowrap">
+                      <td className="px-3 py-2 whitespace-nowrap">
                         <div className="flex items-center">
                           {item.imageUrl && (
-                            <div className="flex-shrink-0 h-12 w-12 mr-4">
-                              <img className="h-12 w-12 rounded-xl object-cover shadow-lg border border-border-grey" src={item.imageUrl} alt="" referrerPolicy="no-referrer" />
+                            <div className="flex-shrink-0 h-8 w-8 mr-3">
+                              <img className="h-8 w-8 rounded-lg object-cover shadow-sm border border-border-grey" src={item.imageUrl} alt="" referrerPolicy="no-referrer" />
                             </div>
                           )}
                           <div>
-                            <div className="text-sm font-bold text-text-navy group-hover:text-accent transition-colors">{item.name}</div>
+                            <div className="flex items-center gap-2">
+                                <div className="text-sm font-bold text-text-navy group-hover:text-accent transition-colors">{item.name}</div>
+                                {item.yieldFactor && item.yieldFactor < 1 && (
+                                    <span className="px-1.5 py-0.5 bg-accent/10 text-accent text-[8px] font-black rounded uppercase tracking-tighter" title="Product usable yield">
+                                        {Math.round(item.yieldFactor * 100)}% Yield
+                                    </span>
+                                )}
+                            </div>
                             <div className="text-[10px] font-bold text-text-muted uppercase tracking-widest mt-0.5">ID: {item.id.slice(0,6)}</div>
                           </div>
                         </div>
                       </td>
                     )}
                     {visibleColumns.includes('Category') && (
-                      <td className="px-8 py-6 whitespace-nowrap">
+                      <td className="px-3 py-2 whitespace-nowrap">
                         <div className="flex flex-col">
-                            <span className={`px-3 py-1 inline-flex text-[10px] font-bold uppercase tracking-widest rounded-lg w-fit border ${
+                            <span className={`px-2 py-0.5 inline-flex text-[9px] font-bold uppercase tracking-widest rounded-md w-fit border ${
                             item.category === 'Ingredient' ? 'bg-success/20 text-success border-success/30' :
                             item.category === 'Crockery' ? 'bg-warning/20 text-warning border-warning/30' :
                             item.category === 'Utensil' ? 'bg-accent/20 text-accent border-accent/30' :
@@ -636,145 +1072,175 @@ export const InventoryList: React.FC<InventoryListProps> = ({
                         </div>
                       </td>
                     )}
-                    {visibleColumns.includes('Stock Level') && (
-                      <td className="px-8 py-6 whitespace-nowrap text-sm text-text-muted">
+                    {visibleColumns.includes('Stock Quantity') && (
+                      <td className="px-3 py-2 whitespace-nowrap">
                         <div className="flex flex-col">
-                            <div className="flex items-center">
-                            <span className={`text-sm font-bold ${item.quantity <= item.minStockLevel ? 'text-cta' : 'text-text-navy'}`}>
-                                {formatQuantity(item.quantity)} {item.unit}
+                          <span className="text-xs text-text-navy font-bold">{formatStockQuantity(item)}</span>
+                          {item.minStockLevel !== undefined && item.minStockLevel > 0 && (
+                            <span className="text-[9px] font-bold text-text-muted uppercase tracking-widest mt-0.5">Par: {item.minStockLevel} {item.unit}</span>
+                          )}
+                          {item.dailyUsageRate && item.dailyUsageRate > 0 && item.quantity > 0 && (
+                            <span className="text-[9px] font-bold text-accent uppercase tracking-widest mt-0.5">
+                                Est. {Math.round(item.quantity / item.dailyUsageRate)} days left
                             </span>
-                            {item.quantity <= item.minStockLevel && (
-                                <AlertTriangle className="ml-2 h-4 w-4 text-cta" />
-                            )}
-                            </div>
-                            {item.dailyUsageRate && item.dailyUsageRate > 0 && (
-                                <div className="text-[10px] font-bold text-accent uppercase tracking-widest flex items-center mt-1">
-                                    <TrendingUp className="h-3 w-3 mr-1" />
-                                    {formatQuantity(item.dailyUsageRate || 0)} {item.unit}/day
-                                </div>
-                            )}
-                            {hasTotalOwned && (
-                                   <span className="text-[10px] font-bold text-text-muted uppercase tracking-widest mt-1">of {item.totalOwned} Owned</span>
-                            )}
+                          )}
+                          {activeTab === 'Restock' && item.quantity < (item.minStockLevel || 0) && (
+                            <span className="text-[9px] font-black text-cta uppercase tracking-widest mt-0.5">Deficit: {((item.minStockLevel || 0) - item.quantity).toFixed(2)} {item.unit}</span>
+                          )}
                         </div>
-                        {item.brokenQuantity !== undefined && item.brokenQuantity > 0 && (
-                            <div className="flex items-center text-[10px] font-bold text-cta uppercase tracking-widest mt-2">
-                                <HeartCrack className="h-3 w-3 mr-1" />
-                                {item.brokenQuantity} Broken/Missing
-                            </div>
-                        )}
+                      </td>
+                    )}
+                    {visibleColumns.includes('Size') && (
+                      <td className="px-3 py-2 whitespace-nowrap text-xs text-text-navy font-bold">
+                        {formatPackSize(item)}
+                      </td>
+                    )}
+                    {visibleColumns.includes('Unit') && (
+                      <td className="px-3 py-2 whitespace-nowrap text-[9px] font-bold text-text-muted uppercase tracking-widest">
+                        {item.unit}
+                      </td>
+                    )}
+                    {visibleColumns.includes('Price/Unit') && (
+                      <td className="px-3 py-2 whitespace-nowrap text-xs font-bold text-text-navy">
+                        {formatPricePerPack(item)}
+                      </td>
+                    )}
+                    {visibleColumns.includes('Total Cost') && (
+                      <td className="px-3 py-2 whitespace-nowrap text-xs font-bold text-accent">
+                        £{calculateTotalCost(item).toFixed(2)}
                       </td>
                     )}
                     {visibleColumns.includes('Supplier') && (
-                      <td className="px-8 py-6 whitespace-nowrap text-sm text-text-muted">
+                      <td className="px-3 py-2 whitespace-nowrap text-xs text-text-muted">
                         <div className="font-bold text-text-navy">{item.supplier || '-'}</div>
-                        {item.supplierContact && <div className="text-[10px] font-bold text-text-muted uppercase tracking-widest mt-1">{item.supplierContact}</div>}
+                        {item.supplierContact && <div className="text-[9px] font-bold text-text-muted uppercase tracking-widest mt-0.5">{item.supplierContact}</div>}
+                      </td>
+                    )}
+                    {visibleColumns.includes('Storage Location') && (
+                      <td className="px-3 py-2 whitespace-nowrap text-xs text-text-muted">
+                        <div className="font-bold text-text-navy">{item.storageLocation || '-'}</div>
                       </td>
                     )}
                     {visibleColumns.includes('Expiry Status') && (
-                      <td className="px-8 py-6 whitespace-nowrap text-sm">
+                      <td className="px-3 py-2 whitespace-nowrap text-xs">
                         {expiryStatus ? (
-                          <span className={`px-3 py-1 inline-flex text-[10px] font-bold uppercase tracking-widest rounded-lg border ${expiryStatus.className}`}>
-                            {item.category === 'Ingredient' && <Calendar className="w-3 h-3 mr-1.5 self-center"/>}
+                          <span className={`px-2 py-0.5 inline-flex text-[9px] font-bold uppercase tracking-widest rounded-md border ${expiryStatus.className}`}>
+                            {item.category === 'Ingredient' && <Calendar className="w-2.5 h-2.5 mr-1 self-center"/>}
                             {expiryStatus.label}
                           </span>
                         ) : (
-                          <span className="text-text-muted text-[10px] font-bold uppercase tracking-widest">-</span>
+                          <span className="text-text-muted text-[9px] font-bold uppercase tracking-widest">-</span>
                         )}
                       </td>
                     )}
-                    {visibleColumns.includes('COGS') && (
-                      <td className="px-8 py-6 whitespace-nowrap text-sm font-bold text-text-navy">
-                        £{item.pricePerUnit.toFixed(2)}
-                      </td>
-                    )}
                     {visibleColumns.includes('Retail Price') && (
-                      <td className="px-8 py-6 whitespace-nowrap text-sm font-bold text-text-navy">
+                      <td className="px-3 py-2 whitespace-nowrap text-xs font-bold text-text-navy">
                         {item.retailPrice !== undefined ? `£${item.retailPrice.toFixed(2)}` : '-'}
                       </td>
                     )}
                     {visibleColumns.includes('VAT') && (
-                      <td className="px-8 py-6 whitespace-nowrap text-sm">
+                      <td className="px-3 py-2 whitespace-nowrap text-xs">
                         {item.vatCode ? (
                           <div className="flex flex-col">
                             <span className="font-bold text-text-navy">{item.vatCode.replace('_', ' ')}</span>
-                            <span className="text-[10px] font-bold text-text-muted uppercase tracking-widest mt-1">{item.vatRate}%</span>
+                            <span className="text-[9px] font-bold text-text-muted uppercase tracking-widest mt-0.5">{item.vatRate}%</span>
                           </div>
                         ) : (
-                          <span className="text-[10px] font-bold text-cta uppercase tracking-widest">Missing</span>
+                          <span className="text-[9px] font-bold text-cta uppercase tracking-widest">Missing</span>
                         )}
                       </td>
                     )}
-                    {visibleColumns.includes('Value') && <td className="px-8 py-6 whitespace-nowrap text-sm font-bold text-accent">£{(item.quantity * item.pricePerUnit).toFixed(2)}</td>}
                     {visibleColumns.includes('Order') && (
-                      <td className="px-8 py-6 whitespace-nowrap text-center text-sm" onClick={(e) => e.stopPropagation()}>
-                        <div className="flex items-center justify-center space-x-3">
+                      <td className="px-3 py-2 whitespace-nowrap text-center text-xs" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex items-center justify-center space-x-2">
                           <button 
                             onClick={() => onAddToCart(item, -1)}
-                            className="p-2 rounded-xl text-text-muted hover:bg-secondary-surface hover:text-text-navy transition-all disabled:opacity-50"
+                            className="p-1 rounded-lg text-text-muted hover:bg-secondary-surface hover:text-text-navy transition-all disabled:opacity-50"
                             disabled={cartQuantity <= 0}
                           >
-                            <Minus className="h-4 w-4" />
+                            <Minus className="h-3 w-3" />
                           </button>
-                          <span className="w-10 text-center font-bold text-text-navy text-lg">{cartQuantity}</span>
+                          <span className="w-6 text-center font-bold text-text-navy text-sm">{cartQuantity}</span>
                           <button 
                             onClick={() => onAddToCart(item, 1)}
-                            className="p-2 rounded-xl text-accent hover:bg-accent/10 transition-all"
+                            className="p-1 rounded-lg text-accent hover:bg-accent/10 transition-all"
                           >
-                            <Plus className="h-4 w-4" />
+                            <Plus className="h-3 w-3" />
                           </button>
                         </div>
                       </td>
                     )}
-                    <td className="px-8 py-6 whitespace-nowrap text-right text-sm font-medium" onClick={(e) => e.stopPropagation()}>
-                      <button onClick={(e) => { e.stopPropagation(); onEditItem(item); }} className="p-2 text-accent hover:bg-accent/10 rounded-xl transition-all">
-                        <Pencil className="h-4 w-4" />
-                      </button>
+                    <td className="px-3 py-2 whitespace-nowrap text-right text-xs font-medium space-x-2" onClick={(e) => e.stopPropagation()}>
+                      {checkPermission('inventory', 'edit') && (
+                        <button onClick={(e) => { e.stopPropagation(); onEditItem(item); }} className="p-1.5 text-accent hover:bg-accent/10 rounded-lg transition-all" title="Edit Item">
+                          <Pencil className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                      {checkPermission('inventory', 'edit') && onBulkDelete && (
+                        <button 
+                          onClick={(e) => { 
+                            e.stopPropagation();
+                            const rList = recipes.filter(r => r.ingredients?.some(ing => ing.inventoryItemId === item.id));
+                            let msg = `Are you sure you want to delete ${item.name}?`;
+                            if (rList.length > 0) {
+                              msg = `CRITICAL WARNING: ${item.name} is used in: ${rList.map(r => r.name).join(', ')}. Deleting it will break these recipes. Proceed?`;
+                            }
+                            if (confirm(msg)) {
+                              onBulkDelete([item.id]);
+                            }
+                          }} 
+                          className="p-1.5 text-cta hover:bg-error/10 rounded-lg transition-all"
+                          title="Delete Item"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      )}
                     </td>
                   </tr>
                 )})}
             </tbody>
           </table>
+          </div>
         </div>
 
         {/* Mobile Card View */}
         <div className="md:hidden divide-y divide-border-grey">
-          {filteredItems.map((item) => {
+          {filteredItems.map((item, index) => {
             const expiryStatus = getExpiryStatus(item.expiryDate);
             const cartItem = cart.find(c => c.inventoryItemId === item.id);
             const cartQuantity = cartItem ? cartItem.quantity : 0;
             return (
-              <div 
-                key={item.id} 
-                className="p-6 bg-card-bg space-y-4 cursor-pointer hover:bg-primary-surface transition-colors"
-                onClick={() => onEditItem(item)}
-              >
-                <div className="flex justify-between items-start">
-                  <div className="flex items-center">
-                    {item.imageUrl && (
-                      <img className="h-14 w-14 rounded-xl object-cover mr-4 shadow-lg border border-border-grey" src={item.imageUrl} alt="" referrerPolicy="no-referrer" />
-                    )}
-                    <div>
-                      <h4 className="text-sm font-bold text-text-navy">{item.name}</h4>
-                      <p className="text-[10px] font-bold text-text-muted uppercase tracking-widest mt-1">{item.category} • {item.subCategory || 'No Subcat'}</p>
+                <div 
+                  key={item.id} 
+                  className="p-6 bg-card-bg space-y-4 cursor-pointer hover:bg-primary-surface transition-colors"
+                  onClick={() => checkPermission('inventory', 'edit') && onEditItem(item)}
+                >
+                  <div className="flex justify-between items-start">
+                    <div className="flex items-center">
+                      <div className="text-[10px] font-bold text-text-muted mr-3">#{index + 1}</div>
+                      {item.imageUrl && (
+                        <img className="h-14 w-14 rounded-xl object-cover mr-4 shadow-lg border border-border-grey" src={item.imageUrl} alt="" referrerPolicy="no-referrer" />
+                      )}
+                      <div>
+                        <h4 className="text-sm font-bold text-text-navy">{item.name}</h4>
+                        <p className="text-[10px] font-bold text-text-muted uppercase tracking-widest mt-1">{item.category} • {item.subCategory || 'No Subcat'}</p>
+                      </div>
                     </div>
+                    {checkPermission('inventory', 'edit') && (
+                      <button onClick={(e) => { e.stopPropagation(); onEditItem(item); }} className="p-2 text-accent hover:bg-accent/10 rounded-xl transition-all">
+                        <Pencil className="h-4 w-4" />
+                      </button>
+                    )}
                   </div>
-                  <button onClick={(e) => { e.stopPropagation(); onEditItem(item); }} className="p-2 text-accent hover:bg-accent/10 rounded-xl transition-all">
-                    <Pencil className="h-4 w-4" />
-                  </button>
-                </div>
 
                 <div className="grid grid-cols-2 gap-6 text-[10px] font-bold uppercase tracking-widest">
                     <div>
-                      <p className="text-text-muted mb-1.5">Stock Level</p>
-                      <div className="flex items-center">
-                        <span className={`text-sm font-bold ${item.quantity <= item.minStockLevel ? 'text-cta' : 'text-text-navy'}`}>
-                          {formatQuantity(item.quantity)} {item.unit}
-                        </span>
-                        {item.quantity <= item.minStockLevel && (
-                          <AlertTriangle className="ml-1.5 h-3.5 w-3.5 text-cta" />
-                        )}
-                      </div>
+                      <p className="text-text-muted mb-1.5">Stock Quantity</p>
+                      <p className="text-sm font-bold text-text-navy">{item.quantity}</p>
+                    </div>
+                    <div>
+                      <p className="text-text-muted mb-1.5">Size</p>
+                      <p className="text-sm font-bold text-text-navy">{item.unitSize || 1} {item.unit}</p>
                     </div>
                   <div>
                     <p className="text-text-muted mb-1.5">Expiry Status</p>
@@ -787,8 +1253,12 @@ export const InventoryList: React.FC<InventoryListProps> = ({
                     )}
                   </div>
                   <div>
-                    <p className="text-text-muted mb-1.5">COGS</p>
-                    <p className="text-sm font-bold text-text-navy">£{item.pricePerUnit.toFixed(2)}</p>
+                    <p className="text-text-muted mb-1.5">Price/Unit</p>
+                    <p className="text-sm font-bold text-text-navy">£{(item.pricePerUnit || 0).toFixed(4)}</p>
+                  </div>
+                  <div>
+                    <p className="text-text-muted mb-1.5">Total Cost</p>
+                    <p className="text-sm font-bold text-accent">£{((item.quantity || 0) * (item.unitSize || 1) * (item.pricePerUnit || 0)).toFixed(2)}</p>
                   </div>
                   <div>
                     <p className="text-text-muted mb-1.5">Retail Price</p>
@@ -803,22 +1273,12 @@ export const InventoryList: React.FC<InventoryListProps> = ({
                     )}
                   </div>
                   <div>
-                    <p className="text-text-muted mb-1.5">Value</p>
-                    <p className="text-sm font-bold text-accent">£{(item.quantity * item.pricePerUnit).toFixed(2)}</p>
-                  </div>
-                  <div className="col-span-2">
                     <p className="text-text-muted mb-1.5">Supplier</p>
                     <p className="text-sm font-bold text-text-navy truncate">{item.supplier || '-'}</p>
                   </div>
                   <div>
-                    <p className="text-text-muted mb-1.5">Expiry</p>
-                    {expiryStatus ? (
-                      <span className={`px-2 py-0.5 rounded-lg border font-bold ${expiryStatus.className}`}>
-                        {expiryStatus.label}
-                      </span>
-                    ) : (
-                      <span className="text-text-muted">-</span>
-                    )}
+                    <p className="text-text-muted mb-1.5">Location</p>
+                    <p className="text-sm font-bold text-text-navy truncate">{item.storageLocation || '-'}</p>
                   </div>
                 </div>
 

@@ -1,6 +1,6 @@
 {
   "name": "Backbone Hub",
-  "description": "A smart inventory management system featuring AI-powered invoice parsing and stock discrepancy analysis.",
+  "description": "Smart Operational Command & Financial Intelligence for hospitality. Features live POS control, Shift Coach insights, advanced P&L, and HMRC-compliant VAT Return Exports.",
   "requestFramePermissions": [
     "camera"
   ]

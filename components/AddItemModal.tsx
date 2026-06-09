@@ -1,11 +1,13 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { Button } from './Button';
-import { InventoryCategory, Unit, InventoryItem, Supplier, ALLERGIES_LIST } from '../types';
-import { X, Upload, Image as ImageIcon, ScanBarcode, TrendingUp, Camera, Calculator, Check, ChevronDown } from 'lucide-react';
+import { InventoryCategory, Unit, InventoryItem, Supplier, ALLERGIES_LIST, InventoryType } from '../types';
+import { X, Upload, Image as ImageIcon, ScanBarcode, TrendingUp, Camera, Calculator, Check, ChevronDown, Info } from 'lucide-react';
 import { Html5Qrcode } from "html5-qrcode";
 import { toast } from 'sonner';
 import { DEFAULT_DEPARTMENTS, DEFAULT_CATEGORIES } from '../constants';
+import { convertToBaseUnit, formatDisplayValue, calculateTotalBaseQuantity, UNIT_TYPES, BASE_UNITS, CONVERSION_FACTORS, roundTo } from '../utils/unitConversions';
+import { Combobox } from './Combobox';
 
 interface AddItemModalProps {
   isOpen: boolean;
@@ -15,10 +17,15 @@ interface AddItemModalProps {
     category: InventoryCategory;
     subCategory?: string;
     department?: string;
-    quantity: number;
-    unit: Unit;
+    quantity: number; // total base quantity
+    unit: Unit; // display unit
+    unitSize: number; // pack size
+    packaging?: string;
+    inventoryType: InventoryType;
+    baseUnit: Unit;
     minStockLevel: number;
-    pricePerUnit: number;
+    pricePerUnit: number; // cost per base unit
+    isActive: boolean;
     retailPrice?: number;
     imageUrl?: string;
     supplier?: string;
@@ -31,12 +38,15 @@ interface AddItemModalProps {
     allergies?: string[];
     vatCode?: string;
     vatRate?: number;
+    yieldFactor?: number;
+    storageLocation?: string;
   }) => void;
   itemToEdit?: InventoryItem;
   suppliers?: Supplier[];
 }
 
 export const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, onSave, itemToEdit, suppliers = [] }) => {
+  const [inventoryType, setInventoryType] = useState<InventoryType>('SOLID');
   const [name, setName] = useState('');
   const [barcode, setBarcode] = useState('');
   const [category, setCategory] = useState<InventoryCategory>('Ingredient');
@@ -44,6 +54,8 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, onS
   const [department, setDepartment] = useState('');
   const [quantity, setQuantity] = useState('');
   const [unit, setUnit] = useState<Unit>('kg');
+  const [unitSize, setUnitSize] = useState('1');
+  const [packaging, setPackaging] = useState<string>('box');
   const [price, setPrice] = useState('');
   const [totalCost, setTotalCost] = useState('');
   const [minStock, setMinStock] = useState('');
@@ -62,7 +74,17 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, onS
   const [targetMargin, setTargetMargin] = useState('80');
   const [vatCode, setVatCode] = useState('STANDARD_20');
   const [vatRate, setVatRate] = useState('20');
-  const [showCalculator, setShowCalculator] = useState(false);
+  const [yieldFactor, setYieldFactor] = useState('1');
+  const [storageLocation, setStorageLocation] = useState('');
+  const [showRetailCalculator, setShowRetailCalculator] = useState(false);
+  const [showUnitCalculator, setShowUnitCalculator] = useState(false);
+  const [calcData, setCalcData] = useState({
+    bulkQty: '',
+    bulkUnit: 'kg' as Unit,
+    totalCost: '',
+    targetPackSize: '',
+    targetPackUnit: 'g' as Unit,
+  });
   const [availableCameras, setAvailableCameras] = useState<any[]>([]);
   const [selectedCameraId, setSelectedCameraId] = useState<string>('');
   
@@ -71,7 +93,7 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, onS
 
   // Auto-calculate retail price when calculator fields change
   useEffect(() => {
-    if (showCalculator) {
+    if (showRetailCalculator) {
       const cogs = parseFloat(price) || 0;
       const margin = parseFloat(targetMargin) || 0;
       const vat = parseFloat(vatRate) || 0;
@@ -82,7 +104,15 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, onS
         setRetailPrice(inclVat.toFixed(2));
       }
     }
-  }, [price, targetMargin, vatRate, showCalculator]);
+  }, [price, targetMargin, vatRate, showRetailCalculator]);
+
+  useEffect(() => {
+    if (isOpen && !itemToEdit) {
+      if (inventoryType === 'LIQUID') setUnit('bottles');
+      else if (inventoryType === 'SOLID') setUnit('bags');
+      else if (inventoryType === 'UNIT') setUnit('pcs');
+    }
+  }, [inventoryType, isOpen, itemToEdit]);
 
   useEffect(() => {
     if (isOpen && itemToEdit) {
@@ -91,11 +121,23 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, onS
       setCategory(itemToEdit.category);
       setSubCategory(itemToEdit.subCategory || '');
       setDepartment(itemToEdit.department || '');
-      setQuantity(itemToEdit.quantity.toString());
-      setUnit(itemToEdit.unit);
-      setPrice(itemToEdit.pricePerUnit.toString());
-      const initialTotalCost = itemToEdit.quantity * itemToEdit.pricePerUnit;
-      setTotalCost(initialTotalCost.toFixed(2));
+      setInventoryType(itemToEdit.inventoryType || 'SOLID');
+      
+      // For editing, we show the quantity in the unit it was saved in
+      const baseQtyPerPack = convertToBaseUnit(itemToEdit.unitSize || 1, itemToEdit.unit || 'pcs');
+      const qtyPacks = itemToEdit.quantity / (baseQtyPerPack || 1);
+      
+      setQuantity(qtyPacks.toString());
+      setUnit(itemToEdit.unit || 'pcs');
+      setUnitSize(itemToEdit.unitSize?.toString() || '1');
+      setPackaging(itemToEdit.packaging || 'box');
+      
+      // Price per display unit
+      const factor = convertToBaseUnit(1, itemToEdit.unit || 'pcs');
+      const pricePerDisplayUnit = itemToEdit.pricePerUnit * factor;
+      setPrice(pricePerDisplayUnit.toFixed(4));
+      
+      setTotalCost((itemToEdit.quantity * itemToEdit.pricePerUnit).toFixed(2));
       setMinStock(itemToEdit.minStockLevel.toString());
       setSupplier(itemToEdit.supplier || '');
       setSupplierContact(itemToEdit.supplierContact || '');
@@ -107,6 +149,8 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, onS
       setRetailPrice(itemToEdit.retailPrice?.toString() || '');
       setVatCode(itemToEdit.vatCode || 'STANDARD_20');
       setVatRate(itemToEdit.vatRate?.toString() || '20');
+      setYieldFactor(itemToEdit.yieldFactor?.toString() || '1');
+      setStorageLocation(itemToEdit.storageLocation || '');
       setAllergies(itemToEdit.allergies || []);
     } else if (isOpen && !itemToEdit) {
       // Reset form for new item
@@ -114,9 +158,11 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, onS
       setBarcode('');
       setCategory('Ingredient');
       setSubCategory('');
-      setDepartment('Kitchen');
+      setDepartment('Food');
       setQuantity('');
       setUnit('kg');
+      setUnitSize('1');
+      setPackaging('box');
       setPrice('');
       setTotalCost('');
       setMinStock('');
@@ -128,6 +174,7 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, onS
       setTotalOwned('');
       setBrokenQuantity('');
       setRetailPrice('');
+      setStorageLocation('');
       setAllergies([]);
     }
   }, [isOpen, itemToEdit]);
@@ -215,12 +262,89 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, onS
 
   const isTrackingItem = ['Crockery', 'Utensil', 'Equipment'].includes(category);
 
-  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const calculateCalcResults = () => {
+    const bulkQty = parseFloat(calcData.bulkQty) || 0;
+    const bulkFactor = convertToBaseUnit(1, calcData.bulkUnit);
+    const totalBaseQty = bulkQty * bulkFactor;
+    const totalCost = parseFloat(calcData.totalCost) || 0;
+    
+    const targetPackSize = parseFloat(calcData.targetPackSize) || 1;
+    const targetPackFactor = convertToBaseUnit(1, calcData.targetPackUnit);
+    const targetBaseSize = targetPackSize * targetPackFactor;
+    
+    const pricePerBase = totalBaseQty > 0 ? totalCost / totalBaseQty : 0;
+    const pricePerPack = pricePerBase * targetBaseSize;
+    
+    return {
+      pricePerBase,
+      pricePerPack,
+      totalBaseQty
+    };
+  };
+
+  const compressImage = (base64Str: string, maxWidth = 800, maxHeight = 800, quality = 0.6): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.src = base64Str;
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
+
+        if (width > height) {
+          if (width > maxWidth) {
+            height *= maxWidth / width;
+            width = maxWidth;
+          }
+        } else {
+          if (height > maxHeight) {
+            width *= maxHeight / height;
+            height = maxHeight;
+          }
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          reject(new Error('Could not get canvas context'));
+          return;
+        }
+        ctx.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      };
+      img.onerror = reject;
+    });
+  };
+
+  const handleImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
+      
+      // Safety Check: Max File Size (original before compression)
+      if (file.size > 5 * 1024 * 1024) { // 5MB limit for raw upload
+        toast.error("File is too large. Please select an image smaller than 5MB.");
+        return;
+      }
+
       const reader = new FileReader();
-      reader.onloadend = () => {
-        setImagePreview(reader.result as string);
+      reader.onloadend = async () => {
+        const base64 = reader.result as string;
+        try {
+          const compressed = await compressImage(base64);
+          // Safety Check: Compressed Size
+          const compressedSize = (compressed.length * (3/4)) / 1024; // KB approx
+          if (compressedSize > 800) {
+            // If even after compression it's too big, compress more
+            const veryCompressed = await compressImage(base64, 600, 600, 0.4);
+            setImagePreview(veryCompressed);
+          } else {
+            setImagePreview(compressed);
+          }
+        } catch (err) {
+          console.error("Compression failed:", err);
+          toast.error("Failed to process image.");
+        }
       };
       reader.readAsDataURL(file);
     }
@@ -243,7 +367,17 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, onS
     const qty = parseFloat(val);
     const p = parseFloat(price);
     if (!isNaN(qty) && !isNaN(p)) {
-      setTotalCost((qty * p).toFixed(2));
+      setTotalCost(roundTo(qty * p, 2).toString());
+    }
+  };
+
+  const handleUnitSizeChange = (val: string) => {
+    setUnitSize(val);
+    // When unit size changes, we often want to re-calculate price if total cost is known
+    const qty = parseFloat(quantity);
+    const total = parseFloat(totalCost);
+    if (!isNaN(qty) && !isNaN(total) && qty > 0) {
+      setPrice(roundTo(total / qty, 4).toString());
     }
   };
 
@@ -252,7 +386,7 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, onS
     const p = parseFloat(val);
     const qty = parseFloat(quantity);
     if (!isNaN(p) && !isNaN(qty)) {
-      setTotalCost((qty * p).toFixed(2));
+      setTotalCost(roundTo(qty * p, 2).toString());
     }
   };
 
@@ -261,67 +395,49 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, onS
     const total = parseFloat(val);
     const qty = parseFloat(quantity);
     if (!isNaN(total) && !isNaN(qty) && qty !== 0) {
-      setPrice((total / qty).toFixed(4));
+      setPrice(roundTo(total / qty, 4).toString());
     }
   };
 
   const handleUnitChange = (newUnit: Unit) => {
     const oldUnit = unit;
-    const currentQty = parseFloat(quantity);
-    const currentPrice = parseFloat(price);
     
-    if (!isNaN(currentQty) && currentQty !== 0) {
-      let newQty = currentQty;
-      let newPrice = currentPrice;
+    if (unitSize) {
+      const currentSize = parseFloat(unitSize);
+      const currentPrice = parseFloat(price);
+      
+      const oldFactor = CONVERSION_FACTORS[oldUnit] || 1;
+      const newFactor = CONVERSION_FACTORS[newUnit] || 1;
+      
+      // Adjust unit size based on conversion factor
+      // Example: 1000g (old: g, factor 1) -> 1kg (new: kg, factor 1000)
+      const newSize = roundTo(currentSize * (oldFactor / newFactor), 6);
+      setUnitSize(newSize.toString());
+
+      // Adjust price per unit too
+      // If the physical item is the same, £ price stays same but scales with unit
+      if (!isNaN(currentPrice)) {
+        const newPrice = roundTo(currentPrice * (newFactor / oldFactor), 6);
+        setPrice(newPrice.toString());
+        
+        const qty = parseFloat(quantity);
+        if (!isNaN(qty)) {
+          setTotalCost(roundTo(qty * newPrice, 2).toString());
+        }
+      }
       
       const isWeight = (u: Unit) => ['kg', 'g'].includes(u);
       const isVolume = (u: Unit) => ['L', 'ml'].includes(u);
 
-      // Weight conversions
-      if (oldUnit === 'kg' && newUnit === 'g') {
-        newQty = currentQty * 1000;
-        if (!isNaN(currentPrice)) newPrice = currentPrice / 1000;
-      }
-      else if (oldUnit === 'g' && newUnit === 'kg') {
-        newQty = currentQty / 1000;
-        if (!isNaN(currentPrice)) newPrice = currentPrice * 1000;
-      }
-      
-      // Volume conversions
-      else if (oldUnit === 'L' && newUnit === 'ml') {
-        newQty = currentQty * 1000;
-        if (!isNaN(currentPrice)) newPrice = currentPrice / 1000;
-      }
-      else if (oldUnit === 'ml' && newUnit === 'L') {
-        newQty = currentQty / 1000;
-        if (!isNaN(currentPrice)) newPrice = currentPrice * 1000;
-      }
-      
-      // Cross-category warnings
+      // Compatibility Check
       if ((isWeight(oldUnit) && isVolume(newUnit)) || (isVolume(oldUnit) && isWeight(newUnit))) {
-        toast.warning("Converting between weight and volume is an estimate (1kg ≈ 1L).", { duration: 3000 });
-        if (oldUnit === 'kg' && newUnit === 'ml') {
-            newQty = currentQty * 1000;
-            if (!isNaN(currentPrice)) newPrice = currentPrice / 1000;
-        } else if (oldUnit === 'ml' && newUnit === 'kg') {
-            newQty = currentQty / 1000;
-            if (!isNaN(currentPrice)) newPrice = currentPrice * 1000;
-        } else if (oldUnit === 'L' && newUnit === 'g') {
-            newQty = currentQty * 1000;
-            if (!isNaN(currentPrice)) newPrice = currentPrice / 1000;
-        } else if (oldUnit === 'g' && newUnit === 'L') {
-            newQty = currentQty / 1000;
-            if (!isNaN(currentPrice)) newPrice = currentPrice * 1000;
-        }
-      }
-      
-      if (newQty !== currentQty) {
-        const roundedQty = Number(newQty.toFixed(4));
-        const roundedPrice = Number(newPrice.toFixed(6));
-        setQuantity(roundedQty.toString());
-        setPrice(roundedPrice.toString());
-        toast.info(`Converted: ${currentQty}${oldUnit} → ${roundedQty}${newUnit}`, {
-          duration: 2000,
+        toast.warning("Estimate Conversion: Converting between weight and volume (1kg ≈ 1L).", { 
+          description: "Verify actual product density for accuracy.",
+          duration: 4000 
+        });
+      } else if (UNIT_TYPES[oldUnit] !== UNIT_TYPES[newUnit] && oldUnit !== 'pcs' && newUnit !== 'pcs' && oldUnit !== 'custom' && newUnit !== 'custom') {
+        toast.error(`Incompatible Types: Converting ${oldUnit} to ${newUnit} is not recommended.`, { 
+          position: 'top-center'
         });
       }
     }
@@ -331,15 +447,35 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, onS
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    
+    const qtyPacks = parseFloat(quantity) || 0;
+    const sizePerPack = parseFloat(unitSize) || 1;
+    const pricePerPack = parseFloat(price) || 0;
+    
+    // Calculate base values
+    // 1. Total quantity in base units (e.g. total grams)
+    const baseQtyPerPack = convertToBaseUnit(sizePerPack, unit);
+    const totalBaseQty = qtyPacks * baseQtyPerPack;
+    
+    // 2. Price per base unit (e.g. price per gram)
+    // The price entered is "Price / {unit}", so we divide by the factor of that unit
+    const unitFactor = convertToBaseUnit(1, unit);
+    const pPerBaseUnit = unitFactor > 0 ? pricePerPack / unitFactor : 0;
+    
     onSave({
       name,
       barcode: barcode || undefined,
       category,
       subCategory: subCategory || undefined,
       department,
-      quantity: parseFloat(quantity) || 0,
+      inventoryType,
+      baseUnit: BASE_UNITS[inventoryType],
+      quantity: totalBaseQty,
       unit,
-      pricePerUnit: parseFloat(price) || 0,
+      unitSize: baseQtyPerPack, // Save in base units (e.g. 1000g for 1kg)
+      packaging,
+      pricePerUnit: pPerBaseUnit,
+      isActive: true,
       retailPrice: retailPrice ? parseFloat(retailPrice) : undefined,
       minStockLevel: parseFloat(minStock) || 0,
       imageUrl: imagePreview || undefined,
@@ -352,6 +488,8 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, onS
       allergies: allergies.length > 0 ? allergies : undefined,
       vatCode,
       vatRate: parseFloat(vatRate) || 0,
+      yieldFactor: parseFloat(yieldFactor) || 1,
+      storageLocation: storageLocation || undefined,
     });
   };
 
@@ -447,17 +585,36 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, onS
                   </div>
 
                   <div className="grid grid-cols-2 gap-6">
-                    <div>
-                      <label htmlFor="department" className="text-[10px] font-bold text-text-muted uppercase tracking-widest ml-1">Department</label>
-                      <div className="relative mt-1.5">
+                    <Combobox
+                      id="inventoryType"
+                      label="Inventory Type"
+                      required
+                      value={inventoryType}
+                      onChange={(newType) => {
+                        setInventoryType(newType);
+                        if (newType === 'SOLID') setUnit('g');
+                        else if (newType === 'LIQUID') setUnit('ml');
+                        else if (newType === 'UNIT') setUnit('pcs');
+                      }}
+                      options={[
+                        { value: 'SOLID', label: 'SOLID', description: 'Solid (g, kg)' },
+                        { value: 'LIQUID', label: 'LIQUID', description: 'Liquid (ml, L)' },
+                        { value: 'UNIT', label: 'UNIT', description: 'Unit (pcs, box)' },
+                        { value: 'GAS', label: 'GAS', description: 'Gas (CO2, Nitrogen)' },
+                        { value: 'SERVICE', label: 'SERVICE', description: 'Service/Labour' },
+                        { value: 'CUSTOM', label: 'CUSTOM', description: 'Any other type' },
+                      ]}
+                    />
+                    <div className="flex flex-col">
+                      <label htmlFor="department" className="text-[10px] font-bold text-text-muted uppercase tracking-widest ml-1 mb-1.5">Department</label>
+                      <div className="relative">
                         <select
                           id="department"
                           className="block w-full bg-secondary-surface border-border-grey rounded-xl shadow-sm py-3 px-4 focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent text-text-navy sm:text-sm transition-all appearance-none"
                           value={department}
                           onChange={(e) => setDepartment(e.target.value)}
                         >
-                          <option value="">Select Department</option>
-                          {DEFAULT_DEPARTMENTS.map(dept => (
+                          {DEFAULT_DEPARTMENTS.filter(d => d.id !== 'custom').map(dept => (
                             <option key={dept.id} value={dept.name}>{dept.name}</option>
                           ))}
                         </select>
@@ -466,44 +623,45 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, onS
                         </div>
                       </div>
                     </div>
-                    <div>
-                      <label htmlFor="category" className="text-[10px] font-bold text-text-muted uppercase tracking-widest ml-1">Category</label>
-                      <div className="relative mt-1.5">
-                        <select
-                          id="category"
-                          required
-                          className="block w-full bg-secondary-surface border-border-grey rounded-xl shadow-sm py-3 px-4 focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent text-text-navy sm:text-sm transition-all appearance-none"
-                          value={category}
-                          onChange={(e) => setCategory(e.target.value as InventoryCategory)}
-                        >
-                          <option value="">Select Category</option>
-                          {DEFAULT_CATEGORIES.map(cat => (
-                            <option key={cat} value={cat}>{cat}</option>
-                          ))}
-                        </select>
-                        <div className="absolute inset-y-0 right-0 pr-4 flex items-center pointer-events-none">
-                          <ChevronDown className="h-4 w-4 text-text-muted" />
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div>
-                    <label htmlFor="subCategory" className="text-[10px] font-bold text-text-muted uppercase tracking-widest ml-1">Sub Category</label>
-                    <input
-                      type="text"
-                      id="subCategory"
-                      className="mt-1.5 block w-full bg-secondary-surface border-border-grey rounded-xl shadow-sm py-3 px-4 focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent text-text-navy sm:text-sm transition-all placeholder-text-muted/50"
-                      value={subCategory}
-                      onChange={(e) => setSubCategory(e.target.value)}
-                      placeholder="e.g. Dairy, Plates, Knives"
-                    />
                   </div>
 
                   <div className="grid grid-cols-2 gap-6">
-                    <div>
-                      <label htmlFor="quantity" className="text-[10px] font-bold text-text-muted uppercase tracking-widest ml-1">
-                        {isTrackingItem ? 'Currently Available' : 'Quantity'}
+                    <Combobox
+                      id="category"
+                      label="Category"
+                      required
+                      value={category}
+                      onChange={(val) => setCategory(val as InventoryCategory)}
+                      options={DEFAULT_CATEGORIES.map(cat => ({ value: cat }))}
+                    />
+                    <Combobox
+                      id="subCategory"
+                      label="Sub Category"
+                      value={subCategory}
+                      onChange={setSubCategory}
+                      options={[
+                        { value: 'Dairy' },
+                        { value: 'Produce' },
+                        { value: 'Meat' },
+                        { value: 'Fish' },
+                        { value: 'Dry Goods' },
+                        { value: 'Spirits' },
+                        { value: 'Wine' },
+                        { value: 'Beer' },
+                        { value: 'Soft Drinks' },
+                        { value: 'Cleaning' },
+                        { value: 'Equipment' },
+                        { value: 'Crockery' },
+                        { value: 'Utensils' },
+                        { value: 'Packaging' },
+                      ]}
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-4 gap-4 items-start">
+                    <div className="flex flex-col">
+                      <label htmlFor="quantity" className="text-[10px] font-bold text-text-muted uppercase tracking-widest ml-1 mb-1.5">
+                        STOCK QTY
                       </label>
                       <input
                         type="number"
@@ -511,27 +669,73 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, onS
                         required
                         min="0"
                         step="any"
-                        className="mt-1.5 block w-full bg-secondary-surface border-border-grey rounded-xl shadow-sm py-3 px-4 focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent text-text-navy sm:text-sm transition-all placeholder-text-muted/50"
+                        className="block w-full bg-secondary-surface border-border-grey rounded-xl shadow-sm py-3 px-4 focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent text-text-navy sm:text-sm transition-all placeholder-text-muted/50 h-[46px]"
                         value={quantity}
                         onChange={(e) => handleQuantityChange(e.target.value)}
+                        placeholder="e.g. 5"
                       />
                     </div>
-                     <div>
-                        <label htmlFor="unit" className="text-[10px] font-bold text-text-muted uppercase tracking-widest ml-1">Unit</label>
+                    <div className="flex flex-col">
+                      <label htmlFor="packaging" className="text-[10px] font-bold text-text-muted uppercase tracking-widest ml-1 mb-1.5">Packaging</label>
+                      <div className="relative">
                         <select
-                            id="unit"
-                            className="mt-1.5 block w-full bg-secondary-surface border-border-grey rounded-xl shadow-sm py-3 px-4 focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent text-text-navy sm:text-sm transition-all appearance-none"
-                            value={unit}
-                            onChange={(e) => handleUnitChange(e.target.value as Unit)}
+                          id="packaging"
+                          className="block w-full bg-secondary-surface border-border-grey rounded-xl shadow-sm py-3 px-4 focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent text-text-navy sm:text-sm transition-all appearance-none h-[46px]"
+                          value={packaging}
+                          onChange={(e) => setPackaging(e.target.value)}
                         >
-                            <option value="pcs">pcs</option>
-                            <option value="box">box</option>
-                            <option value="kg">kg</option>
-                            <option value="g">g</option>
-                            <option value="L">L</option>
-                            <option value="ml">ml</option>
-                            <option value="bottles">bottles</option>
+                          <option value="box">Box</option>
+                          <option value="pack">Pack</option>
+                          <option value="tray">Tray</option>
+                          <option value="bag">Bag</option>
+                          <option value="case">Case</option>
+                          <option value="bottle">Bottle</option>
+                          <option value="tin">Tin</option>
+                          <option value="jar">Jar</option>
+                          <option value="tub">Tub</option>
+                          <option value="sachet">Sachet</option>
+                          <option value="pcs">Pcs</option>
                         </select>
+                        <div className="absolute inset-y-0 right-0 pr-4 flex items-center pointer-events-none">
+                          <ChevronDown className="h-4 w-4 text-text-muted" />
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex flex-col">
+                      <label htmlFor="unitSize" className="text-[10px] font-bold text-text-muted uppercase tracking-widest ml-1 mb-1.5">
+                        Base Size
+                      </label>
+                      <input
+                        type="number"
+                        id="unitSize"
+                        required
+                        min="0"
+                        step="any"
+                        className="block w-full bg-secondary-surface border-border-grey rounded-xl shadow-sm py-3 px-4 focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent text-text-navy sm:text-sm transition-all placeholder-text-muted/50 h-[46px]"
+                        value={unitSize}
+                        onChange={(e) => handleUnitSizeChange(e.target.value)}
+                        placeholder="e.g. 700"
+                      />
+                    </div>
+                    <div className="flex flex-col">
+                      <label htmlFor="unit" className="text-[10px] font-bold text-text-muted uppercase tracking-widest ml-1 mb-1.5">Base Unit</label>
+                      <div className="relative">
+                        <select
+                          id="unit"
+                          className="block w-full bg-secondary-surface border-border-grey rounded-xl shadow-sm py-3 px-4 focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent text-text-navy sm:text-sm transition-all appearance-none h-[46px]"
+                          value={unit}
+                          onChange={(e) => handleUnitChange(e.target.value as Unit)}
+                        >
+                          <option value="kg">KG</option>
+                          <option value="g">GR / G</option>
+                          <option value="L">L</option>
+                          <option value="ml">ML</option>
+                          <option value="pcs">UNIT / PCS</option>
+                        </select>
+                        <div className="absolute inset-y-0 right-0 pr-4 flex items-center pointer-events-none">
+                          <ChevronDown className="h-4 w-4 text-text-muted" />
+                        </div>
+                      </div>
                     </div>
                   </div>
 
@@ -542,24 +746,24 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, onS
                         <span className="text-[10px] font-bold text-accent uppercase tracking-widest">Asset Tracking</span>
                       </div>
                       <div>
-                        <label htmlFor="totalOwned" className="text-[10px] font-bold text-text-muted uppercase tracking-widest ml-1">Total Owned (Par)</label>
+                        <label htmlFor="totalOwned" className="text-[10px] font-bold text-text-muted uppercase tracking-widest ml-1 mb-1.5">Total Owned (Par)</label>
                         <input
                           type="number"
                           id="totalOwned"
                           min="0"
-                          className="mt-1.5 block w-full bg-secondary-surface border-border-grey rounded-xl shadow-sm py-3 px-4 focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent text-text-navy sm:text-sm transition-all placeholder-text-muted/50"
+                          className="block w-full bg-secondary-surface border-border-grey rounded-xl shadow-sm py-3 px-4 focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent text-text-navy sm:text-sm transition-all placeholder-text-muted/50"
                           value={totalOwned}
                           onChange={(e) => setTotalOwned(e.target.value)}
                           placeholder="Max Qty"
                         />
                       </div>
                       <div>
-                        <label htmlFor="brokenQuantity" className="text-[10px] font-bold text-error uppercase tracking-widest ml-1">Broken / Missing</label>
+                        <label htmlFor="brokenQuantity" className="text-[10px] font-bold text-error uppercase tracking-widest ml-1 mb-1.5">Broken / Missing</label>
                         <input
                           type="number"
                           id="brokenQuantity"
                           min="0"
-                          className="mt-1.5 block w-full bg-secondary-surface border-border-grey rounded-xl shadow-sm py-3 px-4 focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent text-text-navy sm:text-sm transition-all placeholder-text-muted/50"
+                          className="block w-full bg-secondary-surface border-border-grey rounded-xl shadow-sm py-3 px-4 focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent text-text-navy sm:text-sm transition-all placeholder-text-muted/50"
                           value={brokenQuantity}
                           onChange={(e) => setBrokenQuantity(e.target.value)}
                           placeholder="Loss Count"
@@ -570,48 +774,48 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, onS
 
                   <div className="grid grid-cols-3 gap-6">
                      <div>
-                      <label htmlFor="price" className="text-[10px] font-bold text-text-muted uppercase tracking-widest ml-1">Price / {unit} (£)</label>
+                      <label htmlFor="price" className="text-[10px] font-bold text-text-muted uppercase tracking-widest ml-1 mb-1.5">Price / {unit} (£)</label>
                       <input
                         type="number"
                         id="price"
                         required
                         min="0"
                         step="any"
-                        className="mt-1.5 block w-full bg-secondary-surface border-border-grey rounded-xl shadow-sm py-3 px-4 focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent text-text-navy sm:text-sm transition-all placeholder-text-muted/50"
+                        className="block w-full bg-secondary-surface border-border-grey rounded-xl shadow-sm py-3 px-4 focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent text-text-navy sm:text-sm transition-all placeholder-text-muted/50"
                         value={price}
                         onChange={(e) => handlePriceChange(e.target.value)}
                       />
                     </div>
                     <div>
-                      <label htmlFor="totalCost" className="text-[10px] font-bold text-text-muted uppercase tracking-widest ml-1">Total Cost (£)</label>
+                      <label htmlFor="totalCost" className="text-[10px] font-bold text-text-muted uppercase tracking-widest ml-1 mb-1.5">Total Cost (£)</label>
                       <input
                         type="number"
                         id="totalCost"
                         min="0"
                         step="0.01"
-                        className="mt-1.5 block w-full bg-secondary-surface border-border-grey rounded-xl shadow-sm py-3 px-4 focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent text-text-navy sm:text-sm transition-all placeholder-text-muted/50"
+                        className="block w-full bg-secondary-surface border-border-grey rounded-xl shadow-sm py-3 px-4 focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent text-text-navy sm:text-sm transition-all placeholder-text-muted/50"
                         value={totalCost}
                         onChange={(e) => handleTotalCostChange(e.target.value)}
                       />
                     </div>
                     <div>
-                      <label htmlFor="retailPrice" className="text-[10px] font-bold text-text-muted uppercase tracking-widest ml-1">Retail Price (£)</label>
+                      <label htmlFor="retailPrice" className="text-[10px] font-bold text-text-muted uppercase tracking-widest ml-1 mb-1.5">Retail Price (£)</label>
                       <div className="flex space-x-2">
                         <input
                           type="number"
                           id="retailPrice"
                           min="0"
                           step="0.01"
-                          className="mt-1.5 block w-full bg-secondary-surface border-border-grey rounded-xl shadow-sm py-3 px-4 focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent text-text-navy sm:text-sm transition-all placeholder-text-muted/50"
+                          className="block w-full bg-secondary-surface border-border-grey rounded-xl shadow-sm py-3 px-4 focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent text-text-navy sm:text-sm transition-all placeholder-text-muted/50"
                           value={retailPrice}
                           onChange={(e) => setRetailPrice(e.target.value)}
                           placeholder="Optional"
                         />
                         <button
                           type="button"
-                          onClick={() => setShowCalculator(!showCalculator)}
-                          className={`mt-1.5 p-3 rounded-xl border transition-all ${showCalculator ? 'bg-accent border-accent text-white' : 'bg-secondary-surface border-border-grey text-text-muted hover:text-text-navy'}`}
-                          title="Price Calculator"
+                          onClick={() => setShowRetailCalculator(!showRetailCalculator)}
+                          className={`mt-1.5 p-3 rounded-xl border transition-all ${showRetailCalculator ? 'bg-accent border-accent text-white' : 'bg-secondary-surface border-border-grey text-text-muted hover:text-text-navy'}`}
+                          title="Retail Price Calculator"
                         >
                           <Calculator className="h-4 w-4" />
                         </button>
@@ -619,11 +823,134 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, onS
                     </div>
                   </div>
 
-                  {showCalculator && (
+                  {/* Unit/Price Conversion Calculator */}
+                  <div className="bg-secondary-surface rounded-2xl p-6 border border-border-grey">
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center">
+                        <div className="p-2 bg-accent/10 rounded-lg mr-3">
+                          <Calculator className="h-5 w-5 text-accent" />
+                        </div>
+                        <div>
+                          <h4 className="text-sm font-bold text-text-navy uppercase tracking-tight">Unit/Price Conversion Calculator</h4>
+                          <p className="text-[10px] font-bold text-text-muted uppercase tracking-widest">Calculate costs from bulk purchases</p>
+                        </div>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        className="text-[10px] font-bold uppercase tracking-widest px-3 py-1 bg-card-bg border-border-grey"
+                        onClick={() => setShowUnitCalculator(!showUnitCalculator)}
+                      >
+                        {showUnitCalculator ? 'Hide' : 'Show'}
+                      </Button>
+                    </div>
+
+                    {showUnitCalculator && (
+                      <div className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-200">
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                          <div>
+                            <label className="block text-[10px] font-bold text-text-muted uppercase tracking-widest mb-1.5">Bulk Qty</label>
+                            <input
+                              type="number"
+                              className="bg-card-bg border-border-grey text-text-navy focus:ring-accent focus:border-accent block w-full sm:text-sm rounded-xl p-3 border"
+                              placeholder="e.g. 10"
+                              value={calcData.bulkQty}
+                              onChange={(e) => setCalcData({ ...calcData, bulkQty: e.target.value })}
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-bold text-text-muted uppercase tracking-widest mb-1.5">Bulk Unit</label>
+                            <select
+                              className="bg-card-bg border-border-grey text-text-navy focus:ring-accent focus:border-accent block w-full sm:text-sm rounded-xl p-3 border"
+                              value={calcData.bulkUnit}
+                              onChange={(e) => setCalcData({ ...calcData, bulkUnit: e.target.value as Unit })}
+                            >
+                              <option value="kg">kg</option>
+                              <option value="g">g</option>
+                              <option value="L">L</option>
+                              <option value="ml">ml</option>
+                              <option value="pcs">pcs</option>
+                              <option value="cases">cases</option>
+                              <option value="packs">packs</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-bold text-text-muted uppercase tracking-widest mb-1.5">Total Cost (£)</label>
+                            <input
+                              type="number"
+                              className="bg-card-bg border-border-grey text-text-navy focus:ring-accent focus:border-accent block w-full sm:text-sm rounded-xl p-3 border"
+                              placeholder="e.g. 50"
+                              value={calcData.totalCost}
+                              onChange={(e) => setCalcData({ ...calcData, totalCost: e.target.value })}
+                            />
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-[10px] font-bold text-text-muted uppercase tracking-widest mb-1.5">Target Pack Size</label>
+                            <input
+                              type="number"
+                              className="bg-card-bg border-border-grey text-text-navy focus:ring-accent focus:border-accent block w-full sm:text-sm rounded-xl p-3 border"
+                              placeholder="e.g. 500"
+                              value={calcData.targetPackSize}
+                              onChange={(e) => setCalcData({ ...calcData, targetPackSize: e.target.value })}
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-bold text-text-muted uppercase tracking-widest mb-1.5">Target Pack Unit</label>
+                            <select
+                              className="bg-card-bg border-border-grey text-text-navy focus:ring-accent focus:border-accent block w-full sm:text-sm rounded-xl p-3 border"
+                              value={calcData.targetPackUnit}
+                              onChange={(e) => setCalcData({ ...calcData, targetPackUnit: e.target.value as Unit })}
+                            >
+                              <option value="g">g</option>
+                              <option value="ml">ml</option>
+                              <option value="pcs">pcs</option>
+                            </select>
+                          </div>
+                        </div>
+
+                        {/* Calculator Results */}
+                        <div className="bg-primary-surface rounded-xl p-4 border border-accent/20">
+                          <div className="grid grid-cols-2 gap-4">
+                            <div>
+                              <p className="text-[9px] font-bold text-text-muted uppercase tracking-widest">Price per {calcData.targetPackUnit}</p>
+                              <p className="text-sm font-bold text-text-navy">£{calculateCalcResults().pricePerBase.toFixed(4)}</p>
+                            </div>
+                            <div>
+                              <p className="text-[9px] font-bold text-text-muted uppercase tracking-widest">Price per {calcData.targetPackSize}{calcData.targetPackUnit} Pack</p>
+                              <p className="text-sm font-bold text-text-navy">£{calculateCalcResults().pricePerPack.toFixed(2)}</p>
+                            </div>
+                            <div>
+                              <p className="text-[9px] font-bold text-text-muted uppercase tracking-widest">Total Base Qty</p>
+                              <p className="text-sm font-bold text-text-navy">{calculateCalcResults().totalBaseQty} {calcData.targetPackUnit}</p>
+                            </div>
+                            <div className="flex items-end">
+                              <Button
+                                type="button"
+                                className="w-full bg-accent text-white text-[9px] font-bold uppercase tracking-widest py-2 rounded-lg"
+                                onClick={() => {
+                                  const results = calculateCalcResults();
+                                  setPrice(results.pricePerPack.toFixed(4));
+                                  setUnitSize(calcData.targetPackSize);
+                                  toast.success('Calculator values applied to form');
+                                }}
+                              >
+                                Apply to Form
+                              </Button>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {showRetailCalculator && (
                     <div className="bg-secondary-surface p-6 rounded-2xl border border-border-grey space-y-4 shadow-inner">
                       <div className="flex items-center justify-between">
                         <span className="text-[10px] font-bold text-accent uppercase tracking-widest">Retail Price Calculator</span>
-                        <button type="button" onClick={() => setShowCalculator(false)} className="text-text-muted hover:text-text-navy transition-colors">
+                        <button type="button" onClick={() => setShowRetailCalculator(false)} className="text-text-muted hover:text-text-navy transition-colors">
                           <X className="h-4 w-4" />
                         </button>
                       </div>
@@ -666,7 +993,7 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, onS
                     </div>
                   )}
 
-                  <div className="grid grid-cols-2 gap-6">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                     <div>
                       <label htmlFor="vatCode" className="text-[10px] font-bold text-text-muted uppercase tracking-widest ml-1">VAT Code</label>
                       <div className="relative mt-1.5">
@@ -703,9 +1030,38 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, onS
                         onChange={(e) => setMinStock(e.target.value)}
                       />
                     </div>
+                    <div>
+                      <div className="flex justify-between items-center px-1">
+                        <label htmlFor="yieldFactor" className="text-[10px] font-bold text-text-muted uppercase tracking-widest">Yield Factor</label>
+                        <div title="Percentage of usable product (e.g. 0.8 for 80%)">
+                            <Info className="h-3 w-3 text-text-muted cursor-help" />
+                        </div>
+                      </div>
+                      <input
+                        type="number"
+                        id="yieldFactor"
+                        min="0"
+                        max="1"
+                        step="0.01"
+                        className="mt-1.5 block w-full bg-secondary-surface border-border-grey rounded-xl shadow-sm py-3 px-4 focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent text-text-navy sm:text-sm transition-all placeholder-text-muted/50"
+                        value={yieldFactor}
+                        onChange={(e) => setYieldFactor(e.target.value)}
+                      />
+                    </div>
                   </div>
                   
                   <div className="grid grid-cols-2 gap-6">
+                    <div>
+                      <label htmlFor="storageLocation" className="text-[10px] font-bold text-text-muted uppercase tracking-widest ml-1">Storage Location</label>
+                      <input
+                        type="text"
+                        id="storageLocation"
+                        className="mt-1.5 block w-full bg-secondary-surface border-border-grey rounded-xl shadow-sm py-3 px-4 focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent text-text-navy sm:text-sm transition-all placeholder-text-muted/50"
+                        value={storageLocation}
+                        onChange={(e) => setStorageLocation(e.target.value)}
+                        placeholder="e.g. Dry Store, Section A"
+                      />
+                    </div>
                     <div>
                         <div className="flex justify-between items-center px-1">
                             <label htmlFor="dailyUsageRate" className="text-[10px] font-bold text-text-muted uppercase tracking-widest">Est. Daily Usage</label>
@@ -721,8 +1077,10 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, onS
                             onChange={(e) => setDailyUsageRate(e.target.value)}
                             placeholder="e.g. 5"
                         />
-                        <p className="text-[10px] font-bold text-text-muted/40 uppercase tracking-widest mt-1.5 ml-1">Used for AI predictions</p>
                     </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-6">
                     <div>
                       <label htmlFor="expiry" className="text-[10px] font-bold text-text-muted uppercase tracking-widest ml-1">Expiry Date (Optional)</label>
                       <input
