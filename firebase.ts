@@ -30,8 +30,9 @@ import {
   limit, 
   getDocFromServer, 
   increment, 
-  initializeFirestore, 
-  writeBatch 
+  initializeFirestore,
+  writeBatch,
+  enableIndexedDbPersistence,
 } from 'firebase/firestore';
 
 import firebaseConfig from './firebase-applet-config.json';
@@ -48,6 +49,14 @@ console.log(`%c[Diagnostic] Initializing Firestore. Database: ${databaseId}`, 'c
 export const db = initializeFirestore(app, {
   experimentalForceLongPolling: true,
 }, databaseId);
+
+enableIndexedDbPersistence(db).catch((err) => {
+  if (err.code === 'failed-precondition') {
+    console.warn('[Firebase] Persistence unavailable: multiple tabs open');
+  } else if (err.code === 'unimplemented') {
+    console.warn('[Firebase] Persistence not supported in this browser');
+  }
+});
 
 export const auth = getAuth(app);
 setPersistence(auth, browserLocalPersistence).catch(console.error);
