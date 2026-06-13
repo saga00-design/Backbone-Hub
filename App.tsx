@@ -26,7 +26,6 @@ import { DEFAULT_PERMISSIONS } from './constants';
 import { calculateTotalCost } from './utils/recipeUtils';
 import { convertToBaseUnit, CONVERSION_FACTORS } from './utils/unitConversions';
 import { normalizeCurrency, normalizeTimestamp, normalizeStatus } from './utils/currencyUtils';
-
 import { LivePOS } from './components/LivePOS';
 import { WasteManager } from './components/WasteManager';
 import { ExpenseManager } from './components/ExpenseManager';
@@ -2738,18 +2737,18 @@ const today = londonHour < 6
               </button>
             </header>
 
-            {currentView === 'dashboard' && (  
+            {currentView === 'dashboard' && (
               <Dashboard
-                items={combinedItems} 
-                salesHistory={salesHistory} 
-                totalRevenue={combinedTotalRevenue} 
-                posPaymentsCount={posPayments.length}
-                databaseId={(db as any)._databaseId?.database}
-                orderCountToday={liveSalesData.aggregate.numberOfPaidOrders}
-                setCurrentView={setCurrentView} 
-                onAddToCart={handleAddToCart} 
-              />
-            )}
+                  items={combinedItems} 
+                  salesHistory={salesHistory} 
+                  totalRevenue={combinedTotalRevenue} 
+                  posPaymentsCount={posPayments.length}
+                  databaseId={(db as any)._databaseId?.database}
+                  orderCountToday={liveSalesData.aggregate.numberOfPaidOrders}
+                  setCurrentView={setCurrentView} 
+                  onAddToCart={handleAddToCart} 
+                />
+              )}
 
             {currentView === 'financial_command' && (
               <FinancialCommandCenter

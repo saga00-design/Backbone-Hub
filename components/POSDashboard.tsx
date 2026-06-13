@@ -38,7 +38,10 @@ export const POSDashboard: React.FC<POSDashboardProps> = ({
 }) => {
   const now = new Date();
   const startOfToday = new Date(now);
-  startOfToday.setHours(0, 0, 0, 0);
+startOfToday.setHours(6, 0, 0, 0);
+if (now.getHours() < 6) {
+  startOfToday.setDate(startOfToday.getDate() - 1);
+}
   
   const parseDate = (d: any) => {
     if (!d) return new Date(0);
@@ -47,7 +50,10 @@ export const POSDashboard: React.FC<POSDashboardProps> = ({
   };
 
   // 1. LIVE METRICS CALCULATIONS
-  const todayOrders = orders.filter(o => parseDate(o.createdAt) >= startOfToday);
+  const todayOrders = orders.filter(o => {
+  const ts = o.paidAt || o.createdAt;
+  return parseDate(ts) >= startOfToday;
+});
   const oneHourAgo = new Date(Date.now() - 3600000);
   const recentOrders = todayOrders.filter(o => parseDate(o.createdAt) >= oneHourAgo);
   const activeOrders = todayOrders.filter(o => o.status === 'Open' || o.status === 'Sent');

@@ -129,7 +129,7 @@ export const Reports: React.FC<ReportsProps> = ({
   };
 
   const [appliedDateRange, setAppliedDateRange] = useState({
-    start: safeDateSplit(new Date()),
+    start: safeDateSplit(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)),
     end: safeDateSplit(new Date())
   });
   const [dateRange, setDateRange] = useState({ ...appliedDateRange });
@@ -163,7 +163,7 @@ export const Reports: React.FC<ReportsProps> = ({
       });
       setClosureHistory(docs);
     }, err => {
-      console.error("Closure history fetch error:", err);
+      handleFirestoreError(err, OperationType.LIST, 'dailyClosures');
     });
 
     const qClocks = query(
@@ -173,7 +173,7 @@ export const Reports: React.FC<ReportsProps> = ({
     );
     const unsubClocks = onSnapshot(qClocks, (snap) => {
       setClockInRecords(snap.docs.map(doc => ({ ...doc.data() } as ClockInRecord)));
-    }, (err) => console.error("Clock records fetch error:", err));
+    }, (err) => handleFirestoreError(err, OperationType.LIST, 'clockInRecords'));
 
     return () => {
       unsub();
@@ -222,7 +222,7 @@ export const Reports: React.FC<ReportsProps> = ({
       const logs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as AutomationLog));
       setAutomationLogs(logs);
     }, (err) => {
-      console.error("Error listening to automation logs:", err);
+      handleFirestoreError(err, OperationType.LIST, 'automationLogs');
     });
     return () => unsub();
   }, [user]);
@@ -239,7 +239,7 @@ export const Reports: React.FC<ReportsProps> = ({
           await setDoc(docRef, automationSettings);
         }
       } catch (error) {
-        console.error("Error fetching automation settings:", error);
+        handleFirestoreError(error, OperationType.GET, 'systemSettings/global');
       }
     };
     if (user) fetchSettings();
@@ -251,7 +251,7 @@ export const Reports: React.FC<ReportsProps> = ({
     try {
       await setDoc(doc(db, 'systemSettings', 'global'), next);
     } catch (error) {
-      console.error("Error updating mode:", error);
+      handleFirestoreError(error, OperationType.WRITE, 'systemSettings/global');
     }
   };
 
@@ -341,7 +341,7 @@ export const Reports: React.FC<ReportsProps> = ({
     const unsub = onSnapshot(q, (snap) => {
       setForecasts(snap.docs.map(d => d.data() as Forecast));
     }, (err) => {
-      console.error("Predictions fetch error:", err);
+      handleFirestoreError(err, OperationType.LIST, 'predictions');
     });
     return unsub;
   }, [user]);
@@ -358,7 +358,7 @@ export const Reports: React.FC<ReportsProps> = ({
     const unsub = onSnapshot(q, (snap) => {
       setStaffPerformance(snap.docs.map(d => d.data() as StaffPerformanceRecord));
     }, (err) => {
-      console.error("Staff performance fetch error:", err);
+      handleFirestoreError(err, OperationType.LIST, 'staffPerformance');
     });
     return unsub;
   }, [user]);
@@ -383,7 +383,7 @@ export const Reports: React.FC<ReportsProps> = ({
         setIncentiveConfig(defaultConfig);
       }
     }, (err) => {
-      console.error("Incentive config fetch error:", err);
+      handleFirestoreError(err, OperationType.GET, `settings/incentive_${LOCATION_ID}`);
     });
     return unsub;
   }, [user]);
