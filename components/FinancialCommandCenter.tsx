@@ -121,9 +121,40 @@ export const FinancialCommandCenter: React.FC<FinancialCommandCenterProps> = ({
       return false;
     });
 
-    const grossSales = filteredClosures.reduce((acc, c) => acc + (c.totals?.grossSales || 0), 0);
-    const vatCollected = filteredClosures.reduce((acc, c) => acc + (c.totals?.vat?.collected || 0), 0);
-    const scCollected = filteredClosures.reduce((acc, c) => acc + (c.totals?.serviceCharge?.collected || 0), 0);
+    let grossSales: number;
+    let vatCollected: number;
+    let scCollected: number;
+
+    if (filteredClosures.length > 0) {
+      grossSales = filteredClosures.reduce((acc, c) => acc + (c.totals?.grossSales || 0), 0);
+      vatCollected = filteredClosures.reduce((acc, c) => acc + (c.totals?.vat?.collected || 0), 0);
+      scCollected = filteredClosures.reduce((acc, c) => acc + (c.totals?.serviceCharge?.collected || 0), 0);
+    } else {
+      // Closures not yet populated — derive totals from POS payment records
+      const filteredPayments = payments.filter(p => {
+        if (!p.timestamp) return false;
+        const pDate = new Date(p.timestamp as any);
+        const pStr = pDate.toISOString().split('T')[0];
+        if (timePeriod === 'Daily') return pStr === today;
+        if (timePeriod === 'Weekly') {
+          const weekAgo = new Date();
+          weekAgo.setDate(weekAgo.getDate() - 7);
+          return pDate >= weekAgo;
+        }
+        if (timePeriod === 'Monthly') return pStr.startsWith(today.substring(0, 7));
+        if (timePeriod === 'Quarterly') {
+          const qMonths = selectedQuarter === 1 ? [0, 1, 2] :
+                          selectedQuarter === 2 ? [3, 4, 5] :
+                          selectedQuarter === 3 ? [6, 7, 8] : [9, 10, 11];
+          return qMonths.includes(pDate.getMonth()) && pDate.getFullYear() === now.getFullYear();
+        }
+        return false;
+      });
+      grossSales = filteredPayments.reduce((acc, p) => acc + (p.grossSales || p.totalPaid || p.amount || 0), 0);
+      vatCollected = filteredPayments.reduce((acc, p) => acc + (p.vatTotal || 0), 0);
+      scCollected = filteredPayments.reduce((acc, p) => acc + (p.serviceChargeTotal || 0), 0);
+    }
+
     const netRevenue = grossSales - vatCollected - scCollected;
     
     const cogs = filteredClosures.reduce((acc, c) => acc + (c.totals?.cogs || 0), 0);
