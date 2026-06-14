@@ -15,23 +15,24 @@ import {
 } from 'firebase/auth';
 import { 
   getFirestore,
-  collection, 
-  doc, 
-  getDoc, 
-  getDocs, 
-  setDoc, 
-  addDoc, 
-  updateDoc, 
-  deleteDoc, 
-  onSnapshot, 
-  query, 
-  where, 
-  orderBy, 
-  limit, 
-  getDocFromServer, 
-  increment, 
-  initializeFirestore, 
-  writeBatch 
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  setDoc,
+  addDoc,
+  updateDoc,
+  deleteDoc,
+  onSnapshot,
+  query,
+  where,
+  orderBy,
+  limit,
+  getDocFromServer,
+  increment,
+  initializeFirestore,
+  enableIndexedDbPersistence,
+  writeBatch
 } from 'firebase/firestore';
 
 import firebaseConfig from './firebase-applet-config.json';
@@ -48,6 +49,20 @@ console.log(`%c[Diagnostic] Initializing Firestore. Database: ${databaseId}`, 'c
 export const db = initializeFirestore(app, {
   experimentalForceLongPolling: true,
 }, databaseId);
+
+try {
+  enableIndexedDbPersistence(db).catch((err) => {
+    if (err.code === 'failed-precondition') {
+      console.warn('[Firebase] IndexedDB persistence unavailable: multiple tabs open.');
+    } else if (err.code === 'unimplemented') {
+      console.warn('[Firebase] IndexedDB persistence not supported in this browser.');
+    } else {
+      console.warn('[Firebase] IndexedDB persistence error:', err);
+    }
+  });
+} catch (err) {
+  console.warn('[Firebase] IndexedDB persistence threw synchronously:', err);
+}
 
 export const auth = getAuth(app);
 setPersistence(auth, browserLocalPersistence).catch(console.error);
