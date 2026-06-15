@@ -22,6 +22,9 @@ import {
 import { POSOrder, POSOrderItem, Table, Recipe, InventoryItem, OrderStatus, OrderItemStatus, Station, Course, ShiftBriefingNote } from '../types';
 import { db, auth, collection, doc, setDoc, handleFirestoreError, OperationType, cleanObject, LOCATION_ID, onSnapshot, query, where } from '../firebase';
 import { toast } from 'sonner';
+import { useConnectionStatus } from '../hooks/useConnectionStatus';
+import { OfflineBanner } from './OfflineBanner';
+import { PaymentConfirmation } from './PaymentConfirmation';
 
 interface LivePOSProps {
   table: Table;
@@ -37,6 +40,11 @@ export const LivePOS: React.FC<LivePOSProps> = ({ table, recipes, onClose, exist
   const [category, setCategory] = useState<string>('all');
   const [activeBriefing, setActiveBriefing] = useState<ShiftBriefingNote | null>(null);
   const [showBriefingDetail, setShowBriefingDetail] = useState(false);
+  const [showPaymentConfirmation, setShowPaymentConfirmation] = useState(false);
+  const [confirmedPaymentId, setConfirmedPaymentId] = useState('');
+  const [confirmedOrderId, setConfirmedOrderId] = useState('');
+  const [confirmedPaymentMethod, setConfirmedPaymentMethod] = useState('Card');
+  const { isOnline } = useConnectionStatus();
 
   useEffect(() => {
     const unsub = onSnapshot(
@@ -112,6 +120,11 @@ export const LivePOS: React.FC<LivePOSProps> = ({ table, recipes, onClose, exist
       return;
     }
 
+    if (orderStatus === 'Paid' && !isOnline) {
+      toast.error('You are offline — cannot process payments. Please reconnect first.');
+      return;
+    }
+
     setIsProcessing(true);
     const orderId = existingOrder?.id || `order-${Date.now()}`;
     const timestamp = new Date().toISOString();
@@ -138,30 +151,36 @@ export const LivePOS: React.FC<LivePOSProps> = ({ table, recipes, onClose, exist
 
     try {
       await setDoc(doc(db, 'posOrders', orderId), cleanObject(orderData), { merge: true });
-      
+
       if (orderStatus === 'Paid') {
         const paymentId = `pay-${Date.now()}`;
+        const method = 'Card';
         await setDoc(doc(db, 'posPayments', paymentId), cleanObject({
           id: paymentId,
           orderId,
           locationId: LOCATION_ID,
           amount: total,
-          method: 'Card',
+          method,
           timestamp,
           performanceProcessed: false
         }));
-        toast.success('Order paid and closed');
+        setConfirmedPaymentId(paymentId);
+        setConfirmedOrderId(orderId);
+        setConfirmedPaymentMethod(method);
+        setShowPaymentConfirmation(true);
       } else {
         toast.success('Order sent to kitchen');
       }
-      
+
       // Update table status
-      await setDoc(doc(db, 'tables', table.id), { 
+      await setDoc(doc(db, 'tables', table.id), {
         status: orderStatus === 'Paid' ? 'available' : 'occupied',
-        lastUpdated: timestamp 
+        lastUpdated: timestamp
       }, { merge: true });
 
-      onClose();
+      if (orderStatus !== 'Paid') {
+        onClose();
+      }
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, `posOrders/${orderId}`);
     } finally {
@@ -356,6 +375,8 @@ export const LivePOS: React.FC<LivePOSProps> = ({ table, recipes, onClose, exist
                 </div>
               </div>
 
+              <OfflineBanner position="inline" />
+
               <div className="flex flex-col gap-3">
                 <div className="grid grid-cols-2 gap-3">
                   <button
@@ -366,7 +387,7 @@ export const LivePOS: React.FC<LivePOSProps> = ({ table, recipes, onClose, exist
                     <UtensilsCrossed className="h-4 w-4" /> Save & Send
                   </button>
                   <button
-                    disabled={isProcessing || cart.length === 0}
+                    disabled={isProcessing || cart.length === 0 || !isOnline}
                     onClick={() => handlePlaceOrder('Paid')}
                     className="py-4 bg-accent text-white rounded-2xl font-black uppercase text-[10px] tracking-widest hover:opacity-90 shadow-lg shadow-accent/20 disabled:opacity-50 transition-all flex items-center justify-center gap-2"
                   >
@@ -378,6 +399,19 @@ export const LivePOS: React.FC<LivePOSProps> = ({ table, recipes, onClose, exist
           </div>
         </div>
       </motion.div>
+
+      <PaymentConfirmation
+        isOpen={showPaymentConfirmation}
+        paymentId={confirmedPaymentId}
+        orderId={confirmedOrderId}
+        amount={total}
+        method={confirmedPaymentMethod}
+        tableName={table.name}
+        onClose={() => {
+          setShowPaymentConfirmation(false);
+          onClose();
+        }}
+      />
 
       {/* Briefing Modal */}
       <AnimatePresence>

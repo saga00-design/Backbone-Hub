@@ -27,6 +27,7 @@ import { calculateTotalCost } from './utils/recipeUtils';
 import { convertToBaseUnit, CONVERSION_FACTORS } from './utils/unitConversions';
 import { normalizeCurrency, normalizeTimestamp, normalizeStatus } from './utils/currencyUtils';
 import { LivePOS } from './components/LivePOS';
+import { OfflineBanner } from './components/OfflineBanner';
 import { WasteManager } from './components/WasteManager';
 import { ExpenseManager } from './components/ExpenseManager';
 import { ShiftBriefingManager } from './components/ShiftBriefingManager';
@@ -2586,6 +2587,7 @@ const today = londonHour < 6
   return (
     <ErrorBoundary>
       <Toaster position="top-right" richColors />
+      <OfflineBanner position="top" />
       <div className={`h-screen flex flex-col md:flex-row overflow-hidden transition-colors duration-200 ${isDarkMode ? 'dark' : ''} bg-main-bg text-text-navy`}>
         {/* Mobile Header */}
         <div className={`md:hidden border-b px-4 py-3 flex items-center justify-between flex-shrink-0 z-30 transition-colors duration-200 ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-primary-surface border-border-grey'}`}>
