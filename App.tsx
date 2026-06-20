@@ -26,7 +26,6 @@ import { DEFAULT_PERMISSIONS } from './constants';
 import { calculateTotalCost } from './utils/recipeUtils';
 import { convertToBaseUnit, CONVERSION_FACTORS } from './utils/unitConversions';
 import { normalizeCurrency, normalizeTimestamp, normalizeStatus } from './utils/currencyUtils';
-import { LivePOS } from './components/LivePOS';
 import { OfflineBanner } from './components/OfflineBanner';
 import { WasteManager } from './components/WasteManager';
 import { ExpenseManager } from './components/ExpenseManager';
@@ -401,7 +400,6 @@ const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [tables, setTables] = useState<Table[]>([]);
   const [posOrders, setPosOrders] = useState<POSOrder[]>([]);
   const [posTransactions, setPosTransactions] = useState<any[]>([]);
-  const [posTable, setPosTable] = useState<Table | null>(null);
   const [posPayments, setPosPayments] = useState<POSPayment[]>([]);
   const [closures, setClosures] = useState<DailyClosure[]>([]);
   const [permissionsConfig, setPermissionsConfig] = useState<Record<string, AppPermissions>>(DEFAULT_PERMISSIONS);
@@ -2937,9 +2935,8 @@ const today = londonHour < 6
             )}
 
             {currentView === 'tables' && (
-              <TableManager 
-                tables={tables} 
-                onTableClick={(table) => setPosTable(table)}
+              <TableManager
+                tables={tables}
               />
             )}
 
@@ -2997,14 +2994,6 @@ const today = londonHour < 6
           ></div>
         )}
 
-        {posTable && (
-          <LivePOS 
-            table={posTable}
-            recipes={recipes}
-            onClose={() => setPosTable(null)}
-            existingOrder={posOrders.find(o => (o.tableNumber === (posTable.number || posTable.name) || o.tableName === posTable.name) && (o.status === 'Open' || o.status === 'Sent'))}
-          />
-        )}
       </div>
     </ErrorBoundary>
   );
