@@ -35,14 +35,28 @@ import {
   writeBatch
 } from 'firebase/firestore';
 
-import firebaseConfig from './firebase-applet-config.json';
+const firebaseConfig = {
+  apiKey:            import.meta.env.VITE_FIREBASE_API_KEY            as string,
+  authDomain:        import.meta.env.VITE_FIREBASE_AUTH_DOMAIN        as string,
+  projectId:         import.meta.env.VITE_FIREBASE_PROJECT_ID         as string,
+  storageBucket:     import.meta.env.VITE_FIREBASE_STORAGE_BUCKET     as string,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID as string,
+  appId:             import.meta.env.VITE_FIREBASE_APP_ID             as string,
+  measurementId:     import.meta.env.VITE_FIREBASE_MEASUREMENT_ID     as string | undefined,
+};
+
+const databaseId: string =
+  (import.meta.env.VITE_FIREBASE_DATABASE_ID as string) || '(default)';
+
+if (!firebaseConfig.apiKey) {
+  console.error('%c[Diagnostic] FATAL: VITE_FIREBASE_API_KEY is not set. Copy .env.example to .env and fill in the values.', 'color: red; font-size: 14px;');
+}
 
 // ─────────────────────────────────────────────────────────────
 // Firebase init
 // experimentalForceLongPolling kept for AI Studio sandbox
 // ─────────────────────────────────────────────────────────────
 const app = initializeApp(firebaseConfig);
-const databaseId = (firebaseConfig as any).firestoreDatabaseId || '(default)';
 
 console.log(`%c[Diagnostic] Initializing Firestore. Database: ${databaseId}`, 'color: blue; font-weight: bold;');
 
@@ -73,10 +87,6 @@ console.log(`%c[Diagnostic] Targeted Database ID: ${databaseId}`, 'color: blue;'
 
 if (databaseId !== '(default)') {
   console.log(`%c[Diagnostic] Warning: Using non-default database. Deployment targets must match this ID.`, 'color: orange;');
-}
-
-if (!(firebaseConfig as any).apiKey) {
-  console.error("%c[Diagnostic] FATAL: API Key is missing in firebase-applet-config.json", 'color: red; font-size: 14px;');
 }
 
 // ─────────────────────────────────────────────────────────────

@@ -1,0 +1,21 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Environment variables — never commit real values
+.env
+.env.local
+.env.*.local
+
+# Firebase config with real credentials
+firebase-applet-config.json
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+*.local
+
+# Claude Code session data
+.claude/
