@@ -922,10 +922,6 @@ const today = londonHour < 6
 
     const unsubPosOrders = onSnapshot(query(collection(db, 'posOrders'), where('locationId', '==', LOCATION_ID)), (snapshot: any) => {
       const data = snapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() } as POSOrder));
-      console.log(`[Hub POS Sales Debug] posOrders loaded (FILTERED BY LOCATION): ${data.length}`);
-      if (data.length > 0) {
-        console.log(`[Hub POS Sales Debug] Sample posOrder locationId: ${data[0].locationId}`);
-      }
       setPosOrders(data);
     }, (err: any) => handleFirestoreError(err, OperationType.LIST, 'posOrders'));
 
@@ -1119,15 +1115,10 @@ const today = londonHour < 6
       if (unprocessedOrders.length === 0) return;
 
       const batchToProcess = unprocessedOrders.slice(0, 10);
-      console.log(`[Inventory Sync] Processing ${batchToProcess.length} of ${unprocessedOrders.length} unprocessed orders.`);
-
-      console.log(`[Inventory Sync] Found ${unprocessedOrders.length} unprocessed Paid orders.`);
 
       for (const order of batchToProcess) {
         try {
           const batch = writeBatch(db);
-          let depletionLog = `[Inventory Sync] Order ${order.id}: `;
-          let hasDeductions = false;
 
           // 1. Process Inventory
           for (const item of order.items) {
@@ -1172,8 +1163,6 @@ const today = londonHour < 6
                   notes: `POS Sale: ${order.tableNumber ? 'Table ' + order.tableNumber : 'Order #' + order.id.slice(-4)}`
                 }));
 
-                depletionLog += `${inventoryItem.name} (-${totalDeduction}${inventoryItem.baseUnit}) `;
-                hasDeductions = true;
               }
             }
 
@@ -1214,11 +1203,6 @@ const today = londonHour < 6
           batch.update(orderRef, { isInventoryDepleted: true });
 
           await batch.commit();
-          if (hasDeductions) {
-            console.log(depletionLog);
-          } else {
-            console.log(`[Inventory Sync] Order ${order.id} processed (No ingredients deducted).`);
-          }
         } catch (error) {
           console.error(`[Inventory Sync] Error processing order ${order.id}:`, error);
         }
@@ -1763,8 +1747,6 @@ const today = londonHour < 6
     // Remove internal id field as we use doc.id now
     delete normalizedRecipe.id;
 
-    console.log(`%c[DualSave] START: Saving recipe ${id} at ${new Date().toLocaleTimeString()}`, 'color: green; font-weight: bold;');
-    
     toast.info('Synchronizing with Firestore Hub & POS...');
 
     // 2) Prepare full recipe doc
@@ -1813,8 +1795,6 @@ const today = londonHour < 6
     // This is consistent with "doc.id as ONLY identifier"
     const menuItemDocRef = doc(db, 'menuItems', id);
 
-    console.log(`[DualSave] Applying Batch Write to recipes/${id} and menuItems/${id}...`);
-    
     // 4) Atomic Batch Write
     const batch = writeBatch(db);
     batch.set(recipeRef, recipeDoc);
@@ -2123,10 +2103,6 @@ const today = londonHour < 6
       );
     }
     
-    if (ccEmails.length > 0) {
-      console.log(`[Order Placement] Notifying CC list: ${ccEmails.join(', ')}`);
-    }
-
     toast.success(`Order placed with ${supplier}. Total: £${newOrder.totalAmount.toFixed(2)}`);
   };
 
@@ -2413,8 +2389,6 @@ const today = londonHour < 6
       });
 
       if (recipesToUpdate.length > 0) {
-        console.log(`[Cleanup] Found ${cleanedCount} orphaned ingredients in ${recipesToUpdate.length} recipes. Cleaning up...`);
-        
         // Use batch to update Firestore
         const batch = writeBatch(db);
         recipesToUpdate.forEach(updatedRecipe => {

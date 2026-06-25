@@ -58,8 +58,6 @@ if (!firebaseConfig.apiKey) {
 // ─────────────────────────────────────────────────────────────
 const app = initializeApp(firebaseConfig);
 
-console.log(`%c[Diagnostic] Initializing Firestore. Database: ${databaseId}`, 'color: blue; font-weight: bold;');
-
 export const db = initializeFirestore(app, {
   experimentalForceLongPolling: true,
 }, databaseId);
@@ -81,13 +79,6 @@ try {
 export const auth = getAuth(app);
 setPersistence(auth, browserLocalPersistence).catch(console.error);
 export const googleProvider = new GoogleAuthProvider();
-
-console.log(`%c[Diagnostic] Firebase initialized for project: ${firebaseConfig.projectId}`, 'color: blue; font-weight: bold;');
-console.log(`%c[Diagnostic] Targeted Database ID: ${databaseId}`, 'color: blue;');
-
-if (databaseId !== '(default)') {
-  console.log(`%c[Diagnostic] Warning: Using non-default database. Deployment targets must match this ID.`, 'color: orange;');
-}
 
 // ─────────────────────────────────────────────────────────────
 // Identity constants
