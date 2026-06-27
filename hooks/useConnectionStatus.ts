@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { getDocFromServer } from 'firebase/firestore';
-import { db, auth, doc } from '../firebase';
+import { db, auth, doc, onAuthStateChanged } from '../firebase';
 
 // Firestore rules note: connectionHeartbeat/{docId} reads are covered by the
 // existing wildcard rule (allow read: if request.auth != null) — no rule change needed.
@@ -91,13 +91,20 @@ export function useConnectionStatus(): ConnectionStatus {
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
 
-    // Run immediately on mount to establish authoritative state, then poll every 8s
-    runHeartbeat();
+    // Delay the first probe until auth resolves — on mount auth.currentUser is
+    // still null for a tick, so calling runHeartbeat() immediately would be
+    // skipped by the guard inside it, leaving isOnline at navigator.onLine.
+    // onAuthStateChanged fires synchronously if auth has already resolved.
+    const unsubAuth = onAuthStateChanged(auth, (user) => {
+      if (user) runHeartbeat();
+    });
+
     heartbeatTimerRef.current = setInterval(runHeartbeat, HEARTBEAT_INTERVAL_MS);
 
     return () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
+      unsubAuth();
       if (durationTimerRef.current) clearInterval(durationTimerRef.current);
       if (heartbeatTimerRef.current) clearInterval(heartbeatTimerRef.current);
     };
