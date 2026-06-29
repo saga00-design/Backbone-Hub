@@ -21,7 +21,7 @@ import { InventoryItem, InventoryCategory, Unit, StockCountRecord, Recipe, Sales
 import { logAuditAction } from './services/auditService';
 import { LayoutDashboard, Package, ClipboardCheck, FileInput, Menu, X, ChefHat, TrendingUp, Truck, Settings as SettingsIcon, BookOpen, Sun, Moon, ShoppingCart, AlertCircle, LogIn, LogOut, Trash2, Receipt, Megaphone, LayoutList, Zap, PoundSterling, Users } from 'lucide-react';
 import { Toaster, toast } from 'sonner';
-import { auth, db, googleProvider, signInWithPopup, onAuthStateChanged, collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, onSnapshot, handleFirestoreError, OperationType, User, cleanObject, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendEmailVerification, sendPasswordResetEmail, signOut, increment, query, where, orderBy, limit, testConnection, LOCATION_ID, writeBatch } from './firebase';
+import { auth, db, googleProvider, signInWithPopup, onAuthStateChanged, collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, onSnapshot, handleFirestoreError, OperationType, User, cleanObject, signOut, increment, query, where, orderBy, limit, testConnection, LOCATION_ID, writeBatch } from './firebase';
 import { DEFAULT_PERMISSIONS } from './constants';
 import { calculateTotalCost } from './utils/recipeUtils';
 import { convertToBaseUnit, CONVERSION_FACTORS } from './utils/unitConversions';
@@ -590,17 +590,15 @@ const today = londonHour < 6
     const isAdminEmail = user?.email === 'saga00@gmail.com' || user?.email === 'saga00@live.com' || user?.email === 'famrokha@gmail.com';
     if (isAdminEmail) return 'Admin';
 
-    // Try to find staff member by email first (allows admins to test roles by adding themselves as staff)
     const staffMember = staffMembers.find(s => s.email.toLowerCase() === user?.email?.toLowerCase());
-    if (staffMember) return staffMember.role;
-    
-    // Legacy/Fallback
-    const dName = user?.displayName?.toLowerCase() || '';
-    if (dName.includes('manager')) return 'Manager';
-    if (dName.includes('bartender')) return 'Bartender';
-    if (dName.includes('chef')) return 'Chef';
-    
-    return 'Waiter';
+    if (staffMember?.role) {
+      const raw = staffMember.role.toLowerCase();
+      if (raw === 'supervisor') return 'Manager';
+      return raw.charAt(0).toUpperCase() + raw.slice(1);
+    }
+
+    // No matching staff profile — user must be linked by a manager before gaining access
+    return 'Unlinked';
   }, [user, staffMembers]);
 
   const checkPermission = (module: string, action: string) => {
@@ -639,10 +637,6 @@ const today = londonHour < 6
     }
     return <>{children}</>;
   };
-  const [authMode, setAuthMode] = useState<'login' | 'register' | 'verify'>('login');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [verificationEmail, setVerificationEmail] = useState('');
   const [isAuthenticating, setIsAuthenticating] = useState(false);
   const [isMigrating, setIsMigrating] = useState(false);
 
@@ -683,98 +677,6 @@ const today = londonHour < 6
     }
   };
 
-  const handleEmailLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsAuthenticating(true);
-    try {
-      const userCredential = await signInWithEmailAndPassword(auth, email, password);
-      const user = userCredential.user;
-      
-      if (!user.emailVerified) {
-        setVerificationEmail(user.email || '');
-        setAuthMode('verify');
-        await signOut(auth);
-        toast.error("Please verify your email before logging in.");
-      } else {
-        setUser(user);
-        toast.success("Logged in successfully!");
-      }
-    } catch (e: any) {
-      console.error("Email login failed:", e);
-      if (e.code === 'auth/invalid-credential') {
-        toast.error("Invalid email or password. Please check your credentials or create an account if you haven't already.");
-      } else if (e.code === 'auth/user-not-found') {
-        toast.error("No account found with this email. Please sign up.");
-      } else if (e.code === 'auth/wrong-password') {
-        toast.error("Incorrect password. Please try again.");
-      } else if (e.code === 'auth/too-many-requests') {
-        toast.error("Too many failed login attempts. Please try again later.");
-      } else if (e.code === 'auth/user-disabled') {
-        toast.error("This account has been disabled. Please contact support.");
-      } else {
-        toast.error(e.message || "Login failed.");
-      }
-    } finally {
-      setIsAuthenticating(false);
-    }
-  };
-
-  const handleEmailRegister = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsAuthenticating(true);
-    try {
-      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-      const user = userCredential.user;
-      
-      await sendEmailVerification(user);
-      setVerificationEmail(user.email || '');
-      setAuthMode('verify');
-      
-      // Sign out immediately as per requirement: "do not sign them in automatically"
-      await signOut(auth);
-      
-      toast.success("Registration successful! Please check your email for verification.");
-    } catch (e: any) {
-      console.error("Registration failed:", e);
-      if (e.code === 'auth/email-already-in-use') {
-        toast.error("An account with this email already exists. Please sign in instead.");
-      } else if (e.code === 'auth/invalid-email') {
-        toast.error("Please enter a valid email address.");
-      } else if (e.code === 'auth/weak-password') {
-        toast.error("Password is too weak. Please use at least 6 characters.");
-      } else if (e.code === 'auth/operation-not-allowed') {
-        toast.error("Email/password accounts are not enabled. Please contact support.");
-      } else {
-        toast.error(e.message || "Registration failed.");
-      }
-    } finally {
-      setIsAuthenticating(false);
-    }
-  };
-
-  const handleForgotPassword = async () => {
-    if (!email) {
-      toast.error("Please enter your email address first.");
-      return;
-    }
-    
-    setIsAuthenticating(true);
-    try {
-      await sendPasswordResetEmail(auth, email);
-      toast.success("Password reset email sent! Please check your inbox.");
-    } catch (e: any) {
-      console.error("Password reset failed:", e);
-      if (e.code === 'auth/user-not-found') {
-        toast.error("No account found with this email.");
-      } else if (e.code === 'auth/invalid-email') {
-        toast.error("Please enter a valid email address.");
-      } else {
-        toast.error(e.message || "Failed to send reset email.");
-      }
-    } finally {
-      setIsAuthenticating(false);
-    }
-  };
 
   const handleLogout = async () => {
     try {
@@ -820,21 +722,9 @@ const today = londonHour < 6
   // Auth state listener
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (u: User | null) => {
-      if (u && !u.emailVerified && u.providerData.some(p => p.providerId === 'password')) {
-        // If logged in via password but not verified, show verification screen
-        setVerificationEmail(u.email || '');
-        setAuthMode('verify');
-        setUser(null); // Treat as not logged in for the rest of the app
-        signOut(auth);
-      } else {
-        setUser(u);
-        if (u) {
-          testConnection().then(() => {
-             // connection test logs internally
-          }).catch(e => {
-             // Silence connection check errors unless desired
-          });
-        }
+      setUser(u);
+      if (u) {
+        testConnection().catch(() => {});
       }
       setIsAuthReady(true);
     });
@@ -2426,117 +2316,61 @@ const today = londonHour < 6
       <div className="min-h-screen bg-main-bg flex items-center justify-center p-4">
         <div className="bg-card-bg p-8 rounded-2xl shadow-xl max-w-md w-full text-center">
           <div className="mb-6 flex justify-center">
-            <img 
-              src="Backbonehub-ico.png" 
-              alt="Backbone Hub Logo" 
+            <img
+              src="Backbonehub-ico.png"
+              alt="Backbone Hub Logo"
               className="w-20 h-20 rounded-2xl shadow-sm object-contain"
             />
           </div>
-          
-          {authMode === 'verify' ? (
-            <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-              <div className="w-16 h-16 bg-accent/10 text-accent rounded-full flex items-center justify-center mx-auto mb-4">
-                <AlertCircle className="w-8 h-8" />
-              </div>
-              <h1 className="text-2xl font-bold text-text-navy mb-4">Verify Your Email</h1>
-              <p className="text-text-muted mb-8">
-                We have sent you a verification email to <span className="font-bold text-text-navy">{verificationEmail}</span>. Please verify it and log in.
-              </p>
-              <button
-                onClick={() => setAuthMode('login')}
-                className="w-full bg-accent text-white py-3 rounded-xl font-semibold hover:opacity-90 transition-colors flex items-center justify-center gap-2"
-              >
-                <LogIn className="w-5 h-5" />
-                Return to Login
-              </button>
-            </div>
-          ) : (
-            <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-              <h1 className="text-2xl font-bold text-text-navy mb-2">Welcome to Backbone Hub</h1>
-              <p className="text-text-muted mb-8">Please sign in to manage your inventory and recipes securely in the cloud.</p>
-              
-              <form onSubmit={authMode === 'login' ? handleEmailLogin : handleEmailRegister} className="space-y-4 mb-6">
-                <div className="text-left">
-                  <label className="block text-xs font-black uppercase tracking-widest text-text-muted mb-1 ml-1">Email Address</label>
-                  <input
-                    type="email"
-                    required
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    className="w-full bg-main-bg border border-border-grey dark:border-slate-700 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-accent transition-all"
-                    placeholder="name@company.com"
-                  />
-                </div>
-                <div className="text-left">
-                  <div className="flex justify-between items-center mb-1 ml-1">
-                    <label className="block text-xs font-black uppercase tracking-widest text-text-muted">Password</label>
-                    {authMode === 'login' && (
-                      <button
-                        type="button"
-                        onClick={handleForgotPassword}
-                        className="text-[10px] font-bold text-accent hover:underline uppercase tracking-tighter"
-                      >
-                        Forgot Password?
-                      </button>
-                    )}
-                  </div>
-                  <input
-                    type="password"
-                    required
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className="w-full bg-main-bg border border-border-grey dark:border-slate-700 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-accent transition-all"
-                    placeholder="••••••••"
-                  />
-                </div>
-                <button
-                  type="submit"
-                  disabled={isAuthenticating}
-                  className="w-full bg-accent text-white py-3 rounded-xl font-semibold hover:opacity-90 transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
-                >
-                  {isAuthenticating ? (
-                    <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                  ) : (
-                    authMode === 'login' ? 'Sign In' : 'Create Account'
-                  )}
-                </button>
-              </form>
+          <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+            <h1 className="text-2xl font-bold text-text-navy mb-2">Welcome to Backbone Hub</h1>
+            <p className="text-text-muted mb-8">Sign in with your Google work account to continue.</p>
+            <button
+              onClick={handleLogin}
+              disabled={isAuthenticating}
+              className="w-full bg-white dark:bg-slate-800 text-text-navy dark:text-white border border-border-grey dark:border-slate-700 py-3 rounded-xl font-semibold hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors flex items-center justify-center gap-3 disabled:opacity-50"
+            >
+              {isAuthenticating ? (
+                <div className="w-5 h-5 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+              ) : (
+                <>
+                  <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-5 h-5" alt="" />
+                  Continue with Google
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
-              <div className="relative mb-6">
-                <div className="absolute inset-0 flex items-center">
-                  <div className="w-full border-t border-border-grey dark:border-slate-700"></div>
-                </div>
-                <div className="relative flex justify-center text-xs uppercase">
-                  <span className="bg-card-bg px-2 text-text-muted font-bold">Or continue with</span>
-                </div>
-              </div>
-
-              <button
-                onClick={handleLogin}
-                disabled={isAuthenticating}
-                className="w-full bg-white dark:bg-slate-800 text-text-navy dark:text-white border border-border-grey dark:border-slate-700 py-3 rounded-xl font-semibold hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors flex items-center justify-center gap-2 mb-6 disabled:opacity-50"
-              >
-                {isAuthenticating && authMode === 'login' ? (
-                  <div className="w-5 h-5 border-2 border-accent border-t-transparent rounded-full animate-spin"></div>
-                ) : (
-                  <>
-                    <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-5 h-5" alt="Google" />
-                    Google
-                  </>
-                )}
-              </button>
-
-              <p className="text-sm text-text-muted">
-                {authMode === 'login' ? "Don't have an account?" : "Already have an account?"}{' '}
-                <button
-                  onClick={() => setAuthMode(authMode === 'login' ? 'register' : 'login')}
-                  className="text-accent font-bold hover:underline"
-                >
-                  {authMode === 'login' ? 'Register' : 'Login'}
-                </button>
-              </p>
-            </div>
-          )}
+  if (userRole === 'Unlinked') {
+    return (
+      <div className="min-h-screen bg-main-bg flex items-center justify-center p-4">
+        <div className="bg-card-bg p-8 rounded-2xl shadow-xl max-w-md w-full text-center">
+          <div className="mb-6 flex justify-center">
+            <img
+              src="Backbonehub-ico.png"
+              alt="Backbone Hub Logo"
+              className="w-20 h-20 rounded-2xl shadow-sm object-contain"
+            />
+          </div>
+          <AlertCircle className="h-12 w-12 text-amber-500 mx-auto mb-4" />
+          <h1 className="text-xl font-bold text-text-navy mb-3">Account Not Linked</h1>
+          <p className="text-text-muted mb-2">
+            Your Google account is not linked to a staff profile.
+          </p>
+          <p className="text-sm text-text-muted mb-6">
+            Please ask your manager to add <span className="font-bold text-text-navy">{user?.email}</span> to your staff record.
+          </p>
+          <button
+            onClick={handleLogout}
+            className="w-full bg-accent text-white py-3 rounded-xl font-semibold hover:opacity-90 transition-colors flex items-center justify-center gap-2"
+          >
+            <LogOut className="w-5 h-5" />
+            Sign Out
+          </button>
         </div>
       </div>
     );
@@ -2607,7 +2441,7 @@ const today = londonHour < 6
             </div>
             
             <nav className="flex-1 px-4 py-4 space-y-1 overflow-y-auto">
-              {checkPermission('reports', 'viewSales') && <NavItem view="dashboard" icon={LayoutDashboard} label="Dashboard" />}
+              <NavItem view="dashboard" icon={LayoutDashboard} label="Dashboard" />
               {checkPermission('reports', 'viewFinancials') && <NavItem view="labour" icon={HardHat} label="Labour Import" />}
               {checkPermission('staffingRota', 'view') && <NavItem view="staffing_rota" icon={Users} label="Staffing & Rota" />}
               {checkPermission('reports', 'viewFinancials') && <NavItem view="financial_command" icon={PoundSterling} label="Financial Command" />}
@@ -2642,7 +2476,7 @@ const today = londonHour < 6
                   <div className="ml-3 truncate">
                     <p className={`text-sm font-bold truncate ${isDarkMode ? 'text-slate-100' : 'text-text-navy'}`}>{user?.displayName || 'User'}</p>
                     <p className="text-[10px] text-text-muted uppercase tracking-wider font-medium">
-                      {(user?.email === 'saga00@gmail.com' || user?.email === 'famrokha@gmail.com') ? 'Admin' : 'Staff'}
+                      {userRole}
                     </p>
                   </div>
                 </div>
