@@ -949,10 +949,10 @@ export const Settings: React.FC<SettingsProps> = ({ auditLogs = [] }) => {
                       {s.firstName?.charAt(0)}{s.lastName?.charAt(0)}
                     </div>
                     <div>
-                      <h3 className="font-bold text-text-navy">{s.firstName} {s.lastName}</h3>
+                      <h3 className="font-bold text-text-navy">{s.firstName || s.lastName ? `${s.firstName} ${s.lastName}`.trim() : 'Unknown Staff'}</h3>
                       <p className="text-xs text-text-muted">
-                        {s.email} • {s.role} 
-                        {userRole === 'Admin' && ` • PIN: ${s.pin}`}
+                        {s.email} • {s.role}
+                        {userRole === 'Admin' && ` • PIN: ••••`}
                         {s.department && ` • ${departments.find(d => d.id === s.department)?.name || s.department}`}
                       </p>
                     </div>

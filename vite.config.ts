@@ -19,8 +19,8 @@ export default defineConfig({
       registerType: 'autoUpdate',
       manifest: {
         name: 'Backbone HUB',
-        short_name: 'Backbone',
-        description: 'Restaurant management HUB for Backbone POS',
+        short_name: 'Backbone Hub',
+        description: 'Restaurant management hub for Backbone',
         theme_color: '#0D6EFD',
         background_color: '#0f172a',
         display: 'standalone',
