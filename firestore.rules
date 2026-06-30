@@ -1,8 +1,338 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isManager() {
+      return isAuthenticated() && (
+        request.auth.token.email == "saga00@gmail.com" ||
+        request.auth.token.email == "famrokha@gmail.com" ||
+        (
+          exists(/databases/$(database)/documents/staffProfiles/$(request.auth.uid)) &&
+          get(/databases/$(database)/documents/staffProfiles/$(request.auth.uid)).data.role in ['manager', 'admin', 'Admin', 'Manager']
+        )
+      );
+    }
+
+    function hasValidLocation(data) {
+      return data.locationId == "loc_camden" || data.siteId == "loc_camden";
+    }
+
+    // ── User profiles ─────────────────────────────────────────
+    match /users/{userId} {
+      allow read, write: if isAuthenticated() && request.auth.uid == userId;
+      match /{subcollection}/{docId} {
+        allow read, write: if isAuthenticated() && request.auth.uid == userId;
+      }
+    }
+
+    // ── Staff Profiles ────────────────────────────────────────
+    match /staffProfiles/{staffId} {
+      allow read: if isAuthenticated();
+      allow write: if isManager() || (isAuthenticated() && request.auth.uid == staffId);
+    }
+
+    // ── POS Orders ────────────────────────────────────────────
+    match /posOrders/{orderId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && hasValidLocation(request.resource.data);
+      allow update: if isAuthenticated();
+      allow delete: if isManager();
+    }
+
+    // ── Menu ──────────────────────────────────────────────────
+    match /menuItems/{itemId} {
+      allow read: if isAuthenticated();
+      allow write: if isManager();
+    }
+
+    match /menuCategories/{categoryId} {
+      allow read: if isAuthenticated();
+      allow write: if isManager();
+    }
+
+    match /modifiers/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isManager();
+    }
+
+    match /modifierGroups/{groupId} {
+      allow read: if isAuthenticated();
+      allow write: if isManager();
+    }
+
+    // ── Tables & Zones ────────────────────────────────────────
+    match /tables/{tableId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && hasValidLocation(request.resource.data);
+      allow update: if isAuthenticated();
+      allow delete: if isManager();
+    }
+
+    match /zones/{zoneId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && hasValidLocation(request.resource.data);
+      allow update: if isAuthenticated();
+      allow delete: if isManager();
+    }
+
+    // ── KDS ───────────────────────────────────────────────────
+    match /kdsTickets/{ticketId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    match /barKdsTickets/{ticketId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    match /kdsHistory/{historyId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    // ── HUB collections ───────────────────────────────────────
+    match /inventory/{docId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    match /recipes/{docId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    match /suppliers/{docId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    match /staff/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isManager();
+    }
+
+    match /stockCounts/{docId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    match /salesImports/{docId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    match /waste/{docId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    match /expenses/{docId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    match /invoices/{docId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    match /orders/{docId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    match /stockMovements/{docId} {
+      allow read, create: if isAuthenticated();
+      allow update, delete: if isManager();
+    }
+
+    // ── Financial ─────────────────────────────────────────────
+    match /monthlyTargets/{docId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    match /cashflow/{docId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    match /liabilities/{docId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    // ── VAT — THE THREE MISSING ONES ──────────────────────────
+    match /vatTracker/{docId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    match /vatReturns/{docId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    // ── Menu Engineering — MISSING ────────────────────────────
+    match /menuEngineering/{docId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    // ── Labour & Staffing ─────────────────────────────────────
+    match /labourShifts/{docId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    match /rotas/{docId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    match /staffAvailability/{docId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    match /clockInRecords/{docId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    // ── Staff Performance & Training ──────────────────────────
+    match /staffPerformance/{docId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    match /staffCertifications/{docId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    // ── Quiz Bank (HUB-managed, POS-consumed) ─────────────────
+    match /quizTemplates/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isManager();
+    }
+
+    match /shiftTargets/{docId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    match /shiftChallenges/{docId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    match /shiftPerformance/{docId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    match /shiftBriefings/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isManager();
+    }
+
+    match /briefingAcknowledgements/{docId} {
+      allow read, create: if isAuthenticated();
+      allow update, delete: if isManager();
+    }
+
+    match /unavailableItems/{docId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    // ── Reporting & Analytics ─────────────────────────────────
+    match /predictions/{docId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    match /auditLogs/{docId} {
+      allow read, create: if isAuthenticated();
+      allow update, delete: if false;
+    }
+
+    // ── Payments & Closures ───────────────────────────────────
+    match /posPayments/{docId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    match /dailyClosures/{docId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isManager();
+      allow delete: if false;
+    }
+
+    match /zReports/{docId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isManager();
+      allow delete: if false;
+    }
+
+    // ── Immutable audit trails ────────────────────────────────
+    match /posTransactions/{docId} {
+      allow read, create: if isAuthenticated();
+      allow update, delete: if false;
+    }
+
+    match /ticketSnapshots/{docId} {
+      allow read, create: if isAuthenticated();
+      allow update: if isManager();
+      allow delete: if false;
+    }
+
+    match /transactionAdjustments/{docId} {
+      allow read, create: if isAuthenticated();
+      allow update, delete: if false;
+    }
+
+    match /receiptPrintHistory/{docId} {
+      allow read, create: if isAuthenticated();
+      allow update, delete: if false;
+    }
+
+    match /receiptEmailHistory/{docId} {
+      allow read, create: if isAuthenticated();
+      allow update, delete: if false;
+    }
+
+    match /cancelledSessions/{docId} {
+      allow read, create: if isAuthenticated();
+      allow update, delete: if isManager();
+    }
+
+    match /quizSubmissions/{docId} {
+      allow read, create: if isAuthenticated();
+      allow update, delete: if isManager();
+    }
+
+    // ── Alerts & Notifications ────────────────────────────────
+    match /posAlerts/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isManager();
+    }
+
+    // ── Settings ──────────────────────────────────────────────
+    match /settings/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated();
+    }
+
+    match /diagnostics/{docId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    // ── Quizz Templates ───────────────────────────────────────
+    match /quizTemplates/{docId} {
+  		allow read: if isAuthenticated();
+  		allow write: if isManager();
+		
+    }
+    // ── Phase 2 multi-tenant (ready but not yet active) ───────
+    match /businesses/{businessId}/sites/{siteId}/{collection}/{docId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    match /businesses/{businessId}/sites/{siteId}/transactionAuditLogs/{docId} {
+      allow read, create: if isAuthenticated();
+      allow update, delete: if false;
+    }
+
+    match /businesses/{businessId}/sites/{siteId}/receiptEmailHistory/{docId} {
+      allow read, create: if isAuthenticated();
+      allow update, delete: if false;
+    }
+
+    match /businesses/{businessId}/sites/{siteId}/transactionAdjustments/{docId} {
+      allow read, create: if isAuthenticated();
+      allow update, delete: if false;
+    }
+
+    // ── Default deny ──────────────────────────────────────────
     match /{document=**} {
-      allow read, write: if request.auth != null;
+      allow read, write: if false;
     }
   }
 }
