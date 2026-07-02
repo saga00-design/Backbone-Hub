@@ -152,7 +152,7 @@ service cloud.firestore {
       allow read, write: if isAuthenticated();
     }
 
-    // ── VAT — THE THREE MISSING ONES ──────────────────────────
+    // ── VAT ───────────────────────────────────────────────────
     match /vatTracker/{docId} {
       allow read, write: if isAuthenticated();
     }
@@ -161,7 +161,7 @@ service cloud.firestore {
       allow read, write: if isAuthenticated();
     }
 
-    // ── Menu Engineering — MISSING ────────────────────────────
+    // ── Menu Engineering ──────────────────────────────────────
     match /menuEngineering/{docId} {
       allow read, write: if isAuthenticated();
     }
@@ -171,11 +171,19 @@ service cloud.firestore {
       allow read, write: if isAuthenticated();
     }
 
+    match /labourBudgets/{docId} {
+      allow read, write: if isAuthenticated();
+    }
+
     match /rotas/{docId} {
       allow read, write: if isAuthenticated();
     }
 
     match /staffAvailability/{docId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    match /staffingForecasts/{docId} {
       allow read, write: if isAuthenticated();
     }
 
@@ -198,6 +206,12 @@ service cloud.firestore {
       allow write: if isManager();
     }
 
+    match /quizSubmissions/{docId} {
+      allow read, create: if isAuthenticated();
+      allow update, delete: if isManager();
+    }
+
+    // ── Shift & Briefing ──────────────────────────────────────
     match /shiftTargets/{docId} {
       allow read, write: if isAuthenticated();
     }
@@ -222,6 +236,36 @@ service cloud.firestore {
 
     match /unavailableItems/{docId} {
       allow read, write: if isAuthenticated();
+    }
+
+    // ── Alerts & Notifications ────────────────────────────────
+    match /posAlerts/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isManager();
+    }
+
+    match /alerts/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isManager();
+    }
+
+    // ── AI & Automation Logs (manager read, system write) ─────
+    match /aiActions/{docId} {
+      allow read: if isManager();
+      allow create: if isAuthenticated();
+      allow update, delete: if false;
+    }
+
+    match /automationLogs/{docId} {
+      allow read: if isManager();
+      allow create: if isAuthenticated();
+      allow update, delete: if false;
+    }
+
+    match /importLogs/{docId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update, delete: if isManager();
     }
 
     // ── Reporting & Analytics ─────────────────────────────────
@@ -283,18 +327,7 @@ service cloud.firestore {
       allow update, delete: if isManager();
     }
 
-    match /quizSubmissions/{docId} {
-      allow read, create: if isAuthenticated();
-      allow update, delete: if isManager();
-    }
-
-    // ── Alerts & Notifications ────────────────────────────────
-    match /posAlerts/{docId} {
-      allow read: if isAuthenticated();
-      allow write: if isManager();
-    }
-
-    // ── Settings ──────────────────────────────────────────────
+    // ── Settings & Diagnostics ────────────────────────────────
     match /settings/{docId} {
       allow read: if isAuthenticated();
       allow write: if isAuthenticated();
@@ -304,12 +337,6 @@ service cloud.firestore {
       allow read, write: if isAuthenticated();
     }
 
-    // ── Quizz Templates ───────────────────────────────────────
-    match /quizTemplates/{docId} {
-  		allow read: if isAuthenticated();
-  		allow write: if isManager();
-		
-    }
     // ── Phase 2 multi-tenant (ready but not yet active) ───────
     match /businesses/{businessId}/sites/{siteId}/{collection}/{docId} {
       allow read, write: if isAuthenticated();
