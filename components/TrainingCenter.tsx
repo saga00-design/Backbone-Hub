@@ -14,6 +14,7 @@ interface TrainingCenterProps {
   staffId?: string;
   staffName?: string;
   certifications?: StaffCertification[];
+  quizSubmissions?: any[];
   isAdmin?: boolean;
 }
 
@@ -34,7 +35,7 @@ const allergyIcons: Record<string, React.ReactNode> = {
   'Tree nuts': <Nut className="h-4 w-4 text-warning" />
 };
 
-export const TrainingCenter: React.FC<TrainingCenterProps> = ({ recipes, inventoryItems, staffId, staffName, certifications = [], isAdmin = false }) => {
+export const TrainingCenter: React.FC<TrainingCenterProps> = ({ recipes, inventoryItems, staffId, staffName, certifications = [], quizSubmissions = [], isAdmin = false }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterCategory, setFilterCategory] = useState<string>('All');
   const [filterSubCategory, setFilterSubCategory] = useState<string>('All');
@@ -558,6 +559,122 @@ export const TrainingCenter: React.FC<TrainingCenterProps> = ({ recipes, invento
                 </tbody>
               </table>
             </div>
+          </div>
+
+          {/* ── Shift Quiz Analytics ──────────────────────────────── */}
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-100 dark:border-slate-800 shadow-sm overflow-hidden">
+            <div className="px-6 py-4 border-b border-gray-100 dark:border-slate-800 flex items-center justify-between">
+              <h3 className="text-sm font-black text-text-navy dark:text-white uppercase tracking-widest">Shift Quiz Analytics</h3>
+              <div className="flex items-center gap-3">
+                <span className="px-2 py-1 bg-gray-100 dark:bg-slate-800 rounded text-[10px] font-bold text-gray-500">{quizSubmissions.length} submissions</span>
+                {quizSubmissions.length > 0 && (
+                  <span className={`px-2 py-1 rounded text-[10px] font-bold ${
+                    Math.round(quizSubmissions.reduce((a, q) => a + (q.score / q.totalQuestions) * 100, 0) / quizSubmissions.length) >= 80
+                      ? 'bg-success/10 text-success'
+                      : Math.round(quizSubmissions.reduce((a, q) => a + (q.score / q.totalQuestions) * 100, 0) / quizSubmissions.length) >= 60
+                      ? 'bg-warning/10 text-warning'
+                      : 'bg-error/10 text-error'
+                  }`}>
+                    Avg {Math.round(quizSubmissions.reduce((a, q) => a + (q.score / q.totalQuestions) * 100, 0) / quizSubmissions.length)}%
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {quizSubmissions.length === 0 ? (
+              <div className="py-12 text-center text-gray-400 italic text-sm">No quiz submissions yet.</div>
+            ) : (
+              <>
+                {/* Staff breakdown */}
+                <div className="p-6 border-b border-gray-100 dark:border-slate-800">
+                  <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-4">By Staff Member</p>
+                  <div className="space-y-3">
+                    {(() => {
+                      const byStaff: Record<string, { name: string; scores: number[]; total: number[] }> = {};
+                      quizSubmissions.forEach((q: any) => {
+                        const key = q.staffId || 'unknown';
+                        if (!byStaff[key]) byStaff[key] = { name: q.staffName || 'Unknown', scores: [], total: [] };
+                        byStaff[key].scores.push(q.score);
+                        byStaff[key].total.push(q.totalQuestions);
+                      });
+                      return Object.entries(byStaff)
+                        .map(([id, s]) => {
+                          const avg = Math.round(s.scores.reduce((a, b, i) => a + (b / s.total[i]) * 100, 0) / s.scores.length);
+                          return { id, name: s.name, avg, count: s.scores.length };
+                        })
+                        .sort((a, b) => b.avg - a.avg)
+                        .map((s, i) => (
+                          <div key={s.id} className="flex items-center gap-4">
+                            <div className="w-7 h-7 rounded-full bg-accent/10 flex items-center justify-center text-accent font-black text-[10px] shrink-0">
+                              {s.name.substring(0, 2).toUpperCase()}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex justify-between mb-1">
+                                <span className="text-xs font-bold text-text-navy dark:text-white">{s.name}</span>
+                                <span className={`text-[10px] font-black ${s.avg >= 80 ? 'text-success' : s.avg >= 60 ? 'text-warning' : 'text-error'}`}>
+                                  {s.avg}% · {s.count} quiz{s.count !== 1 ? 'zes' : ''}
+                                </span>
+                              </div>
+                              <div className="w-full h-1.5 bg-gray-100 dark:bg-slate-800 rounded-full overflow-hidden">
+                                <div
+                                  className={`h-full rounded-full ${s.avg >= 80 ? 'bg-success' : s.avg >= 60 ? 'bg-warning' : 'bg-error'}`}
+                                  style={{ width: `${s.avg}%` }}
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        ));
+                    })()}
+                  </div>
+                </div>
+
+                {/* Recent submissions table */}
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left">
+                    <thead>
+                      <tr className="bg-gray-50 dark:bg-slate-800/50 border-b border-gray-100 dark:border-slate-800">
+                        <th className="px-6 py-3 text-[10px] font-black text-gray-400 uppercase tracking-widest">Staff Member</th>
+                        <th className="px-6 py-3 text-[10px] font-black text-gray-400 uppercase tracking-widest">Score</th>
+                        <th className="px-6 py-3 text-[10px] font-black text-gray-400 uppercase tracking-widest">Result</th>
+                        <th className="px-6 py-3 text-[10px] font-black text-gray-400 uppercase tracking-widest text-right">Date</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-50 dark:divide-slate-800">
+                      {quizSubmissions.slice(0, 15).map((q: any, i: number) => {
+                        const pct = Math.round((q.score / q.totalQuestions) * 100);
+                        return (
+                          <tr key={q.id || i} className="hover:bg-gray-50 dark:hover:bg-slate-800/30 transition-colors">
+                            <td className="px-6 py-4">
+                              <div className="flex items-center gap-3">
+                                <div className="w-8 h-8 rounded-full bg-accent/10 flex items-center justify-center text-accent font-black text-[10px]">
+                                  {(q.staffName || 'U').substring(0, 2).toUpperCase()}
+                                </div>
+                                <p className="text-xs font-bold text-text-navy dark:text-white">{q.staffName || 'Unknown'}</p>
+                              </div>
+                            </td>
+                            <td className="px-6 py-4">
+                              <p className="text-xs font-black text-text-navy dark:text-white">{q.score}/{q.totalQuestions}</p>
+                            </td>
+                            <td className="px-6 py-4">
+                              <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest ${
+                                pct >= 80 ? 'bg-success/10 text-success' : pct >= 60 ? 'bg-warning/10 text-warning' : 'bg-error/10 text-error'
+                              }`}>
+                                {pct >= 80 ? <CheckCircle2 className="h-3.5 w-3.5" /> : <AlertCircle className="h-3.5 w-3.5" />}
+                                {pct}% · {pct >= 80 ? 'Excellent' : pct >= 60 ? 'Good' : 'Needs work'}
+                              </span>
+                            </td>
+                            <td className="px-6 py-4 text-right">
+                              <p className="text-xs text-gray-500 font-medium">{new Date(q.completedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}</p>
+                              <p className="text-[9px] text-gray-400">{new Date(q.completedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
           </div>
         </div>
       ) : (

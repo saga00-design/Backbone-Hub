@@ -407,6 +407,7 @@ const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [forecasts, setForecasts] = useState<Forecast[]>([]);
   const [staffPerformance, setStaffPerformance] = useState<StaffPerformanceRecord[]>([]);
   const [staffCertifications, setStaffCertifications] = useState<StaffCertification[]>([]);
+  const [quizSubmissions, setQuizSubmissions] = useState<any[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [monthlyTargets, setMonthlyTargets] = useState<MonthlyTarget[]>([]);
   const [labourShifts, setLabourShifts] = useState<LabourShift[]>([]);
@@ -898,6 +899,11 @@ const today = londonHour < 6
       setStaffCertifications(data);
     }, (err: any) => handleFirestoreError(err, OperationType.LIST, 'staffCertifications'));
 
+    const unsubQuizSubmissions = onSnapshot(query(collection(db, 'quizSubmissions'), where('locationId', '==', LOCATION_ID), orderBy('completedAt', 'desc'), limit(500)), (snapshot: any) => {
+      const data = snapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() }));
+      setQuizSubmissions(data);
+    }, (err: any) => handleFirestoreError(err, OperationType.LIST, 'quizSubmissions'));
+
     const unsubAuditLogs = onSnapshot(query(collection(db, 'auditLogs'), where('locationId', '==', LOCATION_ID), orderBy('timestamp', 'desc'), limit(100)), (snapshot: any) => {
       const data = snapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() } as AuditLog));
       setAuditLogs(data);
@@ -986,6 +992,7 @@ const today = londonHour < 6
       unsubForecasts();
       unsubStaffPerf();
       unsubCertifications();
+      unsubQuizSubmissions();
       unsubAuditLogs();
       unsubLabour();
       unsubMonthlyTargets();
@@ -2642,6 +2649,7 @@ const today = londonHour < 6
                 staffId={user?.uid}
                 staffName={user?.displayName || user?.email || 'Unknown'}
                 certifications={staffCertifications}
+                quizSubmissions={quizSubmissions}
                 isAdmin={userRole === 'Admin'}
               />
             )}
