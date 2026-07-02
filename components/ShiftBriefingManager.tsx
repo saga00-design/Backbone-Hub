@@ -2,9 +2,10 @@
 import React, { useState, useEffect } from 'react';
 import { ShiftBriefingNote, Recipe, ShiftType } from '../types';
 import { db, auth, collection, onSnapshot, query, where, doc, setDoc, deleteDoc, handleFirestoreError, OperationType, cleanObject, LOCATION_ID, writeBatch } from '../firebase';
-import { Plus, Trash2, Edit2, Sparkles, Clock, Users, X, Zap } from 'lucide-react';
+import { Plus, Trash2, Edit2, Sparkles, Clock, Users, X, Zap, ShieldAlert } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { toast } from 'sonner';
+import { StockAvailabilityManager } from './StockAvailabilityManager';
 
 interface ShiftBriefingManagerProps {
   recipes: Recipe[];
@@ -84,9 +85,40 @@ export const ShiftBriefingManager: React.FC<ShiftBriefingManagerProps> = ({ reci
   };
 
   const activeBriefing = shiftBriefingNotes.find(note => note.isActiveOnPOS);
+  const [activeTab, setActiveTab] = useState<'briefing' | 'availability'>('briefing');
 
   return (
     <div className="space-y-6">
+
+      {/* Tab bar */}
+      <div className="flex gap-2 bg-primary-surface rounded-xl p-1 border border-border-grey w-fit">
+        <button
+          onClick={() => setActiveTab('briefing')}
+          className={`flex items-center gap-2 py-2 px-5 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all ${
+            activeTab === 'briefing'
+              ? 'bg-white dark:bg-slate-900 text-accent shadow-sm border border-accent/20'
+              : 'text-text-muted hover:text-text-navy dark:hover:text-white'
+          }`}
+        >
+          <Zap className="h-3.5 w-3.5" />
+          Shift Briefing
+        </button>
+        <button
+          onClick={() => setActiveTab('availability')}
+          className={`flex items-center gap-2 py-2 px-5 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all ${
+            activeTab === 'availability'
+              ? 'bg-white dark:bg-slate-900 text-accent shadow-sm border border-accent/20'
+              : 'text-text-muted hover:text-text-navy dark:hover:text-white'
+          }`}
+        >
+          <ShieldAlert className="h-3.5 w-3.5" />
+          86 &amp; Availability
+        </button>
+      </div>
+
+      {activeTab === 'availability' ? (
+        <StockAvailabilityManager recipes={recipes} checkPermission={checkPermission} />
+      ) : (
       <div className="bg-card-bg rounded-2xl border border-border-grey overflow-hidden shadow-sm p-6">
         <div className="flex justify-between items-center mb-6">
           <div>
@@ -122,6 +154,7 @@ export const ShiftBriefingManager: React.FC<ShiftBriefingManagerProps> = ({ reci
           )}
         </div>
       </div>
+      )}
 
       {isModalOpen && (
         <ShiftBriefingNoteFormModal 

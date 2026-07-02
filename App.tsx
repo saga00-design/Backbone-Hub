@@ -20,7 +20,7 @@ import { Settings } from './components/Settings';
 import { Orders } from './components/Orders';
 import { InventoryItem, InventoryCategory, Unit, StockCountRecord, Recipe, SalesImportRecord, Supplier, Order, OrderItem, Invoice, MenuCategory, POSOrder, POSPayment, WasteRecord, ExpenseRecord, MovementType, StockMovement, InventoryType, Table, DailyClosure, Forecast, StaffPerformanceRecord, AppPermissions, StaffCertification, AuditLog, StaffMember, MonthlyTarget, LabourShift } from './types';
 import { logAuditAction } from './services/auditService';
-import { LayoutDashboard, Package, ClipboardCheck, FileInput, Menu, X, ChefHat, TrendingUp, Truck, Settings as SettingsIcon, BookOpen, Sun, Moon, ShoppingCart, AlertCircle, LogIn, LogOut, Trash2, Receipt, Megaphone, LayoutList, Zap, PoundSterling, Users, ShieldAlert } from 'lucide-react';
+import { LayoutDashboard, Package, ClipboardCheck, FileInput, Menu, X, ChefHat, TrendingUp, Truck, Settings as SettingsIcon, BookOpen, Sun, Moon, ShoppingCart, AlertCircle, LogIn, LogOut, Trash2, Receipt, Megaphone, LayoutList, Zap, PoundSterling, Users } from 'lucide-react';
 import { Toaster, toast } from 'sonner';
 import { auth, db, googleProvider, signInWithPopup, onAuthStateChanged, collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, onSnapshot, handleFirestoreError, OperationType, User, cleanObject, signOut, increment, query, where, orderBy, limit, testConnection, LOCATION_ID, writeBatch } from './firebase';
 import { DEFAULT_PERMISSIONS } from './constants';
@@ -379,7 +379,7 @@ const INITIAL_RECIPES: Recipe[] = [
   { id: 'na-3', name: 'Still Water', description: 'Natural Spring Water', type: 'menu_item', category: 'Beverage', subCategory: 'Non-alcoholic', sellingPrice: 2.00, lastUpdated: '2023-10-28', ingredients: [] }
 ];
 
-type View = 'dashboard' | 'manager' | 'inventory' | 'stocktake' | 'invoices' | 'recipes' | 'sales' | 'suppliers' | 'settings' | 'training' | 'orders' | 'reports' | 'waste' | 'expenses' | 'briefing' | 'tables' | 'pos_dashboard' | 'financial_command' | 'labour' | 'staffing_rota' | 'stock_availability';
+type View = 'dashboard' | 'manager' | 'inventory' | 'stocktake' | 'invoices' | 'recipes' | 'sales' | 'suppliers' | 'settings' | 'training' | 'orders' | 'reports' | 'waste' | 'expenses' | 'briefing' | 'tables' | 'pos_dashboard' | 'financial_command' | 'labour' | 'staffing_rota';
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -2451,7 +2451,6 @@ const today = londonHour < 6
               {checkPermission('staff', 'viewBriefing') && <NavItem view="briefing" icon={Megaphone} label="Shift Briefing" />}
               {checkPermission('inventory', 'view') && <NavItem view="inventory" icon={Package} label="Inventory" />}
               {checkPermission('orders', 'view') && <NavItem view="orders" icon={ShoppingCart} label="Stock Orders" />}
-              {checkPermission('inventory', 'view') && <NavItem view="stock_availability" icon={ShieldAlert} label="86 & Availability" />}
               {checkPermission('recipes', 'view') && <NavItem view="recipes" icon={ChefHat} label="Menu Recipes" />}
               {checkPermission('staff', 'viewTraining') && <NavItem view="training" icon={BookOpen} label="Training" />}
               {checkPermission('tables', 'view') && <NavItem view="tables" icon={LayoutList} label="Table Manager" />}
@@ -2519,7 +2518,6 @@ const today = londonHour < 6
                   {currentView === 'manager' && 'Manager Workflow'}
                   {currentView === 'inventory' && 'Inventory Management'}
                   {currentView === 'orders' && 'Stock Orders'}
-                  {currentView === 'stock_availability' && '86 & Availability'}
                   {currentView === 'recipes' && 'Menu & Recipes'}
                   {currentView === 'training' && 'Staff Training'}
                   {currentView === 'sales' && 'Sales Import'}
@@ -2598,13 +2596,6 @@ const today = londonHour < 6
                 onBulkDelete={handleBulkDelete}
                 onBulkUpdate={handleBulkUpdate}
                 onBulkAdd={handleBulkAdd}
-                checkPermission={checkPermission}
-              />
-            )}
-
-            {currentView === 'stock_availability' && (
-              <StockAvailabilityManager
-                recipes={recipes}
                 checkPermission={checkPermission}
               />
             )}
