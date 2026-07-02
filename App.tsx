@@ -2650,6 +2650,7 @@ const today = londonHour < 6
                 staffName={user?.displayName || user?.email || 'Unknown'}
                 certifications={staffCertifications}
                 quizSubmissions={quizSubmissions}
+                staffMembers={staffMembers}
                 isAdmin={userRole === 'Admin'}
               />
             )}

@@ -7,6 +7,7 @@ import 'jspdf-autotable';
 import { motion } from 'motion/react';
 import { db, collection, addDoc, LOCATION_ID, handleFirestoreError, OperationType } from '../firebase';
 import { toast } from 'sonner';
+import { QuizBankManager } from './QuizBankManager';
 
 interface TrainingCenterProps {
   recipes: Recipe[];
@@ -15,6 +16,7 @@ interface TrainingCenterProps {
   staffName?: string;
   certifications?: StaffCertification[];
   quizSubmissions?: any[];
+  staffMembers?: { id: string; firstName: string; lastName: string }[];
   isAdmin?: boolean;
 }
 
@@ -35,12 +37,21 @@ const allergyIcons: Record<string, React.ReactNode> = {
   'Tree nuts': <Nut className="h-4 w-4 text-warning" />
 };
 
-export const TrainingCenter: React.FC<TrainingCenterProps> = ({ recipes, inventoryItems, staffId, staffName, certifications = [], quizSubmissions = [], isAdmin = false }) => {
+export const TrainingCenter: React.FC<TrainingCenterProps> = ({ recipes, inventoryItems, staffId, staffName, certifications = [], quizSubmissions = [], staffMembers = [], isAdmin = false }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterCategory, setFilterCategory] = useState<string>('All');
   const [filterSubCategory, setFilterSubCategory] = useState<string>('All');
-  const [activeTab, setActiveTab] = useState<'menu' | 'batches' | 'spirits' | 'stats'>('menu');
+  const [activeTab, setActiveTab] = useState<'menu' | 'batches' | 'spirits' | 'stats' | 'quizbank'>('menu');
   const [selectedItem, setSelectedItem] = useState<Recipe | InventoryItem | null>(null);
+
+  // Resolve a display name from a quiz submission — uses saved staffName first,
+  // then tries staffMembers lookup by id, then falls back to a short ID fragment.
+  const resolveStaffName = (q: any): string => {
+    if (q.staffName && q.staffName !== 'Unknown') return q.staffName;
+    const member = staffMembers.find(m => m.id === q.staffId);
+    if (member) return `${member.firstName} ${member.lastName}`.trim();
+    return q.staffId ? `Staff ${q.staffId.slice(-4)}` : 'Unknown';
+  };
   const [quizItem, setQuizItem] = useState<Recipe | null>(null);
   const [quizState, setQuizState] = useState<{
     currentQuestion: number;
@@ -452,9 +463,23 @@ export const TrainingCenter: React.FC<TrainingCenterProps> = ({ recipes, invento
             Manager Stats
           </button>
         )}
+        {isAdmin && (
+          <button
+            onClick={() => setActiveTab('quizbank')}
+            className={`py-2 px-6 text-[10px] font-bold uppercase tracking-widest rounded-lg transition-all ${
+              activeTab === 'quizbank'
+                ? 'bg-accent/10 dark:bg-accent/20 text-accent dark:text-accent shadow-sm border border-accent/20'
+                : 'text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200 hover:bg-gray-50 dark:hover:bg-slate-800'
+            }`}
+          >
+            Quiz Bank
+          </button>
+        )}
       </div>
 
-      {activeTab === 'stats' ? (
+      {activeTab === 'quizbank' ? (
+        <QuizBankManager staffName={staffName} />
+      ) : activeTab === 'stats' ? (
         <div className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-gray-100 dark:border-slate-800 shadow-sm">
@@ -593,7 +618,7 @@ export const TrainingCenter: React.FC<TrainingCenterProps> = ({ recipes, invento
                       const byStaff: Record<string, { name: string; scores: number[]; total: number[] }> = {};
                       quizSubmissions.forEach((q: any) => {
                         const key = q.staffId || 'unknown';
-                        if (!byStaff[key]) byStaff[key] = { name: q.staffName || 'Unknown', scores: [], total: [] };
+                        if (!byStaff[key]) byStaff[key] = { name: resolveStaffName(q), scores: [], total: [] };
                         byStaff[key].scores.push(q.score);
                         byStaff[key].total.push(q.totalQuestions);
                       });
@@ -647,9 +672,9 @@ export const TrainingCenter: React.FC<TrainingCenterProps> = ({ recipes, invento
                             <td className="px-6 py-4">
                               <div className="flex items-center gap-3">
                                 <div className="w-8 h-8 rounded-full bg-accent/10 flex items-center justify-center text-accent font-black text-[10px]">
-                                  {(q.staffName || 'U').substring(0, 2).toUpperCase()}
+                                  {resolveStaffName(q).substring(0, 2).toUpperCase()}
                                 </div>
-                                <p className="text-xs font-bold text-text-navy dark:text-white">{q.staffName || 'Unknown'}</p>
+                                <p className="text-xs font-bold text-text-navy dark:text-white">{resolveStaffName(q)}</p>
                               </div>
                             </td>
                             <td className="px-6 py-4">
