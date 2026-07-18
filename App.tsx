@@ -18,13 +18,13 @@ import { SupplierManager } from './components/SupplierManager';
 import { TableManager } from './components/TableManager';
 import { Settings } from './components/Settings';
 import { Orders } from './components/Orders';
-import { InventoryItem, InventoryCategory, Unit, StockCountRecord, Recipe, SalesImportRecord, Supplier, Order, OrderItem, Invoice, MenuCategory, POSOrder, POSPayment, WasteRecord, ExpenseRecord, MovementType, StockMovement, InventoryType, Table, DailyClosure, Forecast, StaffPerformanceRecord, AppPermissions, StaffCertification, AuditLog, StaffMember, MonthlyTarget, LabourShift } from './types';
+import { InventoryItem, InventoryCategory, Unit, StockCountRecord, Recipe, SalesImportRecord, Supplier, Order, OrderItem, Invoice, MenuCategory, POSOrder, POSPayment, WasteRecord, ExpenseRecord, MovementType, StockMovement, InventoryType, Table, DailyClosure, Forecast, StaffPerformanceRecord, AppPermissions, StaffCertification, AuditLog, StaffMember, MonthlyTarget, LabourShift, SideAddonItem } from './types';
 import { logAuditAction } from './services/auditService';
 import { LayoutDashboard, Package, ClipboardCheck, FileInput, Menu, X, ChefHat, TrendingUp, Truck, Settings as SettingsIcon, BookOpen, Sun, Moon, ShoppingCart, AlertCircle, LogIn, LogOut, Trash2, Receipt, Megaphone, LayoutList, Zap, PoundSterling, Users } from 'lucide-react';
 import { Toaster, toast } from 'sonner';
 import { auth, db, googleProvider, signInWithPopup, onAuthStateChanged, collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, onSnapshot, handleFirestoreError, OperationType, User, cleanObject, signOut, increment, query, where, orderBy, limit, testConnection, LOCATION_ID, writeBatch } from './firebase';
 import { DEFAULT_PERMISSIONS } from './constants';
-import { calculateTotalCost } from './utils/recipeUtils';
+import { calculateTotalCost, mapCategoryId } from './utils/recipeUtils';
 import { convertToBaseUnit, CONVERSION_FACTORS } from './utils/unitConversions';
 import { normalizeCurrency, normalizeTimestamp, normalizeStatus } from './utils/currencyUtils';
 import { OfflineBanner } from './components/OfflineBanner';
@@ -1014,6 +1014,9 @@ const today = londonHour < 6
 
       const batchToProcess = unprocessedOrders.slice(0, 10);
 
+      const sideAddonsSnap = await getDocs(query(collection(db, 'sidesAndAddons'), where('locationId', '==', LOCATION_ID)));
+      const sideAddonDocs = sideAddonsSnap.docs.map(d => ({ id: d.id, ...d.data() } as SideAddonItem));
+
       for (const order of batchToProcess) {
         try {
           const batch = writeBatch(db);
@@ -1024,7 +1027,71 @@ const today = londonHour < 6
 
             const recipe = recipes.find(r => r.id === item.recipeId || r.name === item.name);
             if (!recipe) {
-              console.warn(`[Inventory Sync] No recipe found for item: ${item.name} (${item.recipeId})`);
+              const sideAddon = sideAddonDocs.find(sa => sa.posMenuItemId === item.recipeId);
+              if (!sideAddon) {
+                console.warn(`[Inventory Sync] No recipe or side/addon found for item: ${item.name} (${item.recipeId})`);
+                continue;
+              }
+
+              const totalDeduction = sideAddon.weight * (item.quantity || 0);
+              if (totalDeduction > 0) {
+                if (sideAddon.sourceType === 'raw_ingredient') {
+                  const inventoryItem = items.find(i => i.id === sideAddon.sourceId);
+                  if (inventoryItem) {
+                    const invRef = doc(db, 'inventory', inventoryItem.id);
+                    batch.update(invRef, {
+                      quantity: increment(-totalDeduction),
+                      lastUpdated: new Date().toISOString()
+                    });
+
+                    const movementId = `mov-pos-${order.id}-${inventoryItem.id}`;
+                    const movementRef = doc(db, 'stockMovements', movementId);
+                    batch.set(movementRef, cleanObject({
+                      id: movementId,
+                      productId: inventoryItem.id,
+                      type: 'SALE',
+                      quantityChange: -totalDeduction,
+                      stockBefore: inventoryItem.quantity,
+                      stockAfter: inventoryItem.quantity - totalDeduction,
+                      referenceId: order.id,
+                      referenceType: 'SALE',
+                      createdAt: new Date().toISOString(),
+                      createdBy: 'SYSTEM-POS-SYNC',
+                      locationId: LOCATION_ID,
+                      notes: `POS Sale (Side/Add-on): ${order.tableNumber ? 'Table ' + order.tableNumber : 'Order #' + order.id.slice(-4)}`
+                    }));
+                  } else {
+                    console.warn(`[Inventory Sync] No inventory item found for side/addon source: ${sideAddon.sourceId}`);
+                  }
+                } else {
+                  const sourceRecipe = recipes.find(r => r.id === sideAddon.sourceId);
+                  if (sourceRecipe) {
+                    const recipeRef = doc(db, 'recipes', sideAddon.sourceId);
+                    batch.update(recipeRef, {
+                      quantity: increment(-totalDeduction)
+                    });
+
+                    const movementId = `mov-pos-${order.id}-recipe-${sideAddon.sourceId}`;
+                    const movementRef = doc(db, 'stockMovements', movementId);
+                    batch.set(movementRef, cleanObject({
+                      id: movementId,
+                      productId: `recipe-${sideAddon.sourceId}`,
+                      type: 'SALE',
+                      quantityChange: -totalDeduction,
+                      stockBefore: sourceRecipe.quantity || 0,
+                      stockAfter: (sourceRecipe.quantity || 0) - totalDeduction,
+                      referenceId: order.id,
+                      referenceType: 'SALE',
+                      createdAt: new Date().toISOString(),
+                      createdBy: 'SYSTEM-POS-SYNC',
+                      locationId: LOCATION_ID,
+                      notes: `POS Sale (Side/Add-on): ${order.tableNumber ? 'Table ' + order.tableNumber : 'Order #' + order.id.slice(-4)}`
+                    }));
+                  } else {
+                    console.warn(`[Inventory Sync] No batch recipe found for side/addon source: ${sideAddon.sourceId}`);
+                  }
+                }
+              }
               continue;
             }
 
@@ -1561,21 +1628,6 @@ const today = londonHour < 6
     setCurrentView('recipes');
   };
 
-  const mapCategoryId = (recipe: Recipe | null | undefined) => {
-    if (!recipe) return 'mains';
-    const category = (recipe.category || '').toLowerCase();
-    const subCategory = (recipe.subCategory || '').toLowerCase();
-    const course = (recipe.course || '').toLowerCase();
-
-    if (category.includes('beverage') || category.includes('bar')) return 'drinks';
-    if (subCategory.includes('tacos') || category.includes('tacos')) return 'tacos';
-    if (subCategory.includes('starter') || course.includes('1st course') || course.includes('starter')) return 'starters';
-    if (subCategory.includes('dessert') || course.includes('dessert')) return 'desserts';
-    if (subCategory.includes('main') || course.includes('main')) return 'mains';
-
-    return 'mains';
-  };
-
   const mapStation = (recipe: Recipe | null | undefined) => {
     if (!recipe) return 'grill';
     const category = (recipe.category || '').toLowerCase();
@@ -1673,15 +1725,14 @@ const today = londonHour < 6
     const menuItemDoc = cleanObject({
       name: recipe.name,
       slug,
-      categoryId: categoryId,
+      categoryId: recipe.posCategoryId || categoryId,
       // POS systems expect price in cents (integers)
       priceGross: Math.round((Number(recipe.sellingPrice) || 0) * 100),
       vatRate: Number(recipe.vatRate) || 20,
       active: true,
       locationId: LOCATION_ID,
       station: mapStation(recipe),
-      isDrink: categoryId === 'drinks',
-      modifierGroupIds: [],
+      isDrink: ['cat_drinks','cat_margaritas','cat_cocktails','cat_mocktails','cat_beers','cat_wines','cat_wine_white','cat_wine_red','cat_wine_rose','cat_wine_sparkling','cat_spirits','cat_tequila','cat_mezcal','cat_rum','cat_vodka','cat_whiskey','cat_gin','cat_brandy','cat_cognac','cat_liqueur','cat_soft_drinks','cat_juices','cat_jarritos','cat_aguas_frescas','cat_water','cat_sodas','cat_mixers','cat_hot_drinks'].includes(categoryId),
       recipeId: id,
       description: recipe.description || '',
       imageUrl: recipe.imageUrl || '',
@@ -1727,6 +1778,165 @@ const today = londonHour < 6
     throw err;
   }
 };
+
+  // ── SYNC ALL RECIPES TO POS ──────────────────────────────────────────────
+  const handleSyncAllToPos = async (): Promise<{ success: number; failed: number }> => {
+    let success = 0;
+    let failed = 0;
+    const timestamp = new Date().toISOString();
+    const BATCH_SIZE = 20; // Firestore batch limit is 500 but keep it small for stability
+
+    const allRecipes = [...recipes];
+    
+    for (let i = 0; i < allRecipes.length; i += BATCH_SIZE) {
+      const chunk = allRecipes.slice(i, i + BATCH_SIZE);
+      const batch = writeBatch(db);
+
+      for (const recipe of chunk) {
+        try {
+          const id = recipe.id;
+          if (!id) continue;
+
+          const menuItemRef = doc(db, 'menuItems', id);
+          const isBatchRecipe = recipe.type === 'recipe' || recipe.category === 'Batch' || recipe.category === 'Prep';
+
+          if (isBatchRecipe) {
+            // Batch/prep recipes are internal-only — never expose them as an orderable
+            // POS item. Delete any stale doc from a previous sync; sides/addons below
+            // still get synced so the batch's sellable sides/addons keep working.
+            batch.delete(menuItemRef);
+          } else {
+            const categoryId = recipe.posCategoryId || mapCategoryId(recipe);
+            const slug = recipe.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+
+            const menuItemDoc = {
+              name: recipe.name,
+              slug,
+              categoryId,
+              priceGross: Math.round((Number(recipe.sellingPrice) || 0) * 100),
+              vatRate: Number(recipe.vatRate) || 20,
+              active: recipe.isActive !== false,
+              locationId: LOCATION_ID,
+              station: mapStation(recipe),
+              isDrink: ['cat_drinks','cat_margaritas','cat_cocktails','cat_mocktails','cat_beers','cat_wines','cat_wine_white','cat_wine_red','cat_wine_rose','cat_wine_sparkling','cat_spirits','cat_tequila','cat_mezcal','cat_rum','cat_vodka','cat_whiskey','cat_gin','cat_brandy','cat_cognac','cat_liqueur','cat_soft_drinks','cat_juices','cat_jarritos','cat_aguas_frescas','cat_water','cat_sodas','cat_mixers','cat_hot_drinks'].includes(categoryId),
+              recipeId: id,
+              description: recipe.description || '',
+              allergies: recipe.allergies || [],
+              calories: recipe.calories || 0,
+              course: recipe.course || '',
+              imageUrl: recipe.imageUrl || '',
+              lastUpdated: timestamp,
+              locationId2: LOCATION_ID,
+            };
+
+            batch.set(menuItemRef, menuItemDoc);
+          }
+          success++;
+
+          // Sync sides as separate POS menu items, assigning IDs where missing
+          let sidesChanged = false;
+          const updatedSides = (recipe.sides && recipe.sides.length > 0)
+            ? recipe.sides.map(side => {
+                const sideId = side.posMenuItemId || doc(collection(db, 'menuItems')).id;
+                if (!side.posMenuItemId) sidesChanged = true;
+                batch.set(doc(db, 'menuItems', sideId), {
+                  name: side.name,
+                  priceGross: side.price,
+                  vatRate: recipe.vatRate ?? 20,
+                  categoryId: 'cat_sides',
+                  isSide: true,
+                  isAddon: false,
+                  parentRecipeId: id,
+                  cost: side.cost,
+                  locationId: LOCATION_ID,
+                  isDrink: false,
+                  station: 'kitchen'
+                });
+                return { ...side, posMenuItemId: sideId };
+              })
+            : undefined;
+
+          // Sync addons as separate POS menu items, assigning IDs where missing
+          let addonsChanged = false;
+          const updatedAddons = (recipe.addons && recipe.addons.length > 0)
+            ? recipe.addons.map(addon => {
+                const addonId = addon.posMenuItemId || doc(collection(db, 'menuItems')).id;
+                if (!addon.posMenuItemId) addonsChanged = true;
+                batch.set(doc(db, 'menuItems', addonId), {
+                  name: addon.name.replace(/\s*batch\s*/gi, '').trim(),
+                  priceGross: addon.price,
+                  vatRate: recipe.vatRate ?? 20,
+                  categoryId: 'cat_addons',
+                  isSide: false,
+                  isAddon: true,
+                  parentRecipeId: id,
+                  cost: addon.cost,
+                  locationId: LOCATION_ID,
+                  isDrink: false,
+                  station: 'kitchen'
+                });
+                return { ...addon, posMenuItemId: addonId };
+              })
+            : undefined;
+
+          // Persist newly generated posMenuItemIds back onto the recipe doc
+          if (sidesChanged || addonsChanged) {
+            batch.update(doc(db, 'recipes', id), cleanObject({
+              sides: updatedSides ?? recipe.sides,
+              addons: updatedAddons ?? recipe.addons
+            }));
+          }
+        } catch (e) {
+          console.error('[SyncAll] Failed for recipe:', recipe.name, e);
+          failed++;
+        }
+      }
+
+      await batch.commit();
+    }
+
+    // Sync native sidesAndAddons collection to POS
+    const sideAddonsSnap = await getDocs(query(collection(db, 'sidesAndAddons'), where('locationId', '==', LOCATION_ID)));
+    const sideAddonDocs = sideAddonsSnap.docs.map(d => ({ id: d.id, ...d.data() } as SideAddonItem)).filter(item => item.isActive !== false);
+
+    for (let i = 0; i < sideAddonDocs.length; i += BATCH_SIZE) {
+      const chunk = sideAddonDocs.slice(i, i + BATCH_SIZE);
+      const batch = writeBatch(db);
+
+      for (const item of chunk) {
+        try {
+          const posMenuItemId = item.posMenuItemId || doc(collection(db, 'menuItems')).id;
+          batch.set(doc(db, 'menuItems', posMenuItemId), {
+            name: item.name,
+            priceGross: item.price,
+            vatRate: item.vatRate,
+            categoryId: item.categoryId,
+            isSide: item.type === 'side',
+            isAddon: item.type === 'addon',
+            sourceId: item.sourceId,
+            sourceType: item.sourceType,
+            cost: item.cost,
+            locationId: item.locationId,
+            isDrink: false,
+            station: 'kitchen',
+            isActive: item.isActive
+          });
+          success++;
+
+          if (!item.posMenuItemId) {
+            batch.update(doc(db, 'sidesAndAddons', item.id), { posMenuItemId });
+          }
+        } catch (e) {
+          console.error('[SyncAll] Failed for side/addon:', item.name, e);
+          failed++;
+        }
+      }
+
+      await batch.commit();
+    }
+
+    return { success, failed };
+  };
 
   const handleApproveInvoice = (invoice: Invoice) => {
     if (invoice.status === 'Processed') return; // Already processed
@@ -1851,26 +2061,59 @@ const today = londonHour < 6
       variant: 'danger',
       onConfirm: async () => {
         const recipeToDelete = recipes.find(r => r.id === id);
-        setRecipes(prev => prev.filter(r => r.id !== id));
-        if (user) {
-          try {
-            await deleteDoc(doc(db, 'recipes', id));
-            // Audit Log
-            logAuditAction(
-              user.uid,
-              user.displayName || user.email || 'Unknown',
-              'DELETE' as any,
-              'Recipe',
-              id,
-              recipeToDelete?.name || 'Unknown',
-              recipeToDelete,
-              null
-            );
-          } catch (e) {
-            handleFirestoreError(e, OperationType.DELETE, `recipes/${id}`);
-          }
+        if (!user) {
+          setConfirmationModal(prev => ({ ...prev, isOpen: false }));
+          return;
         }
-        setConfirmationModal(prev => ({ ...prev, isOpen: false }));
+
+        try {
+          await deleteDoc(doc(db, 'recipes', id));
+
+          // Best-effort cleanup of the linked POS menu item(s).
+          // menuItems normally share the recipe's doc ID, but also match on
+          // recipeId/slug in case a legacy item was created via a different flow.
+          try {
+            const menuItemIdsToDelete = new Set<string>([id]);
+            const slug = (recipeToDelete as any)?.slug;
+
+            const [byRecipeIdSnap, bySlugSnap] = await Promise.all([
+              getDocs(query(collection(db, 'menuItems'), where('recipeId', '==', id))),
+              slug
+                ? getDocs(query(collection(db, 'menuItems'), where('slug', '==', slug)))
+                : Promise.resolve(null),
+            ]);
+            byRecipeIdSnap.forEach(d => menuItemIdsToDelete.add(d.id));
+            bySlugSnap?.forEach(d => menuItemIdsToDelete.add(d.id));
+
+            await Promise.all(
+              Array.from(menuItemIdsToDelete).map(menuItemId => deleteDoc(doc(db, 'menuItems', menuItemId)))
+            );
+          } catch (menuItemError) {
+            console.error(`Failed to delete linked POS menu item(s) for recipe ${id}:`, menuItemError);
+            toast.warning(`"${recipeToDelete?.name || 'Recipe'}" was deleted, but its POS menu item could not be removed.`);
+          }
+
+          setRecipes(prev => prev.filter(r => r.id !== id));
+
+          // Audit Log
+          logAuditAction(
+            user.uid,
+            user.displayName || user.email || 'Unknown',
+            'DELETE' as any,
+            'Recipe',
+            id,
+            recipeToDelete?.name || 'Unknown',
+            recipeToDelete,
+            null
+          );
+
+          toast.success(`Deleted "${recipeToDelete?.name || 'recipe'}".`);
+        } catch (e) {
+          console.error(`Failed to delete recipe ${id}:`, e);
+          toast.error(`Failed to delete recipe: ${e instanceof Error ? e.message : 'Unknown error'}`);
+        } finally {
+          setConfirmationModal(prev => ({ ...prev, isOpen: false }));
+        }
       }
     });
   };
@@ -2639,6 +2882,8 @@ const today = londonHour < 6
                 initialEditRecipeId={editRecipeId}
                 onClearInitialEditRecipeId={() => setEditRecipeId(null)}
                 checkPermission={checkPermission}
+                onSyncAllToPos={handleSyncAllToPos}
+                menuCategories={menuCategories}
               />
             )}
 

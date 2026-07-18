@@ -101,6 +101,14 @@ service cloud.firestore {
       allow read, write: if isAuthenticated();
     }
 
+    match /sidesAndAddons/{docId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    match /setMenus/{docId} {
+      allow read, write: if isAuthenticated();
+    }
+
     match /suppliers/{docId} {
       allow read, write: if isAuthenticated();
     }

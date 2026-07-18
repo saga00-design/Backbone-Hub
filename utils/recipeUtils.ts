@@ -121,3 +121,46 @@ export const calculateGP = (priceExcVat: number, cost: number): number => {
   if (priceExcVat <= 0) return 0;
   return roundTo(((priceExcVat - cost) / priceExcVat) * 100, 2);
 };
+
+// Resolve a recipe's POS menu category ID (used for POS sync + Food tab filtering)
+export const mapCategoryId = (recipe: Recipe | null | undefined): string => {
+  if (!recipe) return 'cat_mains';
+
+  // 1. If recipe has a posCategoryId set directly — use it (most accurate)
+  if (recipe.posCategoryId) return recipe.posCategoryId;
+
+  // 2. subCategory already stores a resolved cat_ id (set by the POS Category picker) — trust it
+  if (recipe.subCategory?.startsWith('cat_')) return recipe.subCategory;
+
+  const category = (recipe.category || '').toLowerCase();
+  const menuPath = (recipe.menuPath || '').toLowerCase();
+  const course = (recipe.course || '').toLowerCase();
+
+  // 3. Drinks — specific subcategories first
+  if (menuPath.includes('margarita')) return 'cat_margaritas';
+  if (menuPath.includes('beer cocktail')) return 'cat_beers';
+  if (menuPath.includes('mezcal cocktail') || menuPath.includes('mezcal')) return 'cat_cocktails';
+  if (menuPath.includes('mexican classic') || menuPath.includes('cocktail')) return 'cat_cocktails';
+  if (menuPath.includes('mocktail') || menuPath.includes('alcohol free')) return 'cat_mocktails';
+  if (menuPath.includes('beer')) return 'cat_beers';
+  if (menuPath.includes('wine')) return 'cat_wines';
+  if (menuPath.includes('tequila') || menuPath.includes('mezcal')) return 'cat_spirits';
+  if (menuPath.includes('liqueur coffee') || menuPath.includes('hot drink')) return 'cat_hot_drinks';
+  if (menuPath.includes('spirit')) return 'cat_spirits';
+  if (menuPath.includes('soft drink') || menuPath.includes('jarritos')) return 'cat_soft_drinks';
+  if (category.includes('beverage') || menuPath.includes('drink')) return 'cat_drinks';
+
+  // 4. Food categories
+  if (menuPath.includes('tacos') || menuPath.includes('taco')) return 'cat_tacos';
+  if (menuPath.includes('starter') || menuPath.includes('antojito') || menuPath.includes('ceviche') || menuPath.includes('soup')) return 'cat_starters';
+  if (menuPath.includes('dessert')) return 'cat_desserts';
+  if (menuPath.includes('side')) return 'cat_sides';
+  if (menuPath.includes('sharing') || menuPath.includes('main')) return 'cat_mains';
+
+  // 5. Course fallback
+  if (course.includes('starter') || course.includes('1st')) return 'cat_starters';
+  if (course.includes('dessert')) return 'cat_desserts';
+  if (course.includes('side')) return 'cat_sides';
+
+  return 'cat_mains';
+};
