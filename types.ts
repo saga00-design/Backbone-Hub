@@ -109,8 +109,12 @@ export interface PairingInfo {
 export interface MenuCategory {
   id: string;
   name: string;
-  path: string; // e.g., "Beverage > Tequilas"
-  parentId?: string; // ID of parent category
+  parentId: string | null; // ID of parent category, null for top-level
+  order: number;
+  isDrink: boolean;
+  allowSubcategories: boolean;
+  hidden?: boolean;
+  locationId?: string;
 }
 
 export interface Recipe {
@@ -129,6 +133,7 @@ export interface Recipe {
   serviceChargeRate?: number; // Percentage, e.g., 12.5
   posId?: string; // PLU or Product ID from external POS
   posCategory?: string; // POS Category mapping
+  posCategoryId?: string; // POS Category ID mapping
   marginTarget?: number; // Target GP% for this item
   
   yieldAmount?: number; // For batch recipes
@@ -164,7 +169,82 @@ export interface Recipe {
   sustainabilityScore?: number; // 1-100
   carbonFootprint?: string; // e.g., "Low", "Medium", "High" or specific value
   sustainabilityTips?: string[];
-  allowedModifiers?: string[]; // IDs of available modifiers
+  sides?: RecipeSide[];
+  addons?: RecipeAddon[];
+
+  // Event Menu Creator (Set Menus & Specials tab)
+  isEventSpecial?: boolean; // true if created inline from an event menu's "Create New Dish"
+  eventMenuId?: string; // the setMenus doc this dish was created for
+}
+
+export interface SetMenuCourseItem {
+  recipeId: string;
+  recipeName: string;
+  cost: number; // NET in pence
+  isNew: boolean; // true if created for this event only (via "Create New Dish")
+  notes?: string;
+  quantity: number; // always 1 per cover
+}
+
+export interface SetMenuCourse {
+  id: string;
+  name: string; // e.g. "Starter", "Main", "Dessert"
+  items: SetMenuCourseItem[];
+}
+
+export interface SetMenu {
+  id: string;
+  name: string; // e.g. "Valentine's Day 2026"
+  description: string;
+  eventDate: string; // ISO date
+  pricePerHead: number; // gross inc VAT in pence
+  covers: number; // covers per booking, default 1
+  courses: SetMenuCourse[];
+  totalCost: number; // calculated NET in pence
+  totalGP: number; // calculated percentage
+  isActive: boolean;
+  locationId: string;
+  lastUpdated: string;
+}
+
+export interface RecipeSide {
+  id: string;
+  name: string;
+  price: number;       // gross inc VAT in pence
+  cost: number;        // (parentCostPerGram * weight)
+  weight: number;
+  unit: 'g' | 'ml' | 'portions';
+  posMenuItemId?: string;
+}
+
+export interface RecipeAddon {
+  id: string;
+  name: string;
+  price: number;       // gross inc VAT in pence
+  cost: number;        // (parentCostPerGram * weight)
+  weight: number;
+  unit: 'g' | 'ml' | 'portions';
+  posMenuItemId?: string;
+}
+
+export interface SideAddonItem {
+  id: string;
+  name: string;
+  type: 'side' | 'addon';
+  sourceType: 'batch' | 'raw_ingredient';
+  sourceId: string;
+  sourceName: string;
+  weight: number;
+  unit: 'g' | 'ml' | 'portions';
+  price: number;        // gross inc VAT in pence
+  cost: number;         // NET of VAT in pence
+  vatRate: number;      // e.g. 20
+  gp: number;           // percentage e.g. 74.5
+  categoryId: string;   // 'cat_sides' or 'cat_addons'
+  posMenuItemId?: string;
+  locationId: string;
+  isActive: boolean;
+  lastUpdated: string;
 }
 
 export interface StockCount {

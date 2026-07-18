@@ -1,19 +1,18 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { ModifierManagement } from './ModifierManagement';
-import { InventoryItem, Recipe, RecipeIngredient, ALLERGIES_LIST, RecipeType, MenuCategory, Unit, Modifier } from '../types';
+import { InventoryItem, Recipe, RecipeIngredient, ALLERGIES_LIST, RecipeType, MenuCategory, Unit, RecipeSide, RecipeAddon, SideAddonItem, SetMenu, SetMenuCourse, SetMenuCourseItem } from '../types';
 import { Button } from './Button';
-import { Plus, Trash2, Calculator, ChefHat, PoundSterling, Edit2, AlertCircle, Image as ImageIcon, Sparkles, Loader2, Upload, Camera, Check, Wheat, Shell, Egg, Fish, Flower2, Milk, Snail, Droplet, Bean, CircleDot, Sprout, FlaskConical, Nut, Leaf, Download, Minus, Search, X, BookOpen, Info, ChevronDown, Zap } from 'lucide-react';
+import { Plus, Trash2, Calculator, ChefHat, PoundSterling, Edit2, AlertCircle, Image as ImageIcon, Sparkles, Loader2, Upload, Camera, Check, Wheat, Shell, Egg, Fish, Flower2, Milk, Snail, Droplet, Bean, CircleDot, Sprout, FlaskConical, Nut, Leaf, Download, Minus, Search, X, BookOpen, Info, ChevronDown, Zap, Calendar } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
 import { jsPDF } from 'jspdf';
 import { GoogleGenAI, Type } from "@google/genai";
 import { getAiClient, handleAiError } from '../services/geminiService';
 import html2canvas from 'html2canvas';
-import { getIngredientDetails as getIngredientDetailsShared, calculateTotalCost as calculateTotalCostShared, calculateGP } from '../utils/recipeUtils';
+import { getIngredientDetails as getIngredientDetailsShared, calculateTotalCost as calculateTotalCostShared, calculateGP, mapCategoryId } from '../utils/recipeUtils';
 import { convertToBaseUnit, convertFromBaseUnit, formatDisplayValue, areUnitsCompatible, UNIT_TYPES, BASE_UNITS, CONVERSION_FACTORS } from '../utils/unitConversions';
 import { MovementType } from '../types';
-import { db, collection, onSnapshot, handleFirestoreError, OperationType, query, where, LOCATION_ID } from '../firebase';
+import { db, collection, doc, setDoc, updateDoc, deleteDoc, onSnapshot, handleFirestoreError, OperationType, query, where, LOCATION_ID, cleanObject, writeBatch } from '../firebase';
 
 interface MenuRecipesProps {
   inventoryItems: InventoryItem[];
@@ -25,6 +24,8 @@ interface MenuRecipesProps {
   initialEditRecipeId?: string | null;
   onClearInitialEditRecipeId?: () => void;
   checkPermission: (module: string, action: string) => boolean;
+  onSyncAllToPos?: () => Promise<{ success: number; failed: number }>;
+  menuCategories?: MenuCategory[];
 }
 
 const allergyIcons: Record<string, React.ReactNode> = {
@@ -53,9 +54,13 @@ export const MenuRecipes: React.FC<MenuRecipesProps> = ({
   onAddInventoryItem,
   initialEditRecipeId,
   onClearInitialEditRecipeId,
-  checkPermission
+  checkPermission,
+  onSyncAllToPos,
+  menuCategories = [],
 }) => {
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState<{ success: number; failed: number } | null>(null);
   const [editingRecipe, setEditingRecipe] = useState<Partial<Recipe>>({
     name: '',
     description: '',
@@ -77,8 +82,14 @@ export const MenuRecipes: React.FC<MenuRecipesProps> = ({
 
   const [searchTerm, setSearchTerm] = useState('');
   const [filterCategory, setFilterCategory] = useState<string>('All');
-  const [mainTab, setMainTab] = useState<'food_menu' | 'beverage_menu' | 'batches' | 'allergy_matrix' | 'recipe_ai' | 'modifiers' | 'gp_health'>('food_menu');
-  const [activeTab, setActiveTab] = useState<'basic' | 'pricing' | 'ingredients' | 'allergies' | 'training' | 'sustainability' | 'modifiers'>('basic');
+  const [foodCategoryFilter, setFoodCategoryFilter] = useState<string>('All');
+  const [beverageCategoryFilter, setBeverageCategoryFilter] = useState<string>('All');
+  const [showAddCategoryForm, setShowAddCategoryForm] = useState(false);
+  const [newCategoryParentId, setNewCategoryParentId] = useState('');
+  const [newCategoryName, setNewCategoryName] = useState('');
+  const [isCreatingCategory, setIsCreatingCategory] = useState(false);
+  const [mainTab, setMainTab] = useState<'food_menu' | 'beverage_menu' | 'batches' | 'sides_addons' | 'set_menus' | 'allergy_matrix' | 'recipe_ai' | 'gp_health'>('food_menu');
+  const [activeTab, setActiveTab] = useState<'basic' | 'pricing' | 'ingredients' | 'allergies' | 'training' | 'sustainability' | 'sides'>('basic');
   const [targetGP, setTargetGP] = useState<number>(75);
   const [isOptimizing, setIsOptimizing] = useState(false);
 
@@ -103,7 +114,76 @@ export const MenuRecipes: React.FC<MenuRecipesProps> = ({
   const [produceQuantity, setProduceQuantity] = useState<number>(1);
   const [actualYield, setActualYield] = useState<number>(0);
   const [actualYieldUnit, setActualYieldUnit] = useState<Unit>('portions');
-  const [modifiers, setModifiers] = useState<Modifier[]>([]);
+  const [newSideName, setNewSideName] = useState('');
+  const [newSidePrice, setNewSidePrice] = useState<number | ''>('');
+  const [newSideWeight, setNewSideWeight] = useState<number | ''>('');
+  const [newSideUnit, setNewSideUnit] = useState<'g' | 'ml' | 'portions'>('g');
+  const [newAddonName, setNewAddonName] = useState('');
+  const [newAddonPrice, setNewAddonPrice] = useState<number | ''>('');
+  const [newAddonWeight, setNewAddonWeight] = useState<number | ''>('');
+  const [newAddonUnit, setNewAddonUnit] = useState<'g' | 'ml' | 'portions'>('g');
+  const [editingSideId, setEditingSideId] = useState<string | null>(null);
+  const [editingAddonId, setEditingAddonId] = useState<string | null>(null);
+  const [yieldCalcTotalWeight, setYieldCalcTotalWeight] = useState<number | ''>('');
+  const [yieldCalcUnit, setYieldCalcUnit] = useState<'g' | 'ml'>('g');
+  const [yieldCalcCookingLoss, setYieldCalcCookingLoss] = useState<number | ''>('');
+  const [yieldCalcPortions, setYieldCalcPortions] = useState<number | ''>('');
+  const yieldFieldsRef = useRef<HTMLDivElement>(null);
+
+  // Set Menus & Specials (native setMenus collection)
+  const [setMenus, setSetMenus] = useState<SetMenu[]>([]);
+  const [isSetMenuModalOpen, setIsSetMenuModalOpen] = useState(false);
+  const [editingSetMenu, setEditingSetMenu] = useState<Partial<SetMenu>>({});
+  const [setMenuEstimatedCovers, setSetMenuEstimatedCovers] = useState<number | ''>('');
+  const [setMenuDishSearch, setSetMenuDishSearch] = useState('');
+  const [setMenuSearchCourseId, setSetMenuSearchCourseId] = useState<string | null>(null);
+  const [setMenuNewDishCourseId, setSetMenuNewDishCourseId] = useState<string | null>(null);
+  const [newDishName, setNewDishName] = useState('');
+  const [newDishDescription, setNewDishDescription] = useState('');
+  const [newDishCost, setNewDishCost] = useState<number | ''>('');
+  const [isSavingNewDish, setIsSavingNewDish] = useState(false);
+  const [isSavingSetMenu, setIsSavingSetMenu] = useState(false);
+
+  // Sides & Add-ons (native sidesAndAddons collection)
+  const [sideAddonItems, setSideAddonItems] = useState<SideAddonItem[]>([]);
+  const [isSideAddonModalOpen, setIsSideAddonModalOpen] = useState(false);
+  const [editingSideAddonId, setEditingSideAddonId] = useState<string | null>(null);
+  const [sideAddonType, setSideAddonType] = useState<'side' | 'addon'>('side');
+  const [sideAddonSourceType, setSideAddonSourceType] = useState<'batch' | 'raw_ingredient'>('batch');
+  const [sideAddonSourceId, setSideAddonSourceId] = useState('');
+  const [sideAddonSourceName, setSideAddonSourceName] = useState('');
+  const [sideAddonSourceCostPerUnit, setSideAddonSourceCostPerUnit] = useState(0);
+  const [sideAddonSourceSearch, setSideAddonSourceSearch] = useState('');
+  const [sideAddonName, setSideAddonName] = useState('');
+  const [sideAddonWeight, setSideAddonWeight] = useState<number | ''>('');
+  const [sideAddonUnit, setSideAddonUnit] = useState<'g' | 'ml' | 'portions'>('g');
+  const [sideAddonPrice, setSideAddonPrice] = useState<number | ''>('');
+  const [isSavingSideAddon, setIsSavingSideAddon] = useState(false);
+  const [syncingSideAddonId, setSyncingSideAddonId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const unsubSideAddons = onSnapshot(
+      query(collection(db, 'sidesAndAddons'), where('locationId', '==', LOCATION_ID)),
+      (snapshot: any) => {
+        const data = snapshot.docs.map((d: any) => ({ id: d.id, ...d.data() } as SideAddonItem));
+        setSideAddonItems(data);
+      },
+      (err: any) => handleFirestoreError(err, OperationType.LIST, 'sidesAndAddons')
+    );
+    return () => unsubSideAddons();
+  }, []);
+
+  useEffect(() => {
+    const unsubSetMenus = onSnapshot(
+      query(collection(db, 'setMenus'), where('locationId', '==', LOCATION_ID)),
+      (snapshot: any) => {
+        const data = snapshot.docs.map((d: any) => ({ id: d.id, ...d.data() } as SetMenu));
+        setSetMenus(data);
+      },
+      (err: any) => handleFirestoreError(err, OperationType.LIST, 'setMenus')
+    );
+    return () => unsubSetMenus();
+  }, []);
 
   useEffect(() => {
     if (producingBatch) {
@@ -148,7 +228,6 @@ export const MenuRecipes: React.FC<MenuRecipesProps> = ({
   const [ingredientAllergies, setIngredientAllergies] = useState<Record<string, string[]>>({});
   const [hasDetectedIngredients, setHasDetectedIngredients] = useState(false);
   const [isDetectingMatrix, setIsDetectingMatrix] = useState(false);
-  const [triggerModifierCreate, setTriggerModifierCreate] = useState(0);
   const prevIngredientsRef = useRef<string>('');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
@@ -345,13 +424,6 @@ export const MenuRecipes: React.FC<MenuRecipesProps> = ({
     return detected;
   };
 
-  useEffect(() => {
-    const unsubModifiers = onSnapshot(query(collection(db, 'modifiers'), where('locationId', '==', LOCATION_ID)), (snapshot) => {
-      setModifiers(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Modifier)));
-    }, (err) => handleFirestoreError(err, OperationType.GET, 'modifiers'));
-    return unsubModifiers;
-  }, []);
-
   const handleOpenModal = (recipe?: Recipe) => {
     if (recipe) {
       setEditingRecipe({
@@ -395,8 +467,409 @@ export const MenuRecipes: React.FC<MenuRecipesProps> = ({
         trainingSteps: []
       });
     }
+    setNewSideName(`Side of ${recipe?.name || ''}`);
+    setNewSidePrice('');
+    setNewSideWeight('');
+    setNewSideUnit('g');
+    setNewAddonName(`+ ${recipe?.name || ''}`);
+    setNewAddonPrice('');
+    setNewAddonWeight('');
+    setNewAddonUnit('g');
+    setEditingSideId(null);
+    setEditingAddonId(null);
+    setYieldCalcTotalWeight('');
+    setYieldCalcUnit('g');
+    setYieldCalcCookingLoss('');
+    setYieldCalcPortions('');
     setActiveTab('basic');
     setIsModalOpen(true);
+  };
+
+  const handleAddSide = () => {
+    const weight = Number(newSideWeight) || 0;
+    const priceValue = Number(newSidePrice) || 0;
+    if (!newSideName.trim() || priceValue <= 0) {
+      toast.warning('Enter a side name and price.');
+      return;
+    }
+    const recipeTotalCost = calculateTotalCostShared(editingRecipe.ingredients, inventoryItems, recipes);
+    const costPerUnit = recipeTotalCost / (editingRecipe.yieldAmount || 1);
+    const existingSide = editingSideId ? (editingRecipe.sides || []).find(s => s.id === editingSideId) : undefined;
+    const sideData: RecipeSide = {
+      id: editingSideId || crypto.randomUUID(),
+      name: newSideName.trim(),
+      price: Math.round(priceValue * 100),
+      cost: Math.round(costPerUnit * weight * 100),
+      weight,
+      unit: newSideUnit,
+      // Preserve the POS link so editing doesn't orphan an already-synced menu item
+      posMenuItemId: existingSide?.posMenuItemId
+    };
+    setEditingRecipe(prev => ({
+      ...prev,
+      sides: editingSideId
+        ? (prev.sides || []).map(s => s.id === editingSideId ? sideData : s)
+        : [...(prev.sides || []), sideData]
+    }));
+    setEditingSideId(null);
+    setNewSideName(`Side of ${editingRecipe.name || ''}`);
+    setNewSidePrice('');
+    setNewSideWeight('');
+  };
+
+  const handleEditSide = (side: RecipeSide) => {
+    setEditingSideId(side.id);
+    setNewSideName(side.name);
+    setNewSidePrice(side.price / 100);
+    setNewSideWeight(side.weight);
+    setNewSideUnit(side.unit);
+  };
+
+  const handleCancelEditSide = () => {
+    setEditingSideId(null);
+    setNewSideName(`Side of ${editingRecipe.name || ''}`);
+    setNewSidePrice('');
+    setNewSideWeight('');
+  };
+
+  const handleDeleteSide = (id: string) => {
+    setEditingRecipe(prev => ({ ...prev, sides: (prev.sides || []).filter(s => s.id !== id) }));
+    if (editingSideId === id) handleCancelEditSide();
+  };
+
+  const handleAddAddon = () => {
+    const weight = Number(newAddonWeight) || 0;
+    const priceValue = Number(newAddonPrice) || 0;
+    if (!newAddonName.trim() || priceValue <= 0) {
+      toast.warning('Enter an add-on name and price.');
+      return;
+    }
+    const recipeTotalCost = calculateTotalCostShared(editingRecipe.ingredients, inventoryItems, recipes);
+    const costPerUnit = recipeTotalCost / (editingRecipe.yieldAmount || 1);
+    const existingAddon = editingAddonId ? (editingRecipe.addons || []).find(a => a.id === editingAddonId) : undefined;
+    const addonData: RecipeAddon = {
+      id: editingAddonId || crypto.randomUUID(),
+      name: newAddonName.trim(),
+      price: Math.round(priceValue * 100),
+      cost: Math.round(costPerUnit * weight * 100),
+      weight,
+      unit: newAddonUnit,
+      // Preserve the POS link so editing doesn't orphan an already-synced menu item
+      posMenuItemId: existingAddon?.posMenuItemId
+    };
+    setEditingRecipe(prev => ({
+      ...prev,
+      addons: editingAddonId
+        ? (prev.addons || []).map(a => a.id === editingAddonId ? addonData : a)
+        : [...(prev.addons || []), addonData]
+    }));
+    setEditingAddonId(null);
+    setNewAddonName(`+ ${editingRecipe.name || ''}`);
+    setNewAddonPrice('');
+    setNewAddonWeight('');
+  };
+
+  const handleEditAddon = (addon: RecipeAddon) => {
+    setEditingAddonId(addon.id);
+    setNewAddonName(addon.name);
+    setNewAddonPrice(addon.price / 100);
+    setNewAddonWeight(addon.weight);
+    setNewAddonUnit(addon.unit);
+  };
+
+  const handleCancelEditAddon = () => {
+    setEditingAddonId(null);
+    setNewAddonName(`+ ${editingRecipe.name || ''}`);
+    setNewAddonPrice('');
+    setNewAddonWeight('');
+  };
+
+  const handleDeleteAddon = (id: string) => {
+    setEditingRecipe(prev => ({ ...prev, addons: (prev.addons || []).filter(a => a.id !== id) }));
+    if (editingAddonId === id) handleCancelEditAddon();
+  };
+
+  // Unified Sides & Add-ons list: native sidesAndAddons docs + legacy recipe-embedded sides/addons
+  // + recipes mistakenly saved as Food menu items but categorized as Sides/Extras
+  const unifiedSideAddonRows = useMemo(() => {
+    const nativeRows = sideAddonItems.map(item => ({ ...item, _origin: 'native' as const }));
+    const recipeRows: (SideAddonItem & { _origin: 'recipe' })[] = [];
+    recipes.forEach(recipe => {
+      (recipe.sides || []).forEach(side => {
+        recipeRows.push({
+          id: side.id,
+          name: side.name,
+          type: 'side',
+          sourceType: 'batch',
+          sourceId: recipe.id || '',
+          sourceName: recipe.name,
+          weight: side.weight,
+          unit: side.unit,
+          price: side.price,
+          cost: side.cost,
+          vatRate: recipe.vatRate ?? 20,
+          gp: side.price > 0 ? Math.round(((side.price - side.cost) / side.price) * 10000) / 100 : 0,
+          categoryId: 'cat_sides',
+          posMenuItemId: side.posMenuItemId,
+          locationId: LOCATION_ID,
+          isActive: true,
+          lastUpdated: recipe.lastUpdated,
+          _origin: 'recipe'
+        });
+      });
+      (recipe.addons || []).forEach(addon => {
+        recipeRows.push({
+          id: addon.id,
+          name: addon.name,
+          type: 'addon',
+          sourceType: 'batch',
+          sourceId: recipe.id || '',
+          sourceName: recipe.name,
+          weight: addon.weight,
+          unit: addon.unit,
+          price: addon.price,
+          cost: addon.cost,
+          vatRate: recipe.vatRate ?? 20,
+          gp: addon.price > 0 ? Math.round(((addon.price - addon.cost) / addon.price) * 10000) / 100 : 0,
+          categoryId: 'cat_addons',
+          posMenuItemId: addon.posMenuItemId,
+          locationId: LOCATION_ID,
+          isActive: true,
+          lastUpdated: recipe.lastUpdated,
+          _origin: 'recipe'
+        });
+      });
+    });
+
+    const misplacedRecipeRows: (SideAddonItem & { _origin: 'recipe' })[] = recipes
+      .filter(recipe => {
+        if (recipe.type !== 'menu_item') return false;
+        const catId = recipe.posCategoryId || mapCategoryId(recipe);
+        return catId === 'cat_sides' || catId === 'cat_extras';
+      })
+      .map(recipe => {
+        const catId = recipe.posCategoryId || mapCategoryId(recipe);
+        const price = Math.round((Number(recipe.sellingPrice) || 0) * 100);
+        const cost = Math.round(calculateTotalCostShared(recipe.ingredients, inventoryItems, recipes) * 100);
+        return {
+          id: recipe.id,
+          name: recipe.name,
+          type: catId === 'cat_extras' ? 'addon' : 'side',
+          sourceType: 'batch',
+          sourceId: recipe.id,
+          sourceName: recipe.name,
+          weight: 1,
+          unit: 'portions',
+          price,
+          cost,
+          vatRate: recipe.vatRate ?? 20,
+          gp: price > 0 ? Math.round(((price - cost) / price) * 10000) / 100 : 0,
+          categoryId: catId,
+          posMenuItemId: recipe.id,
+          locationId: LOCATION_ID,
+          isActive: recipe.isActive ?? true,
+          lastUpdated: recipe.lastUpdated,
+          _origin: 'recipe'
+        };
+      });
+
+    return [...nativeRows, ...recipeRows, ...misplacedRecipeRows];
+  }, [sideAddonItems, recipes, inventoryItems]);
+
+  const sideAddonRows = unifiedSideAddonRows.filter(r => r.type === 'side');
+  const addonRows = unifiedSideAddonRows.filter(r => r.type === 'addon');
+
+  const sideAddonSourceResults = useMemo(() => {
+    if (!sideAddonSourceSearch.trim() || sideAddonSourceId) return [];
+    const term = sideAddonSourceSearch.toLowerCase();
+    if (sideAddonSourceType === 'batch') {
+      return recipes.filter(r => r.type === 'recipe' && r.name.toLowerCase().includes(term)).slice(0, 8);
+    }
+    return inventoryItems.filter(i => i.name.toLowerCase().includes(term)).slice(0, 8);
+  }, [sideAddonSourceSearch, sideAddonSourceId, sideAddonSourceType, recipes, inventoryItems]);
+
+  const sideAddonWeightNum = Number(sideAddonWeight) || 0;
+  const sideAddonPriceNum = Number(sideAddonPrice) || 0;
+  const sideAddonCostPence = Math.round(sideAddonSourceCostPerUnit * sideAddonWeightNum * 100);
+  const sideAddonPricePence = Math.round(sideAddonPriceNum * 100);
+  const sideAddonGP = sideAddonPricePence > 0
+    ? Math.round(((sideAddonPricePence - sideAddonCostPence) / sideAddonPricePence) * 10000) / 100
+    : 0;
+
+  const resetSideAddonForm = () => {
+    setEditingSideAddonId(null);
+    setSideAddonType('side');
+    setSideAddonSourceType('batch');
+    setSideAddonSourceId('');
+    setSideAddonSourceName('');
+    setSideAddonSourceCostPerUnit(0);
+    setSideAddonSourceSearch('');
+    setSideAddonName('');
+    setSideAddonWeight('');
+    setSideAddonUnit('g');
+    setSideAddonPrice('');
+  };
+
+  const handleOpenCreateSideAddon = (type: 'side' | 'addon') => {
+    resetSideAddonForm();
+    setSideAddonType(type);
+    setIsSideAddonModalOpen(true);
+  };
+
+  const handleOpenEditSideAddon = (item: SideAddonItem) => {
+    setEditingSideAddonId(item.id);
+    setSideAddonType(item.type);
+    setSideAddonSourceType(item.sourceType);
+    setSideAddonSourceId(item.sourceId);
+    setSideAddonSourceName(item.sourceName);
+    setSideAddonSourceCostPerUnit(item.weight > 0 ? (item.cost / 100) / item.weight : 0);
+    setSideAddonSourceSearch('');
+    setSideAddonName(item.name);
+    setSideAddonWeight(item.weight);
+    setSideAddonUnit(item.unit);
+    setSideAddonPrice(item.price / 100);
+    setIsSideAddonModalOpen(true);
+  };
+
+  const handleCloseSideAddonModal = () => {
+    setIsSideAddonModalOpen(false);
+    resetSideAddonForm();
+  };
+
+  const handleSetSideAddonType = (type: 'side' | 'addon') => {
+    setSideAddonType(type);
+    if (sideAddonSourceName) {
+      setSideAddonName(type === 'side' ? `Side of ${sideAddonSourceName}` : `+ ${sideAddonSourceName}`);
+    }
+  };
+
+  const handleClearSideAddonSource = () => {
+    setSideAddonSourceId('');
+    setSideAddonSourceName('');
+    setSideAddonSourceCostPerUnit(0);
+  };
+
+  const handleSelectSideAddonSource = (id: string, name: string) => {
+    let costPerUnit = 0;
+    if (sideAddonSourceType === 'batch') {
+      const recipe = recipes.find(r => r.id === id);
+      if (recipe) {
+        const totalCost = calculateTotalCostShared(recipe.ingredients, inventoryItems, recipes);
+        costPerUnit = totalCost / (recipe.yieldAmount || 1);
+      }
+    } else {
+      const item = inventoryItems.find(i => i.id === id);
+      costPerUnit = item?.pricePerUnit || 0;
+    }
+    setSideAddonSourceId(id);
+    setSideAddonSourceName(name);
+    setSideAddonSourceCostPerUnit(costPerUnit);
+    setSideAddonSourceSearch('');
+    setSideAddonName(sideAddonType === 'side' ? `Side of ${name}` : `+ ${name}`);
+  };
+
+  // Writes/refreshes the POS menuItems doc for a single side/addon and links posMenuItemId back
+  const syncSideAddonToPos = async (item: SideAddonItem): Promise<string> => {
+    const posMenuItemId = item.posMenuItemId || doc(collection(db, 'menuItems')).id;
+    await setDoc(doc(db, 'menuItems', posMenuItemId), {
+      name: item.name,
+      priceGross: item.price,
+      vatRate: item.vatRate,
+      categoryId: item.categoryId,
+      isSide: item.type === 'side',
+      isAddon: item.type === 'addon',
+      sourceId: item.sourceId,
+      sourceType: item.sourceType,
+      cost: item.cost,
+      locationId: item.locationId,
+      isDrink: false,
+      station: 'kitchen',
+      isActive: item.isActive
+    });
+    if (!item.posMenuItemId) {
+      await updateDoc(doc(db, 'sidesAndAddons', item.id), { posMenuItemId });
+    }
+    return posMenuItemId;
+  };
+
+  const handleSaveSideAddon = async () => {
+    if (!sideAddonSourceId) {
+      toast.warning('Select a source (batch recipe or raw ingredient) first.');
+      return;
+    }
+    if (!sideAddonName.trim()) {
+      toast.warning('Enter a name.');
+      return;
+    }
+    const weight = Number(sideAddonWeight) || 0;
+    const priceValue = Number(sideAddonPrice) || 0;
+    if (weight <= 0 || priceValue <= 0) {
+      toast.warning('Enter a weight and price.');
+      return;
+    }
+
+    setIsSavingSideAddon(true);
+    try {
+      const id = editingSideAddonId || doc(collection(db, 'sidesAndAddons')).id;
+      const existing = sideAddonItems.find(i => i.id === id);
+      const item: SideAddonItem = {
+        id,
+        name: sideAddonName.trim(),
+        type: sideAddonType,
+        sourceType: sideAddonSourceType,
+        sourceId: sideAddonSourceId,
+        sourceName: sideAddonSourceName,
+        weight,
+        unit: sideAddonUnit,
+        price: Math.round(priceValue * 100),
+        cost: Math.round(sideAddonSourceCostPerUnit * weight * 100),
+        vatRate: 20,
+        gp: sideAddonGP,
+        categoryId: sideAddonType === 'side' ? 'cat_sides' : 'cat_addons',
+        posMenuItemId: existing?.posMenuItemId,
+        locationId: LOCATION_ID,
+        isActive: true,
+        lastUpdated: new Date().toISOString()
+      };
+      const withTimeout = <T,>(p: Promise<T>, label: string) =>
+        Promise.race([
+          p,
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error(`Timed out writing ${label} (check Firestore rules / connection)`)), 15000)
+          )
+        ]);
+      await withTimeout(setDoc(doc(db, 'sidesAndAddons', id), cleanObject(item)), 'sidesAndAddons');
+      await withTimeout(syncSideAddonToPos({ ...item, posMenuItemId: existing?.posMenuItemId }), 'menuItems sync');
+      toast.success(`${sideAddonType === 'side' ? 'Side' : 'Add-on'} saved and synced to POS.`);
+      handleCloseSideAddonModal();
+    } catch (e) {
+      console.error('[SideAddon Save] Failed:', e);
+      toast.error(e instanceof Error ? e.message : 'Failed to save. Check console for details.');
+      handleFirestoreError(e, editingSideAddonId ? OperationType.UPDATE : OperationType.CREATE, 'sidesAndAddons');
+    } finally {
+      setIsSavingSideAddon(false);
+    }
+  };
+
+  const handleDeleteSideAddon = async (id: string) => {
+    try {
+      await deleteDoc(doc(db, 'sidesAndAddons', id));
+      toast.success('Removed.');
+    } catch (e) {
+      handleFirestoreError(e, OperationType.DELETE, `sidesAndAddons/${id}`);
+    }
+  };
+
+  const handleSyncSingleSideAddon = async (item: SideAddonItem) => {
+    setSyncingSideAddonId(item.id);
+    try {
+      await syncSideAddonToPos(item);
+      toast.success(`${item.name} synced to POS.`);
+    } catch (e) {
+      handleFirestoreError(e, OperationType.UPDATE, `sidesAndAddons/${item.id}`);
+    } finally {
+      setSyncingSideAddonId(null);
+    }
   };
 
   const handleAddIngredientRow = () => {
@@ -499,6 +972,7 @@ const handleSave = async () => {
       serviceChargeRate: Number(editingRecipe.serviceChargeRate) || 0,
       posId: editingRecipe.posId,
       posCategory: editingRecipe.posCategory,
+      posCategoryId: editingRecipe.posCategoryId,
       marginTarget: editingRecipe.marginTarget ? Number(editingRecipe.marginTarget) : undefined,
       yieldAmount: editingRecipe.yieldAmount ? Number(editingRecipe.yieldAmount) : undefined,
       yieldUnit: editingRecipe.yieldUnit,
@@ -528,6 +1002,8 @@ const handleSave = async () => {
       sustainabilityScore: editingRecipe.sustainabilityScore,
       carbonFootprint: editingRecipe.carbonFootprint,
       sustainabilityTips: editingRecipe.sustainabilityTips,
+      sides: editingRecipe.sides || [],
+      addons: editingRecipe.addons || [],
       lastUpdated: new Date().toISOString()
     };
 
@@ -1108,6 +1584,26 @@ const handleSave = async () => {
     }
   };
 
+  const handleSyncAll = async () => {
+    if (!onSyncAllToPos) return;
+    if (!window.confirm(`Sync all ${recipes.length} recipes to POS? This will overwrite all existing POS menu items.`)) return;
+    setIsSyncing(true);
+    setSyncResult(null);
+    try {
+      const result = await onSyncAllToPos();
+      setSyncResult(result);
+      if (result.failed === 0) {
+        alert(`✅ Sync complete! ${result.success} recipes synced to POS.`);
+      } else {
+        alert(`⚠️ Sync finished. ${result.success} succeeded, ${result.failed} failed. Check console for details.`);
+      }
+    } catch (e) {
+      alert('Sync failed. Check console for details.');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
   const downloadRecipeBook = async () => {
     const doc = new jsPDF();
     const logoUrl = "Backbonehub-ico.png";
@@ -1140,7 +1636,7 @@ const handleSave = async () => {
     doc.setFontSize(14);
     doc.setFont("helvetica", "normal");
     doc.setTextColor(150, 150, 150);
-    doc.text("Food Menu • Beverage Menu • Prep & Batches", 105, 145, { align: 'center' });
+    doc.text("Food Menu • Beverage Menu • Batches", 105, 145, { align: 'center' });
     
     doc.setFontSize(12);
     doc.text(`Version 2.0 | Generated: ${new Date().toLocaleDateString()}`, 105, 260, { align: 'center' });
@@ -1266,7 +1762,7 @@ const handleSave = async () => {
 
       // Pricing & Profit Section
       const cost = calculateTotalCost(recipe.ingredients);
-      const priceExcVat = recipe.sellingPrice;
+      const priceExcVat = recipe.sellingPrice / (1 + (Number(recipe.vatRate) || 20) / 100); // sellingPrice is gross inc. VAT
       const marginCash = priceExcVat - cost;
       const marginPercent = priceExcVat > 0 ? (marginCash / priceExcVat) * 100 : 0;
 
@@ -1283,8 +1779,8 @@ const handleSave = async () => {
       doc.text("Cost of Goods (COGS):", 14, yPos);
       doc.text(`£${cost.toFixed(2)}`, 60, yPos);
 
-      doc.text("Target Selling Price:", 14, yPos + 6);
-      doc.text(`£${priceExcVat.toFixed(2)}`, 60, yPos + 6);
+      doc.text(`Menu Price (inc. VAT): £${recipe.sellingPrice.toFixed(2)}`, 14, yPos + 6);
+      doc.text(`Net (exc. VAT): £${priceExcVat.toFixed(2)}`, 14, yPos + 9);
 
       doc.setFont("helvetica", "bold");
       doc.text("Gross Profit Margin:", 14, yPos + 12);
@@ -1541,19 +2037,352 @@ const handleSave = async () => {
     }
   };
 
+  // Top-level, non-drink POS categories available as Food tab filter pills
+  // (cat_sides/cat_extras/cat_addons are excluded — those recipes never show in the Food tab)
+  const foodPosCategories = menuCategories
+    .filter(c => c.parentId === null && !c.isDrink && !['cat_addons', 'cat_sides', 'cat_extras'].includes(c.id))
+    .sort((a, b) => a.order - b.order);
+
+  // Direct children of Drinks (Margaritas, Cocktails, Mocktails, Beers, Wines, Spirits, Soft Drinks, Mixers, Hot Drinks)
+  const beveragePosCategories = menuCategories
+    .filter(c => c.parentId === 'cat_drinks')
+    .sort((a, b) => a.order - b.order);
+
+  // True if categoryId is ancestorId itself, or a descendant of it (e.g. cat_wine_white under cat_wines)
+  const isCategoryOrDescendant = (categoryId: string | undefined, ancestorId: string, allCategories: MenuCategory[]): boolean => {
+    if (!categoryId) return false;
+    if (categoryId === ancestorId) return true;
+    const cat = allCategories.find(c => c.id === categoryId);
+    if (!cat || !cat.parentId) return false;
+    return isCategoryOrDescendant(cat.parentId, ancestorId, allCategories);
+  };
+
+  // Flattens the full menuCategories tree (any depth) into a depth-annotated list
+  // so every category, at every level, is a selectable POS Category option.
+  const categoryOptionTree = useMemo(() => {
+    const byParent = new Map<string | null, MenuCategory[]>();
+    menuCategories.forEach(cat => {
+      const key = cat.parentId ?? null;
+      if (!byParent.has(key)) byParent.set(key, []);
+      byParent.get(key)!.push(cat);
+    });
+    byParent.forEach(list => list.sort((a, b) => a.order - b.order));
+
+    const flat: { id: string; name: string; depth: number }[] = [];
+    const walk = (parentId: string | null, depth: number) => {
+      (byParent.get(parentId) || []).forEach(cat => {
+        flat.push({ id: cat.id, name: cat.name, depth });
+        walk(cat.id, depth + 1);
+      });
+    };
+    walk(null, 0);
+    return flat;
+  }, [menuCategories]);
+
+  // Builds the full "Parent — Child — Grandchild" label for a category ID by walking its parentId chain
+  const resolveCategoryPath = (categoryId: string | undefined, allCategories: MenuCategory[]): string | null => {
+    if (!categoryId) return null;
+    const cat = allCategories.find(c => c.id === categoryId);
+    if (!cat) return null;
+    if (cat.parentId) {
+      const parentPath = resolveCategoryPath(cat.parentId, allCategories);
+      return parentPath ? `${parentPath} — ${cat.name}` : cat.name;
+    }
+    return cat.name;
+  };
+
+  const slugifyCategoryName = (name: string) =>
+    name.toLowerCase().trim().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+
+  const handleCreateCategory = async () => {
+    const trimmedName = newCategoryName.trim();
+    if (!trimmedName) return;
+
+    setIsCreatingCategory(true);
+    try {
+      const id = `cat_${slugifyCategoryName(trimmedName)}`;
+      const parent = menuCategories.find(c => c.id === newCategoryParentId);
+      const newCategory: MenuCategory = {
+        id,
+        name: trimmedName,
+        parentId: newCategoryParentId || null,
+        order: 99,
+        isDrink: parent?.isDrink ?? false,
+        allowSubcategories: false,
+        hidden: false,
+        locationId: LOCATION_ID,
+      };
+      await setDoc(doc(db, 'menuCategories', id), newCategory);
+
+      setEditingRecipe(prev => ({ ...prev, posCategoryId: id, subCategory: id }));
+      setNewCategoryName('');
+      setNewCategoryParentId('');
+      setShowAddCategoryForm(false);
+      toast.success(`Created category "${trimmedName}".`);
+    } catch (e) {
+      console.error('Failed to create menu category:', e);
+      toast.error(`Failed to create category: ${e instanceof Error ? e.message : 'Unknown error'}`);
+    } finally {
+      setIsCreatingCategory(false);
+    }
+  };
+
+  // ── Set Menus & Specials ──────────────────────────────────────────────
+  const getSetMenuTotalCost = (courses: SetMenuCourse[] | undefined): number =>
+    (courses || []).reduce((sum, c) => sum + c.items.reduce((s, i) => s + (i.cost || 0), 0), 0);
+
+  const handleOpenCreateSetMenu = () => {
+    const id = doc(collection(db, 'setMenus')).id;
+    setEditingSetMenu({
+      id,
+      name: '',
+      description: '',
+      eventDate: new Date().toISOString().slice(0, 10),
+      pricePerHead: 0,
+      covers: 1,
+      courses: [],
+      totalCost: 0,
+      totalGP: 0,
+      isActive: false
+    });
+    setSetMenuEstimatedCovers('');
+    setSetMenuDishSearch('');
+    setSetMenuSearchCourseId(null);
+    setSetMenuNewDishCourseId(null);
+    setIsSetMenuModalOpen(true);
+  };
+
+  const handleOpenEditSetMenu = (setMenu: SetMenu) => {
+    setEditingSetMenu({ ...setMenu, covers: setMenu.covers ?? 1 });
+    setSetMenuEstimatedCovers('');
+    setSetMenuDishSearch('');
+    setSetMenuSearchCourseId(null);
+    setSetMenuNewDishCourseId(null);
+    setIsSetMenuModalOpen(true);
+  };
+
+  const handleCloseSetMenuModal = () => {
+    setIsSetMenuModalOpen(false);
+    setEditingSetMenu({});
+    setNewDishName('');
+    setNewDishDescription('');
+    setNewDishCost('');
+  };
+
+  const handleAddCourse = () => {
+    const newCourse: SetMenuCourse = { id: crypto.randomUUID(), name: '', items: [] };
+    setEditingSetMenu(prev => ({ ...prev, courses: [...(prev.courses || []), newCourse] }));
+  };
+
+  const handleUpdateCourseName = (courseId: string, name: string) => {
+    setEditingSetMenu(prev => ({
+      ...prev,
+      courses: (prev.courses || []).map(c => c.id === courseId ? { ...c, name } : c)
+    }));
+  };
+
+  const handleDeleteCourse = (courseId: string) => {
+    setEditingSetMenu(prev => ({ ...prev, courses: (prev.courses || []).filter(c => c.id !== courseId) }));
+  };
+
+  const handleAddExistingDishToCourse = (courseId: string, recipe: Recipe) => {
+    const cost = Math.round(calculateTotalCostShared(recipe.ingredients, inventoryItems, recipes) * 100);
+    const item: SetMenuCourseItem = { recipeId: recipe.id, recipeName: recipe.name, cost, isNew: false, quantity: 1 };
+    setEditingSetMenu(prev => ({
+      ...prev,
+      courses: (prev.courses || []).map(c =>
+        c.id === courseId && !c.items.some(i => i.recipeId === recipe.id)
+          ? { ...c, items: [...c.items, item] }
+          : c
+      )
+    }));
+    setSetMenuSearchCourseId(null);
+    setSetMenuDishSearch('');
+  };
+
+  const handleRemoveDishFromCourse = (courseId: string, recipeId: string) => {
+    setEditingSetMenu(prev => ({
+      ...prev,
+      courses: (prev.courses || []).map(c =>
+        c.id === courseId ? { ...c, items: c.items.filter(i => i.recipeId !== recipeId) } : c
+      )
+    }));
+  };
+
+  const handleSaveNewDish = async () => {
+    const trimmedName = newDishName.trim();
+    const costValue = Number(newDishCost) || 0;
+    if (!trimmedName || !setMenuNewDishCourseId) {
+      toast.warning('Enter a dish name.');
+      return;
+    }
+    setIsSavingNewDish(true);
+    try {
+      const recipeRef = doc(collection(db, 'recipes'));
+      const timestamp = new Date().toISOString();
+      const newRecipe = cleanObject({
+        name: trimmedName,
+        description: newDishDescription.trim() || undefined,
+        type: 'menu_item' as RecipeType,
+        category: 'Food',
+        sellingPrice: 0,
+        vatRate: 20,
+        ingredients: [],
+        lastUpdated: timestamp,
+        locationId: LOCATION_ID,
+        isEventSpecial: true,
+        eventMenuId: editingSetMenu.id
+      });
+      await setDoc(recipeRef, newRecipe);
+
+      const item: SetMenuCourseItem = {
+        recipeId: recipeRef.id,
+        recipeName: trimmedName,
+        cost: Math.round(costValue * 100),
+        isNew: true,
+        quantity: 1
+      };
+      setEditingSetMenu(prev => ({
+        ...prev,
+        courses: (prev.courses || []).map(c =>
+          c.id === setMenuNewDishCourseId ? { ...c, items: [...c.items, item] } : c
+        )
+      }));
+
+      setNewDishName('');
+      setNewDishDescription('');
+      setNewDishCost('');
+      setSetMenuNewDishCourseId(null);
+      toast.success(`Created "${trimmedName}" — also added to the Food tab, marked Special.`);
+    } catch (e) {
+      console.error('Failed to create new dish:', e);
+      toast.error(`Failed to create dish: ${e instanceof Error ? e.message : 'Unknown error'}`);
+    } finally {
+      setIsSavingNewDish(false);
+    }
+  };
+
+  const persistSetMenu = async (activate: boolean) => {
+    if (!editingSetMenu.name?.trim()) {
+      toast.warning('Enter an event name.');
+      return;
+    }
+    setIsSavingSetMenu(true);
+    try {
+      const id = editingSetMenu.id || doc(collection(db, 'setMenus')).id;
+      const courses = editingSetMenu.courses || [];
+      const totalCost = getSetMenuTotalCost(courses);
+      const pricePerHead = Math.round(Number(editingSetMenu.pricePerHead) || 0);
+      // Standard 20% VAT assumed — SetMenu schema has no per-event vatRate field
+      const pricePerHeadExVat = pricePerHead / 1.2;
+      const totalGP = pricePerHeadExVat > 0 ? calculateGP(pricePerHeadExVat, totalCost) : 0;
+
+      const setMenuDoc: SetMenu = {
+        id,
+        name: editingSetMenu.name.trim(),
+        description: editingSetMenu.description || '',
+        eventDate: editingSetMenu.eventDate || new Date().toISOString().slice(0, 10),
+        pricePerHead,
+        covers: Math.max(1, Math.round(Number(editingSetMenu.covers) || 1)),
+        courses,
+        totalCost,
+        totalGP,
+        isActive: activate || editingSetMenu.isActive || false,
+        locationId: LOCATION_ID,
+        lastUpdated: new Date().toISOString()
+      };
+
+      await setDoc(doc(db, 'setMenus', id), cleanObject(setMenuDoc));
+
+      if (activate) {
+        const batch = writeBatch(db);
+        batch.set(doc(db, 'menuCategories', 'cat_specials'), cleanObject({
+          id: 'cat_specials',
+          name: 'Specials',
+          parentId: null,
+          order: 5,
+          isDrink: false,
+          allowSubcategories: false,
+          hidden: false,
+          locationId: LOCATION_ID
+        }));
+        courses.forEach(course => {
+          course.items.forEach(item => {
+            // Namespaced ID (not the recipe's own menuItems doc) so activating an event
+            // doesn't overwrite that dish's normal, permanent POS categorization.
+            const specialItemRef = doc(db, 'menuItems', `special_${id}_${item.recipeId}`);
+            batch.set(specialItemRef, cleanObject({
+              name: item.recipeName,
+              categoryId: 'cat_specials',
+              // Set menu price overrides each item's individual price
+              priceGross: pricePerHead,
+              vatRate: 20,
+              active: true,
+              locationId: LOCATION_ID,
+              recipeId: item.recipeId,
+              setMenuId: id,
+              lastUpdated: new Date().toISOString()
+            }));
+          });
+        });
+        await batch.commit();
+        toast.success(`"${setMenuDoc.name}" activated on POS under Specials.`);
+      } else {
+        toast.success(`"${setMenuDoc.name}" saved as draft.`);
+      }
+
+      handleCloseSetMenuModal();
+    } catch (e) {
+      console.error('Failed to save set menu:', e);
+      toast.error(`Failed to save event menu: ${e instanceof Error ? e.message : 'Unknown error'}`);
+    } finally {
+      setIsSavingSetMenu(false);
+    }
+  };
+
+  const handleDeleteSetMenu = async (setMenu: SetMenu) => {
+    if (!window.confirm(`Delete "${setMenu.name}"? This cannot be undone.`)) return;
+    try {
+      await deleteDoc(doc(db, 'setMenus', setMenu.id));
+      toast.success(`Deleted "${setMenu.name}".`);
+    } catch (e) {
+      console.error('Failed to delete set menu:', e);
+      toast.error(`Failed to delete event menu: ${e instanceof Error ? e.message : 'Unknown error'}`);
+    }
+  };
+
+  const setMenuDishSearchResults = (() => {
+    if (!setMenuDishSearch.trim()) return [];
+    const term = setMenuDishSearch.toLowerCase();
+    return recipes.filter(r => r.type === 'menu_item' && r.name.toLowerCase().includes(term)).slice(0, 8);
+  })();
+
   const filteredRecipes = recipes.filter(r => {
     const matchesSearch = (r.name || '').toLowerCase().includes((searchTerm || '').toLowerCase());
-    
+
     let matchesCategory = true;
     if (mainTab === 'batches' || mainTab === 'allergy_matrix') {
       matchesCategory = filterCategory === 'All' || r.category === filterCategory;
     } else if (mainTab === 'beverage_menu') {
-      matchesCategory = filterCategory === 'All' || r.subCategory === filterCategory;
+      matchesCategory = beverageCategoryFilter === 'All' ||
+        isCategoryOrDescendant(r.posCategoryId, beverageCategoryFilter, menuCategories) ||
+        isCategoryOrDescendant(mapCategoryId(r), beverageCategoryFilter, menuCategories);
+    } else if (mainTab === 'food_menu') {
+      matchesCategory = foodCategoryFilter === 'All' ||
+        r.posCategoryId === foodCategoryFilter ||
+        mapCategoryId(r) === foodCategoryFilter;
     }
-    
+
     let matchesType = false;
     if (mainTab === 'food_menu') {
-      matchesType = r.type === 'menu_item' && r.category === 'Food';
+      // Recipes categorized as Sides/Extras/Add-ons belong in the Sides & Add-ons tab, not Food
+      const isSideOrAddonCategory =
+        r.posCategoryId === 'cat_sides' ||
+        r.posCategoryId === 'cat_extras' ||
+        r.posCategoryId === 'cat_addons' ||
+        mapCategoryId(r) === 'cat_sides' ||
+        mapCategoryId(r) === 'cat_extras';
+      matchesType = r.type === 'menu_item' && r.category === 'Food' && !isSideOrAddonCategory;
     } else if (mainTab === 'beverage_menu') {
       matchesType = r.type === 'menu_item' && r.category === 'Beverage';
     } else if (mainTab === 'batches') {
@@ -1561,7 +2390,7 @@ const handleSave = async () => {
     } else if (mainTab === 'allergy_matrix') {
       matchesType = true;
     }
-    
+
     return matchesSearch && matchesCategory && matchesType;
   });
 
@@ -1574,6 +2403,25 @@ const handleSave = async () => {
     )
     .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 
+  // Yield Calculator (Batch form helper) — costs shown in £, matching calculateTotalCostShared's convention used elsewhere in this form
+  const yieldCalcTotalBatchCost = calculateTotalCostShared(editingRecipe.ingredients, inventoryItems, recipes);
+  const yieldCalcWeightNum = Number(yieldCalcTotalWeight) || 0;
+  const yieldCalcLossNum = Number(yieldCalcCookingLoss) || 0;
+  const yieldCalcPortionsNum = Number(yieldCalcPortions) || 0;
+  const yieldCalcEstimatedYield = yieldCalcWeightNum * (1 - yieldCalcLossNum / 100);
+  const yieldCalcCostPerUnit = yieldCalcEstimatedYield > 0 ? yieldCalcTotalBatchCost / yieldCalcEstimatedYield : 0;
+  const yieldCalcCostPer100 = yieldCalcCostPerUnit * 100;
+  const yieldCalcCostPerPortion = yieldCalcPortionsNum > 0 ? yieldCalcCostPerUnit * (yieldCalcEstimatedYield / yieldCalcPortionsNum) : 0;
+
+  const handleUseCalculatedYield = () => {
+    setEditingRecipe(prev => ({
+      ...prev,
+      yieldAmount: Math.round(yieldCalcEstimatedYield * 100) / 100,
+      yieldUnit: yieldCalcUnit
+    }));
+    yieldFieldsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  };
+
   return (
     <div className="space-y-6 bg-main-bg min-h-full p-6">
       {/* Header */}
@@ -1584,8 +2432,36 @@ const handleSave = async () => {
             Menu Recipes & Costing
           </h2>
           <p className="mt-2 text-[10px] sm:text-sm text-text-muted font-medium uppercase tracking-widest">Create recipes, link ingredients, and track food costs with precision.</p>
+          <div className="mt-2 flex items-center gap-3">
+            <span className="inline-flex items-center gap-1.5 bg-accent/10 text-accent text-[10px] font-bold uppercase tracking-widest px-3 py-1 rounded-full border border-accent/20">
+              <span className="text-sm font-black">{recipes.length}</span> Total Recipes
+            </span>
+            <span className="inline-flex items-center gap-1.5 bg-success/10 text-success text-[10px] font-bold uppercase tracking-widest px-3 py-1 rounded-full border border-success/20">
+              <span className="text-sm font-black">{filteredRecipes.length}</span> Showing
+            </span>
+          </div>
         </div>
         <div className="mt-6 sm:mt-0 flex flex-wrap justify-center gap-2 sm:gap-3 w-full sm:w-auto">
+          {onSyncAllToPos && (
+            <Button
+              onClick={handleSyncAll}
+              disabled={isSyncing}
+              variant="secondary"
+              className="flex-1 sm:flex-none bg-accent/10 border border-accent/30 text-accent hover:bg-accent/20 px-4 sm:px-6 py-3 rounded-xl shadow-lg transition-all flex items-center justify-center font-bold uppercase tracking-widest text-[10px] disabled:opacity-50"
+            >
+              {isSyncing ? (
+                <>
+                  <span className="animate-spin mr-2 h-4 w-4 border-2 border-accent border-t-transparent rounded-full inline-block" />
+                  Syncing...
+                </>
+              ) : (
+                <>
+                  <span className="mr-2">⚡</span>
+                  Sync All to POS
+                </>
+              )}
+            </Button>
+          )}
           <Button 
             onClick={downloadRecipeBook}
             variant="secondary"
@@ -1594,21 +2470,14 @@ const handleSave = async () => {
             <Download className="mr-2 h-4 w-4 sm:h-5 sm:w-5" />
             <span className="inline">Recipe Book</span>
           </Button>
-          <Button 
-            onClick={() => {
-              if (mainTab === 'modifiers') {
-                setTriggerModifierCreate(prev => prev + 1);
-              } else {
-                handleOpenModal();
-              }
-            }}
+          <Button
+            onClick={() => handleOpenModal()}
             className="flex-1 sm:flex-none bg-accent hover:opacity-90 text-white px-4 sm:px-8 py-3 rounded-xl shadow-lg shadow-accent/20 transition-all flex items-center justify-center font-bold uppercase tracking-widest text-[10px]"
           >
             <Plus className="mr-2 h-4 w-4 sm:h-5 sm:w-5" />
             <span>
-              {mainTab === 'food_menu' ? 'Create Food' : 
-               mainTab === 'beverage_menu' ? 'Create Beverage' : 
-               mainTab === 'modifiers' ? 'Create Modifier' : 
+              {mainTab === 'food_menu' ? 'Create Food' :
+               mainTab === 'beverage_menu' ? 'Create Beverage' :
                'Create Batch'}
             </span>
           </Button>
@@ -1621,11 +2490,12 @@ const handleSave = async () => {
           {[
             { id: 'food_menu', label: 'Food' },
             { id: 'beverage_menu', label: 'Beverage' },
-            { id: 'batches', label: 'Prep' },
+            { id: 'batches', label: 'Batch' },
+            { id: 'sides_addons', label: 'Sides & Add-ons' },
+            { id: 'set_menus', label: 'Set Menus & Specials' },
             { id: 'gp_health', label: 'Health' },
             { id: 'allergy_matrix', label: 'Allergies' },
-            { id: 'recipe_ai', label: 'AI Builder' },
-            { id: 'modifiers', label: 'Modifiers' }
+            { id: 'recipe_ai', label: 'AI Builder' }
           ].map((tab) => (
             <button
               key={tab.id}
@@ -1808,14 +2678,14 @@ const handleSave = async () => {
               const allItems = recipes;
               const lowGPItems = allItems.filter(r => {
                 const cost = calculateTotalCostShared(r.ingredients, inventoryItems, recipes);
-                const priceExcVat = r.sellingPrice;
+                const priceExcVat = r.sellingPrice / (1 + (Number(r.vatRate) || 20) / 100); // sellingPrice is gross inc. VAT
                 const marginCash = priceExcVat - cost;
                 const marginPercent = priceExcVat > 0 ? (marginCash / priceExcVat) * 100 : 0;
                 return marginPercent < targetGP;
               });
               const avgGP = allItems.reduce((acc, r) => {
                 const cost = calculateTotalCostShared(r.ingredients, inventoryItems, recipes);
-                const priceExcVat = r.sellingPrice;
+                const priceExcVat = r.sellingPrice / (1 + (Number(r.vatRate) || 20) / 100); // sellingPrice is gross inc. VAT
                 const marginCash = priceExcVat - cost;
                 const marginPercent = priceExcVat > 0 ? (marginCash / priceExcVat) * 100 : 0;
                 return acc + marginPercent;
@@ -1909,13 +2779,13 @@ const handleSave = async () => {
                 <tbody className="divide-y divide-border-grey">
                   {recipes.filter(r => {
                     const cost = calculateTotalCostShared(r.ingredients, inventoryItems, recipes);
-                    const priceExcVat = r.sellingPrice;
+                    const priceExcVat = r.sellingPrice / (1 + (Number(r.vatRate) || 20) / 100); // sellingPrice is gross inc. VAT
                     const marginCash = priceExcVat - cost;
                     const marginPercent = priceExcVat > 0 ? (marginCash / priceExcVat) * 100 : 0;
                     return marginPercent < targetGP;
                   }).map(recipe => {
                     const cost = calculateTotalCostShared(recipe.ingredients, inventoryItems, recipes);
-                    const priceExcVat = recipe.sellingPrice;
+                    const priceExcVat = recipe.sellingPrice / (1 + (Number(recipe.vatRate) || 20) / 100); // sellingPrice is gross inc. VAT
                     const marginCash = priceExcVat - cost;
                     const marginPercent = priceExcVat > 0 ? (marginCash / priceExcVat) * 100 : 0;
                     
@@ -1968,13 +2838,13 @@ const handleSave = async () => {
             <div className="md:hidden divide-y divide-border-grey">
               {recipes.filter(r => {
                 const cost = calculateTotalCostShared(r.ingredients, inventoryItems, recipes);
-                const priceExcVat = r.sellingPrice;
+                const priceExcVat = r.sellingPrice / (1 + (Number(r.vatRate) || 20) / 100); // sellingPrice is gross inc. VAT
                 const marginCash = priceExcVat - cost;
                 const marginPercent = priceExcVat > 0 ? (marginCash / priceExcVat) * 100 : 0;
                 return marginPercent < targetGP;
               }).map(recipe => {
                 const cost = calculateTotalCostShared(recipe.ingredients, inventoryItems, recipes);
-                const priceExcVat = recipe.sellingPrice;
+                const priceExcVat = recipe.sellingPrice / (1 + (Number(recipe.vatRate) || 20) / 100); // sellingPrice is gross inc. VAT
                 const marginCash = priceExcVat - cost;
                 const marginPercent = priceExcVat > 0 ? (marginCash / priceExcVat) * 100 : 0;
                 const suggestedPrice = cost / (1 - targetGP / 100);
@@ -2016,7 +2886,7 @@ const handleSave = async () => {
 
             {recipes.filter(r => {
               const cost = calculateTotalCostShared(r.ingredients, inventoryItems, recipes);
-              const priceExcVat = r.sellingPrice;
+              const priceExcVat = r.sellingPrice / (1 + (Number(r.vatRate) || 20) / 100); // sellingPrice is gross inc. VAT
               const marginCash = priceExcVat - cost;
               const marginPercent = priceExcVat > 0 ? (marginCash / priceExcVat) * 100 : 0;
               return marginPercent < targetGP;
@@ -2033,11 +2903,6 @@ const handleSave = async () => {
             )}
           </div>
         </div>
-      ) : mainTab === 'modifiers' ? (
-        <ModifierManagement 
-          inventoryItems={inventoryItems} 
-          triggerCreate={triggerModifierCreate}
-        />
       ) : mainTab === 'recipe_ai' ? (
         <div className="space-y-6">
           <div className="bg-card-bg shadow-2xl rounded-2xl p-8 border border-border-grey">
@@ -2172,6 +3037,186 @@ const handleSave = async () => {
             </div>
           </div>
         </div>
+      ) : mainTab === 'sides_addons' ? (
+        <div className="space-y-6">
+          <div className="flex flex-col sm:flex-row justify-between items-center gap-3 bg-card-bg p-4 sm:p-6 rounded-2xl border border-border-grey">
+            <div className="flex flex-wrap gap-2 w-full sm:w-auto">
+              <Button
+                onClick={() => handleOpenCreateSideAddon('side')}
+                className="flex-1 sm:flex-none bg-accent hover:opacity-90 text-white px-4 sm:px-6 py-3 rounded-xl shadow-lg shadow-accent/20 transition-all flex items-center justify-center font-bold uppercase tracking-widest text-[10px]"
+              >
+                <Plus className="mr-2 h-4 w-4" /> Create Side
+              </Button>
+              <Button
+                onClick={() => handleOpenCreateSideAddon('addon')}
+                className="flex-1 sm:flex-none bg-accent hover:opacity-90 text-white px-4 sm:px-6 py-3 rounded-xl shadow-lg shadow-accent/20 transition-all flex items-center justify-center font-bold uppercase tracking-widest text-[10px]"
+              >
+                <Plus className="mr-2 h-4 w-4" /> Create Add-on
+              </Button>
+            </div>
+            {onSyncAllToPos && (
+              <Button
+                onClick={handleSyncAll}
+                disabled={isSyncing}
+                variant="secondary"
+                className="flex-1 sm:flex-none bg-accent/10 border border-accent/30 text-accent hover:bg-accent/20 px-4 sm:px-6 py-3 rounded-xl shadow-lg transition-all flex items-center justify-center font-bold uppercase tracking-widest text-[10px] disabled:opacity-50"
+              >
+                {isSyncing ? (
+                  <>
+                    <span className="animate-spin mr-2 h-4 w-4 border-2 border-accent border-t-transparent rounded-full inline-block" />
+                    Syncing...
+                  </>
+                ) : (
+                  <>
+                    <span className="mr-2">⚡</span>
+                    Sync All to POS
+                  </>
+                )}
+              </Button>
+            )}
+          </div>
+
+          {[{ label: 'Sides', rows: sideAddonRows }, { label: 'Add-ons', rows: addonRows }].map(section => (
+            <div key={section.label} className="bg-card-bg shadow-2xl rounded-2xl border border-border-grey overflow-hidden">
+              <div className="px-6 py-4 border-b border-border-grey">
+                <h3 className="text-sm font-bold text-text-navy uppercase tracking-widest">{section.label}</h3>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-border-grey">
+                  <thead className="bg-main-bg">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-[10px] font-bold text-text-muted uppercase tracking-widest">Name</th>
+                      <th className="px-4 py-3 text-left text-[10px] font-bold text-text-muted uppercase tracking-widest">Source</th>
+                      <th className="px-4 py-3 text-right text-[10px] font-bold text-text-muted uppercase tracking-widest">Weight</th>
+                      <th className="px-4 py-3 text-left text-[10px] font-bold text-text-muted uppercase tracking-widest">Unit</th>
+                      <th className="px-4 py-3 text-right text-[10px] font-bold text-text-muted uppercase tracking-widest">Cost</th>
+                      <th className="px-4 py-3 text-right text-[10px] font-bold text-text-muted uppercase tracking-widest">Price</th>
+                      <th className="px-4 py-3 text-right text-[10px] font-bold text-text-muted uppercase tracking-widest">GP%</th>
+                      <th className="px-4 py-3 text-right text-[10px] font-bold text-text-muted uppercase tracking-widest">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-card-bg divide-y divide-border-grey">
+                    {section.rows.map((row: any) => (
+                      <tr key={row.id} className="hover:bg-secondary-surface transition-colors">
+                        <td className="px-4 py-3 text-sm font-bold text-text-navy">{row.name}</td>
+                        <td className="px-4 py-3 text-xs text-text-muted">
+                          {row.sourceName}
+                          {row._origin === 'recipe' && (
+                            <span className="ml-2 text-[9px] font-bold text-accent uppercase tracking-widest">Via Recipe</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-sm text-right text-text-navy">{row.weight}</td>
+                        <td className="px-4 py-3 text-xs text-text-muted">{row.unit}</td>
+                        <td className="px-4 py-3 text-sm text-right text-text-navy">£{(row.cost / 100).toFixed(2)}</td>
+                        <td className="px-4 py-3 text-sm text-right font-bold text-text-navy">£{(row.price / 100).toFixed(2)}</td>
+                        <td className="px-4 py-3 text-sm text-right font-bold text-success">{row.gp.toFixed(1)}%</td>
+                        <td className="px-4 py-3 text-right">
+                          {row._origin === 'native' ? (
+                            <div className="flex justify-end gap-2">
+                              <button onClick={() => handleOpenEditSideAddon(row)} className="p-2 text-text-muted hover:text-accent transition-colors" title="Edit">
+                                <Edit2 className="h-4 w-4" />
+                              </button>
+                              <button
+                                onClick={() => handleSyncSingleSideAddon(row)}
+                                disabled={syncingSideAddonId === row.id}
+                                className="p-2 text-text-muted hover:text-accent transition-colors disabled:opacity-50"
+                                title="Sync to POS"
+                              >
+                                {syncingSideAddonId === row.id ? (
+                                  <span className="animate-spin h-4 w-4 border-2 border-accent border-t-transparent rounded-full inline-block" />
+                                ) : (
+                                  <span>⚡</span>
+                                )}
+                              </button>
+                              <button
+                                onClick={() => { if (window.confirm(`Delete "${row.name}"?`)) handleDeleteSideAddon(row.id); }}
+                                className="p-2 text-text-muted hover:text-error transition-colors"
+                                title="Delete"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </button>
+                            </div>
+                          ) : (
+                            <span className="text-[9px] text-text-muted font-bold uppercase tracking-widest">Edit on recipe</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                    {section.rows.length === 0 && (
+                      <tr>
+                        <td colSpan={8} className="px-4 py-10 text-center text-text-muted text-sm font-medium">
+                          No {section.label.toLowerCase()} yet.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : mainTab === 'set_menus' ? (
+        <div className="space-y-6">
+          <div className="flex flex-col sm:flex-row justify-between items-center gap-3 bg-card-bg p-4 sm:p-6 rounded-2xl border border-border-grey">
+            <h3 className="text-sm font-bold text-text-navy uppercase tracking-widest flex items-center gap-2">
+              <Calendar className="h-4 w-4 text-accent" /> Event Menus
+            </h3>
+            <Button
+              onClick={handleOpenCreateSetMenu}
+              className="bg-accent hover:opacity-90 text-white px-4 sm:px-6 py-3 rounded-xl shadow-lg shadow-accent/20 transition-all flex items-center justify-center font-bold uppercase tracking-widest text-[10px]"
+            >
+              <Plus className="mr-2 h-4 w-4" /> Create Event Menu
+            </Button>
+          </div>
+
+          {setMenus.length === 0 ? (
+            <div className="text-center py-20 bg-card-bg rounded-3xl border-2 border-dashed border-border-grey">
+              <Calendar className="mx-auto h-16 w-16 text-border-grey" />
+              <h3 className="mt-4 text-lg font-bold text-text-navy">No event menus yet</h3>
+              <p className="mt-2 text-text-muted">Create a fixed-price set menu for a special occasion.</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {setMenus.map(setMenu => (
+                <div key={setMenu.id} className="bg-card-bg rounded-3xl shadow-xl border border-border-grey p-6 flex flex-col">
+                  <div className="flex justify-between items-start mb-3">
+                    <div className="min-w-0">
+                      <h4 className="text-lg font-bold text-text-navy truncate">{setMenu.name}</h4>
+                      <p className="text-[10px] text-text-muted uppercase tracking-widest font-bold mt-1">
+                        {setMenu.eventDate ? new Date(setMenu.eventDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : 'No date set'}
+                      </p>
+                    </div>
+                    <span className={`text-[9px] font-bold uppercase tracking-widest px-2 py-1 rounded-lg whitespace-nowrap ${setMenu.isActive ? 'bg-success/10 text-success' : 'bg-secondary-surface text-text-muted'}`}>
+                      {setMenu.isActive ? 'Active' : 'Draft'}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3 border-t border-border-grey pt-4 mb-4 text-sm">
+                    <div>
+                      <span className="text-[9px] uppercase tracking-widest font-bold text-text-muted block mb-1">Price/Head</span>
+                      <p className="font-bold text-text-navy">£{((setMenu.pricePerHead || 0) / 100).toFixed(2)}</p>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-[9px] uppercase tracking-widest font-bold text-text-muted block mb-1">Cost</span>
+                      <p className="font-bold text-text-navy">£{((setMenu.totalCost || 0) / 100).toFixed(2)}</p>
+                    </div>
+                    <div className="col-span-2">
+                      <span className="text-[9px] uppercase tracking-widest font-bold text-text-muted block mb-1">GP%</span>
+                      <p className="font-bold text-accent">{(setMenu.totalGP || 0).toFixed(1)}%</p>
+                    </div>
+                  </div>
+                  <div className="flex gap-2 mt-auto pt-4 border-t border-border-grey">
+                    <button onClick={() => handleOpenEditSetMenu(setMenu)} className="flex-1 p-2 bg-main-bg hover:bg-accent/10 text-text-muted hover:text-accent rounded-xl transition-all border border-border-grey flex items-center justify-center">
+                      <Edit2 className="h-4 w-4" />
+                    </button>
+                    <button onClick={() => handleDeleteSetMenu(setMenu)} className="flex-1 p-2 bg-main-bg hover:bg-error/10 text-text-muted hover:text-error rounded-xl transition-all border border-border-grey flex items-center justify-center">
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       ) : (
         <>
           {/* Recipe Grid Controls */}
@@ -2186,20 +3231,6 @@ const handleSave = async () => {
                 onChange={(e) => setSearchTerm(e.target.value)}
               />
             </div>
-            {mainTab === 'beverage_menu' && (
-              <select
-                className="bg-main-bg border border-border-grey rounded-xl py-3 px-6 text-text-navy focus:ring-2 focus:ring-accent focus:outline-none text-sm transition-all min-w-[160px] appearance-none"
-                value={filterCategory}
-                onChange={(e) => setFilterCategory(e.target.value)}
-              >
-                <option value="All">All Categories</option>
-                <option value="Wine">Wine</option>
-                <option value="Spirits">Spirits</option>
-                <option value="Cocktails">Cocktails</option>
-                <option value="Beer">Beer</option>
-                <option value="Non-Alcoholic">Non-Alcoholic</option>
-              </select>
-            )}
             {mainTab === 'batches' && (
               <select
                 className="bg-main-bg border border-border-grey rounded-xl py-3 px-6 text-text-navy focus:ring-2 focus:ring-accent focus:outline-none text-sm transition-all min-w-[160px] appearance-none"
@@ -2214,6 +3245,46 @@ const handleSave = async () => {
             )}
           </div>
 
+          {mainTab === 'food_menu' && foodPosCategories.length > 0 && (
+            <div className="bg-card-bg p-1.5 rounded-2xl border border-border-grey w-full sm:w-fit mb-8 overflow-x-auto no-scrollbar">
+              <nav className="flex space-x-1 sm:space-x-2">
+                {[{ id: 'All', name: 'All' }, ...foodPosCategories].map((cat) => (
+                  <button
+                    key={cat.id}
+                    onClick={() => setFoodCategoryFilter(cat.id)}
+                    className={`whitespace-nowrap py-2.5 px-4 sm:px-5 rounded-xl font-bold text-[9px] sm:text-[10px] uppercase tracking-widest transition-all duration-200 ${
+                      foodCategoryFilter === cat.id
+                        ? 'bg-accent text-white shadow-lg shadow-accent/20'
+                        : 'text-text-muted hover:text-text-navy hover:bg-secondary-surface'
+                    }`}
+                  >
+                    {cat.name}
+                  </button>
+                ))}
+              </nav>
+            </div>
+          )}
+
+          {mainTab === 'beverage_menu' && beveragePosCategories.length > 0 && (
+            <div className="bg-card-bg p-1.5 rounded-2xl border border-border-grey w-full sm:w-fit mb-8 overflow-x-auto no-scrollbar">
+              <nav className="flex space-x-1 sm:space-x-2">
+                {[{ id: 'All', name: 'All' }, ...beveragePosCategories].map((cat) => (
+                  <button
+                    key={cat.id}
+                    onClick={() => setBeverageCategoryFilter(cat.id)}
+                    className={`whitespace-nowrap py-2.5 px-4 sm:px-5 rounded-xl font-bold text-[9px] sm:text-[10px] uppercase tracking-widest transition-all duration-200 ${
+                      beverageCategoryFilter === cat.id
+                        ? 'bg-accent text-white shadow-lg shadow-accent/20'
+                        : 'text-text-muted hover:text-text-navy hover:bg-secondary-surface'
+                    }`}
+                  >
+                    {cat.name}
+                  </button>
+                ))}
+              </nav>
+            </div>
+          )}
+
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
             {filteredRecipes.length === 0 ? (
               <div className="col-span-full text-center py-20 bg-card-bg rounded-3xl border-2 border-dashed border-border-grey">
@@ -2222,11 +3293,10 @@ const handleSave = async () => {
                 <p className="mt-2 text-text-muted">Get started by creating a new menu item or batch recipe.</p>
               </div>
             ) : (
-              filteredRecipes.map(recipe => {
+              filteredRecipes.map((recipe, recipeIndex) => {
                 const cost = calculateTotalCost(recipe.ingredients);
-                const priceExcVat = recipe.sellingPrice;
-                const vatAmount = priceExcVat * ((recipe.vatRate || 0) / 100);
-                const priceIncVat = priceExcVat + vatAmount;
+                const priceIncVat = recipe.sellingPrice; // sellingPrice is gross inc. VAT (menu price)
+                const priceExcVat = priceIncVat / (1 + (Number(recipe.vatRate) || 20) / 100);
                 const marginPercent = calculateGP(priceExcVat, cost);
                 const currentTargetGP = recipe.marginTarget || targetGP;
                 const isLowMargin = marginPercent < currentTargetGP;
@@ -2238,22 +3308,25 @@ const handleSave = async () => {
                     onClick={() => handleOpenModal(recipe)}
                   >
                     <div className="aspect-[16/9] xs:aspect-[4/3] w-full bg-main-bg flex items-center justify-center border-b border-border-grey overflow-hidden relative">
+                      <span className="absolute top-2 left-2 z-10 bg-accent text-white text-[10px] font-black px-2 py-0.5 rounded-full shadow">#{recipeIndex + 1}</span>
                       <img 
                         src={recipe.imageUrl || `https://picsum.photos/seed/${encodeURIComponent(recipe.name)}/400/400`} 
                         alt={recipe.name} 
                         className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" 
                         referrerPolicy="no-referrer" 
                       />
-                      <div className="absolute top-3 left-3 sm:top-4 sm:left-4 flex flex-col gap-2">
-                        <span className="text-[9px] sm:text-[10px] uppercase tracking-widest font-bold text-white bg-accent px-2 sm:px-3 py-1 rounded-full shadow-lg shadow-accent/20">
-                          {recipe.type === 'menu_item' ? 'Menu Item' : 'Recipe'}
-                        </span>
-                      </div>
                     </div>
                     <div className="p-4 sm:p-6 flex-1 flex flex-col">
                       <div className="flex justify-between items-start mb-3 sm:mb-4">
                         <div className="flex-1 min-w-0">
-                          <h3 className="text-lg sm:text-xl font-bold text-text-navy truncate leading-tight">{recipe.name}</h3>
+                          <h3 className="text-lg sm:text-xl font-bold text-text-navy truncate leading-tight flex items-center gap-2">
+                            {recipe.name}
+                            {recipe.isEventSpecial && (
+                              <span className="inline-flex items-center gap-1 bg-accent/10 text-accent text-[8px] sm:text-[9px] font-black px-2 py-0.5 rounded-full uppercase tracking-widest">
+                                <Sparkles className="h-2.5 w-2.5" /> Special
+                              </span>
+                            )}
+                          </h3>
                           <p className="text-[9px] sm:text-[10px] uppercase tracking-widest font-bold text-accent mt-1">{recipe.category} • {recipe.subCategory || 'General'}</p>
                         </div>
                         <button onClick={(e) => { e.stopPropagation(); handleOpenModal(recipe); }} className="p-2 text-text-muted hover:text-accent hover:bg-accent/10 rounded-xl transition-all">
@@ -2416,6 +3489,11 @@ const handleSave = async () => {
                   <p className="text-[10px] text-accent uppercase tracking-widest font-bold mt-1">
                     {editingRecipe.type === 'menu_item' ? 'Menu Item' : 'Batch Recipe'}
                   </p>
+                  {editingRecipe.type !== 'recipe' && (
+                    <p className="text-[10px] text-text-muted mt-1">
+                      Sides and Add-ons are created from batch recipes only.
+                    </p>
+                  )}
                 </div>
                 <button
                   onClick={() => setIsModalOpen(false)}
@@ -2434,7 +3512,7 @@ const handleSave = async () => {
                         { id: 'allergies', label: 'Allergies', icon: AlertCircle },
                         { id: 'training', label: 'Training', icon: Sparkles },
                         { id: 'sustainability', label: 'Sustainability', icon: Leaf },
-                        { id: 'modifiers', label: 'Modifiers', icon: Zap },
+                        { id: 'sides', label: 'Sides & Add-ons', icon: Zap, hidden: editingRecipe.type !== 'recipe' },
                       ].filter(tab => !tab.hidden).map((tab) => (
                         <button
                           key={tab.id}
@@ -2479,37 +3557,45 @@ const handleSave = async () => {
                           </div>
                         </div>
 
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                          <div>
-                            <label className="block text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2">Preparation Station</label>
-                            <select
-                              className="w-full bg-card-bg border border-border-grey rounded-xl py-3 px-4 text-text-navy focus:ring-2 focus:ring-accent focus:border-transparent focus:outline-none transition-all appearance-none"
-                              value={editingRecipe.station || 'Grill'}
-                              onChange={(e) => setEditingRecipe(prev => ({ ...prev, station: e.target.value as any }))}
-                            >
-                              <option value="Grill">Grill</option>
-                              <option value="Cold">Cold</option>
-                              <option value="Dessert">Dessert</option>
-                              <option value="Beverage">Beverage</option>
-                            </select>
+                        {editingRecipe.type !== 'recipe' && (
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div>
+                              <label className="block text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2">Preparation Station</label>
+                              <select
+                                className="w-full bg-card-bg border border-border-grey rounded-xl py-3 px-4 text-text-navy focus:ring-2 focus:ring-accent focus:border-transparent focus:outline-none transition-all appearance-none"
+                                value={editingRecipe.station || 'Grill'}
+                                onChange={(e) => setEditingRecipe(prev => ({ ...prev, station: e.target.value as any }))}
+                              >
+                                <option value="Grill">Grill</option>
+                                <option value="Cold">Cold</option>
+                                <option value="Dessert">Dessert</option>
+                                <option value="Beverage">Beverage</option>
+                              </select>
+                            </div>
+                            <div>
+                              <label className="block text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2">Course</label>
+                              <select
+                                className="w-full bg-card-bg border border-border-grey rounded-xl py-3 px-4 text-text-navy focus:ring-2 focus:ring-accent focus:border-transparent focus:outline-none transition-all appearance-none"
+                                value={editingRecipe.course || '1st Course'}
+                                onChange={(e) => setEditingRecipe(prev => ({ ...prev, course: e.target.value as any }))}
+                              >
+                                <optgroup label="Service Course">
+                                  <option value="1st Course">1st Course</option>
+                                  <option value="2nd Course">2nd Course</option>
+                                  <option value="3rd Course">3rd Course</option>
+                                </optgroup>
+                                <optgroup label="Menu Section">
+                                  <option value="Starters">Starters</option>
+                                  <option value="Tacos">Tacos</option>
+                                  <option value="Mains">Mains</option>
+                                  <option value="Desserts">Desserts</option>
+                                  <option value="Extras">Extras</option>
+                                  <option value="Drinks">Drinks</option>
+                                </optgroup>
+                              </select>
+                            </div>
                           </div>
-                          <div>
-                            <label className="block text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2">Course</label>
-                            <select
-                              className="w-full bg-card-bg border border-border-grey rounded-xl py-3 px-4 text-text-navy focus:ring-2 focus:ring-accent focus:border-transparent focus:outline-none transition-all appearance-none"
-                              value={editingRecipe.course || '1st Course'}
-                              onChange={(e) => setEditingRecipe(prev => ({ ...prev, course: e.target.value as any }))}
-                            >
-                              <option value="1st Course">1st Course</option>
-                              <option value="2nd Course">2nd Course</option>
-                              <option value="3rd Course">3rd Course</option>
-                              <option value="Sides">Sides</option>
-                              <option value="Desserts">Desserts</option>
-                              <option value="Starters">Starters</option>
-                              <option value="Mains">Mains</option>
-                            </select>
-                          </div>
-                        </div>
+                        )}
 
                         <div className="bg-accent/5 p-6 rounded-2xl border border-accent/20">
                           <div className="flex items-center justify-between mb-4">
@@ -2540,42 +3626,115 @@ const handleSave = async () => {
                         </div>
 
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          {editingRecipe.type !== 'recipe' && (
                           <div>
-                            <label className="block text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2">Sub-category</label>
+                            <label className="block text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2">POS Category</label>
                             <select
                               className="w-full bg-card-bg border border-border-grey rounded-xl py-3 px-4 text-text-navy focus:ring-accent focus:border-accent focus:outline-none appearance-none"
-                              value={editingRecipe.subCategory || ''}
-                              onChange={(e) => setEditingRecipe(prev => ({ ...prev, subCategory: e.target.value }))}
+                              value={editingRecipe.posCategoryId || editingRecipe.subCategory || ''}
+                              onChange={(e) => setEditingRecipe(prev => ({ ...prev, posCategoryId: e.target.value, subCategory: e.target.value }))}
                             >
-                              <option value="">Select Sub-category</option>
-                              {editingRecipe.category === 'Beverage' ? (
-                                <>
-                                  <option value="Wine - Red">Wine - Red</option>
-                                  <option value="Wine - White">Wine - White</option>
-                                  <option value="Wine - Rosé">Wine - Rosé</option>
-                                  <option value="Wine - Sparkling">Wine - Sparkling</option>
-                                  <option value="Spirits - Gin">Spirits - Gin</option>
-                                  <option value="Spirits - Vodka">Spirits - Vodka</option>
-                                  <option value="Spirits - Whiskey">Spirits - Whiskey</option>
-                                  <option value="Spirits - Rum">Spirits - Rum</option>
-                                  <option value="Spirits - Tequila/Mezcal">Spirits - Tequila/Mezcal</option>
-                                  <option value="Cocktails">Cocktails</option>
-                                  <option value="Beer">Beer</option>
-                                  <option value="Non-Alcoholic">Non-Alcoholic</option>
-                                </>
+                              <option value="">Select POS Category</option>
+                              {categoryOptionTree.length > 0 ? (
+                                // Dynamic from Firestore - full tree, every level selectable, indented by depth
+                                categoryOptionTree.map(opt => (
+                                  <option key={opt.id} value={opt.id}>
+                                    {'   '.repeat(opt.depth)}{opt.name}
+                                  </option>
+                                ))
                               ) : (
+                                // Fallback static list matching seeded categories
                                 <>
-                                  <option value="Starters">Starters</option>
-                                  <option value="Mains">Mains</option>
-                                  <option value="Tacos">Tacos</option>
-                                  <option value="Desserts">Desserts</option>
-                                  <option value="Sides">Sides</option>
-                                  <option value="Snacks">Snacks</option>
-                                  <option value="Modifiers">Modifiers</option>
+                                  <optgroup label="Food">
+                                    <option value="cat_starters">Starters</option>
+                                    <option value="cat_tacos">Tacos</option>
+                                    <option value="cat_mains">Mains</option>
+                                    <option value="cat_desserts">Desserts</option>
+                                    <option value="cat_extras">Extras</option>
+                                  </optgroup>
+                                  <optgroup label="Drinks">
+                                    <option value="cat_margaritas">Margaritas</option>
+                                    <option value="cat_cocktails">Cocktails</option>
+                                    <option value="cat_mocktails">Mocktails</option>
+                                    <option value="cat_beers">Beers</option>
+                                    <option value="cat_wine_white">Wines — White</option>
+                                    <option value="cat_wine_red">Wines — Red</option>
+                                    <option value="cat_wine_rose">Wines — Rosé</option>
+                                    <option value="cat_wine_sparkling">Wines — Sparkling</option>
+                                    <option value="cat_tequila">Spirits — Tequila</option>
+                                    <option value="cat_mezcal">Spirits — Mezcal</option>
+                                    <option value="cat_rum">Spirits — Rum</option>
+                                    <option value="cat_vodka">Spirits — Vodka</option>
+                                    <option value="cat_whiskey">Spirits — Whiskey</option>
+                                    <option value="cat_gin">Spirits — Gin</option>
+                                    <option value="cat_brandy">Spirits — Brandy</option>
+                                    <option value="cat_cognac">Spirits — Cognac</option>
+                                    <option value="cat_liqueur">Spirits — Liqueur</option>
+                                    <option value="cat_juices">Soft Drinks — Juices</option>
+                                    <option value="cat_jarritos">Soft Drinks — Jarritos</option>
+                                    <option value="cat_aguas_frescas">Soft Drinks — Aguas Frescas</option>
+                                    <option value="cat_water">Soft Drinks — Water</option>
+                                    <option value="cat_sodas">Soft Drinks — Sodas</option>
+                                    <option value="cat_mixers">Mixers</option>
+                                    <option value="cat_hot_drinks">Hot Drinks</option>
+                                  </optgroup>
                                 </>
                               )}
                             </select>
+                            <button
+                              type="button"
+                              onClick={() => setShowAddCategoryForm(prev => !prev)}
+                              className="mt-2 text-[10px] font-bold uppercase tracking-widest text-accent hover:opacity-80 transition-colors flex items-center"
+                            >
+                              <Plus className="h-3 w-3 mr-1.5" /> Add New Category
+                            </button>
+                            {showAddCategoryForm && (
+                              <div className="mt-3 p-4 bg-main-bg border border-border-grey rounded-xl space-y-3">
+                                <div>
+                                  <label className="block text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2">Parent Category</label>
+                                  <select
+                                    className="w-full bg-card-bg border border-border-grey rounded-xl py-2.5 px-3 text-text-navy text-sm focus:ring-accent focus:border-accent focus:outline-none appearance-none"
+                                    value={newCategoryParentId}
+                                    onChange={(e) => setNewCategoryParentId(e.target.value)}
+                                  >
+                                    <option value="">No parent (top-level)</option>
+                                    {categoryOptionTree.map(opt => (
+                                      <option key={opt.id} value={opt.id}>
+                                        {'   '.repeat(opt.depth)}{opt.name}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </div>
+                                <div>
+                                  <label className="block text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2">Name</label>
+                                  <input
+                                    type="text"
+                                    className="w-full bg-card-bg border border-border-grey rounded-xl py-2.5 px-3 text-text-navy text-sm focus:ring-accent focus:border-accent focus:outline-none"
+                                    value={newCategoryName}
+                                    onChange={(e) => setNewCategoryName(e.target.value)}
+                                    placeholder="e.g. Vegan Tacos"
+                                  />
+                                </div>
+                                <div className="flex gap-2">
+                                  <Button
+                                    onClick={handleCreateCategory}
+                                    disabled={!newCategoryName.trim() || isCreatingCategory}
+                                    className="flex-1 bg-accent hover:opacity-90 text-white py-2.5 rounded-xl font-bold uppercase tracking-widest text-[10px] disabled:opacity-50"
+                                  >
+                                    {isCreatingCategory ? <Loader2 className="h-4 w-4 animate-spin mx-auto" /> : 'Create'}
+                                  </Button>
+                                  <Button
+                                    onClick={() => { setShowAddCategoryForm(false); setNewCategoryName(''); setNewCategoryParentId(''); }}
+                                    variant="secondary"
+                                    className="flex-1 bg-transparent border border-border-grey text-text-navy hover:bg-card-bg py-2.5 rounded-xl font-bold uppercase tracking-widest text-[10px]"
+                                  >
+                                    Cancel
+                                  </Button>
+                                </div>
+                              </div>
+                            )}
                           </div>
+                          )}
                           <div>
                             <label className="block text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2">
                               {editingRecipe.type === 'recipe' ? 'Total Calories' : 'Calories'}
@@ -2602,36 +3761,115 @@ const handleSave = async () => {
                         </div>
 
                         {/* POS Mapping Section */}
-                        <div className="bg-card-bg p-6 rounded-2xl border border-border-grey shadow-sm">
-                          <h4 className="text-[10px] font-bold text-accent uppercase tracking-widest mb-4 flex items-center gap-2">
-                             <BookOpen className="h-4 w-4" /> POS Sync Configuration
-                          </h4>
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <div>
-                              <label className="block text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2">POS PLU / Product ID</label>
-                              <input
-                                type="text"
-                                className="w-full bg-main-bg border border-border-grey rounded-xl py-3 px-4 text-text-navy focus:ring-accent"
-                                value={editingRecipe.posId || ''}
-                                onChange={(e) => setEditingRecipe(prev => ({ ...prev, posId: e.target.value }))}
-                                placeholder="e.g. 10042"
-                              />
-                            </div>
-                            <div>
-                              <label className="block text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2">POS Category Name</label>
-                              <input
-                                type="text"
-                                className="w-full bg-main-bg border border-border-grey rounded-xl py-3 px-4 text-text-navy focus:ring-accent"
-                                value={editingRecipe.posCategory || ''}
-                                onChange={(e) => setEditingRecipe(prev => ({ ...prev, posCategory: e.target.value }))}
-                                placeholder="e.g. Hot Drinks"
-                              />
+                        {editingRecipe.type !== 'recipe' && (
+                          <div className="bg-card-bg p-6 rounded-2xl border border-border-grey shadow-sm">
+                            <h4 className="text-[10px] font-bold text-accent uppercase tracking-widest mb-4 flex items-center gap-2">
+                               <BookOpen className="h-4 w-4" /> POS Sync Configuration
+                            </h4>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                              <div>
+                                <label className="block text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2">POS PLU / Product ID</label>
+                                <input
+                                  type="text"
+                                  className="w-full bg-main-bg border border-border-grey rounded-xl py-3 px-4 text-text-navy focus:ring-accent"
+                                  value={editingRecipe.posId || ''}
+                                  onChange={(e) => setEditingRecipe(prev => ({ ...prev, posId: e.target.value }))}
+                                  placeholder="e.g. 10042"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2">POS Category (resolved)</label>
+                                <div className="w-full bg-main-bg border border-border-grey rounded-xl py-3 px-4 text-text-navy text-sm">
+                                  {editingRecipe.posCategoryId
+                                    ? (resolveCategoryPath(editingRecipe.posCategoryId, menuCategories) || editingRecipe.posCategoryId)
+                                    : <span className="text-text-muted italic">Set POS Category above</span>
+                                  }
+                                </div>
+                              </div>
                             </div>
                           </div>
-                        </div>
+                        )}
 
                         {mainTab === 'batches' && (
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div className="bg-card-bg border border-border-grey rounded-2xl p-6 space-y-4">
+                            <h4 className="text-[10px] font-bold text-accent uppercase tracking-widest flex items-center gap-2">
+                              <Calculator className="h-4 w-4" /> Yield Calculator
+                            </h4>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                              <div>
+                                <label className="block text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2">Total ingredient weight/volume</label>
+                                <div className="flex gap-2">
+                                  <input
+                                    type="number"
+                                    className="w-full bg-main-bg border border-border-grey rounded-xl py-3 px-4 text-text-navy focus:ring-accent focus:border-accent focus:outline-none"
+                                    value={yieldCalcTotalWeight}
+                                    onChange={(e) => setYieldCalcTotalWeight(e.target.value === '' ? '' : Number(e.target.value))}
+                                    placeholder="e.g. 3000"
+                                    min="0"
+                                  />
+                                  <select
+                                    className="bg-main-bg border border-border-grey rounded-xl py-3 px-3 text-text-navy focus:ring-accent focus:border-accent focus:outline-none appearance-none"
+                                    value={yieldCalcUnit}
+                                    onChange={(e) => setYieldCalcUnit(e.target.value as 'g' | 'ml')}
+                                  >
+                                    <option value="g">g</option>
+                                    <option value="ml">ml</option>
+                                  </select>
+                                </div>
+                              </div>
+                              <div>
+                                <label className="block text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2">Number of portions (optional)</label>
+                                <input
+                                  type="number"
+                                  className="w-full bg-main-bg border border-border-grey rounded-xl py-3 px-4 text-text-navy focus:ring-accent focus:border-accent focus:outline-none"
+                                  value={yieldCalcPortions}
+                                  onChange={(e) => setYieldCalcPortions(e.target.value === '' ? '' : Number(e.target.value))}
+                                  placeholder="e.g. 20"
+                                  min="0"
+                                />
+                              </div>
+                            </div>
+                            <div>
+                              <label className="block text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2">Cooking loss %</label>
+                              <input
+                                type="number"
+                                className="w-full md:w-1/2 bg-main-bg border border-border-grey rounded-xl py-3 px-4 text-text-navy focus:ring-accent focus:border-accent focus:outline-none"
+                                value={yieldCalcCookingLoss}
+                                onChange={(e) => setYieldCalcCookingLoss(e.target.value === '' ? '' : Number(e.target.value))}
+                                placeholder="e.g. 15"
+                                min="0"
+                                max="100"
+                              />
+                              <p className="text-[10px] text-text-muted mt-1">Water evaporation, trim waste etc.</p>
+                            </div>
+                            <div className="bg-accent/5 border border-accent/20 rounded-xl p-4 space-y-1.5">
+                              <div className="flex justify-between text-sm">
+                                <span className="text-text-muted">Estimated Yield</span>
+                                <span className="font-bold text-text-navy">{yieldCalcEstimatedYield.toFixed(0)}{yieldCalcUnit}</span>
+                              </div>
+                              <div className="flex justify-between text-sm">
+                                <span className="text-text-muted">Cost per 100{yieldCalcUnit}</span>
+                                <span className="font-bold text-text-navy">£{yieldCalcCostPer100.toFixed(2)}</span>
+                              </div>
+                              {yieldCalcPortionsNum > 0 && (
+                                <div className="flex justify-between text-sm">
+                                  <span className="text-text-muted">Cost per portion</span>
+                                  <span className="font-bold text-text-navy">£{yieldCalcCostPerPortion.toFixed(2)}</span>
+                                </div>
+                              )}
+                            </div>
+                            <Button
+                              onClick={handleUseCalculatedYield}
+                              disabled={yieldCalcEstimatedYield <= 0}
+                              className="w-full bg-accent hover:opacity-90 text-white py-3 rounded-xl font-bold uppercase tracking-widest text-[10px] disabled:opacity-50"
+                            >
+                              Use This Yield →
+                            </Button>
+                          </div>
+                        )}
+
+                        {mainTab === 'batches' && (
+                          <div ref={yieldFieldsRef} className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div>
                               <label className="block text-sm font-bold text-text-muted uppercase tracking-widest mb-2">Yield Amount</label>
                               <input
@@ -2786,7 +4024,7 @@ const handleSave = async () => {
                       <div className="space-y-8">
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                           <div className="space-y-2">
-                             <label className="block text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2">Price (Exc. VAT) £</label>
+                             <label className="block text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2">Price (Inc. VAT) £</label>
                              <div className="relative">
                                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-text-muted">£</span>
                                <input
@@ -2866,12 +4104,14 @@ const handleSave = async () => {
                         </div>
 
                         {(() => {
-                          const priceExcVat = Number(editingRecipe.sellingPrice) || 0;
+                          // sellingPrice is stored as GROSS (inc. VAT) — the menu price the customer sees
+                          const priceIncVat = Number(editingRecipe.sellingPrice) || 0;
                           const vatRate = Number(editingRecipe.vatRate) || 0;
                           const serviceChargeRate = Number(editingRecipe.serviceChargeRate) || 0;
                           
-                          const vatAmount = priceExcVat * (vatRate / 100);
-                          const priceIncVat = priceExcVat + vatAmount;
+                          // Derive NET exc. VAT from gross
+                          const priceExcVat = priceIncVat / (1 + vatRate / 100);
+                          const vatAmount = priceIncVat - priceExcVat;
                           const serviceChargeAmount = priceIncVat * (serviceChargeRate / 100);
                           const totalToCustomer = priceIncVat + serviceChargeAmount;
                           
@@ -2902,13 +4142,13 @@ const handleSave = async () => {
                                     </div>
                                     
                                     <div className="flex justify-between items-center p-4 bg-main-bg rounded-2xl border border-border-grey">
-                                      <span className="text-[10px] font-bold text-text-muted uppercase tracking-widest">Price (Exc. VAT)</span>
-                                      <span className="text-lg font-bold text-text-navy">£{priceExcVat.toFixed(2)}</span>
+                                      <span className="text-[10px] font-bold text-text-muted uppercase tracking-widest">Price (Inc. VAT)</span>
+                                      <span className="text-lg font-bold text-text-navy">£{priceIncVat.toFixed(2)}</span>
                                     </div>
                                     
                                     <div className="flex justify-between items-center p-4 bg-main-bg rounded-2xl border border-border-grey">
-                                      <span className="text-[10px] font-bold text-text-muted uppercase tracking-widest">VAT ({vatRate}%)</span>
-                                      <span className="text-lg font-bold text-text-muted/70">+ £{vatAmount.toFixed(2)}</span>
+                                      <span className="text-[10px] font-bold text-text-muted uppercase tracking-widest">VAT ({vatRate}%) — excl.</span>
+                                      <span className="text-lg font-bold text-text-muted/70">£{priceExcVat.toFixed(2)} net</span>
                                     </div>
                                   </div>
 
@@ -2917,7 +4157,7 @@ const handleSave = async () => {
                                     <div className="text-5xl font-bold">£{totalToCustomer.toFixed(2)}</div>
                                     <div className="mt-6 space-y-2 opacity-80">
                                       <div className="flex justify-between text-sm">
-                                        <span>Price (Inc. VAT)</span>
+                                        <span>Menu Price (Inc. VAT)</span>
                                         <span className="font-bold">£{priceIncVat.toFixed(2)}</span>
                                       </div>
                                       <div className="flex justify-between text-sm">
@@ -3599,55 +4839,266 @@ const handleSave = async () => {
                       </div>
                     )}
 
-                    {activeTab === 'modifiers' && (
-                      <div className="space-y-6">
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <h3 className="text-lg font-bold text-text-navy uppercase tracking-widest">Recipe Modifiers</h3>
-                            <p className="text-xs text-text-muted">Select modifiers available for this menu item.</p>
+                    {activeTab === 'sides' && editingRecipe.type === 'recipe' && (() => {
+                      const recipeTotalCost = calculateTotalCostShared(editingRecipe.ingredients, inventoryItems, recipes);
+                      const costPerUnit = recipeTotalCost / (editingRecipe.yieldAmount || 1);
+
+                      const sideWeightNum = Number(newSideWeight) || 0;
+                      const sideCostPreview = costPerUnit * sideWeightNum;
+                      const sidePriceNum = Number(newSidePrice) || 0;
+                      const sideGP = sidePriceNum > 0 ? ((sidePriceNum - sideCostPreview) / sidePriceNum) * 100 : 0;
+
+                      const addonWeightNum = Number(newAddonWeight) || 0;
+                      const addonCostPreview = costPerUnit * addonWeightNum;
+                      const addonPriceNum = Number(newAddonPrice) || 0;
+                      const addonGP = addonPriceNum > 0 ? ((addonPriceNum - addonCostPreview) / addonPriceNum) * 100 : 0;
+
+                      return (
+                        <div className="space-y-10">
+                          {/* SECTION 1 — SIDE */}
+                          <div className="space-y-4">
+                            <div>
+                              <h3 className="text-lg font-bold text-text-navy uppercase tracking-widest">Side</h3>
+                              <p className="text-xs text-text-muted">A side dish offered alongside this item, costed from its own weight and this recipe's ingredient cost.</p>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
+                              <div className="md:col-span-2">
+                                <label className="block text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2">Name</label>
+                                <input
+                                  type="text"
+                                  className="w-full bg-card-bg border border-border-grey rounded-xl py-3 px-4 text-text-navy focus:ring-2 focus:ring-accent focus:border-transparent focus:outline-none transition-all"
+                                  value={newSideName}
+                                  onChange={(e) => setNewSideName(e.target.value)}
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2">Price (£)</label>
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  min="0"
+                                  className="w-full bg-card-bg border border-border-grey rounded-xl py-3 px-4 text-text-navy focus:ring-2 focus:ring-accent focus:border-transparent focus:outline-none transition-all"
+                                  value={newSidePrice}
+                                  onChange={(e) => setNewSidePrice(e.target.value === '' ? '' : parseFloat(e.target.value))}
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2">Weight</label>
+                                <div className="flex gap-2">
+                                  <input
+                                    type="number"
+                                    step="0.01"
+                                    min="0"
+                                    className="w-full bg-card-bg border border-border-grey rounded-xl py-3 px-4 text-text-navy focus:ring-2 focus:ring-accent focus:border-transparent focus:outline-none transition-all"
+                                    value={newSideWeight}
+                                    onChange={(e) => setNewSideWeight(e.target.value === '' ? '' : parseFloat(e.target.value))}
+                                  />
+                                  <select
+                                    className="bg-card-bg border border-border-grey rounded-xl py-3 px-2 text-text-navy focus:ring-2 focus:ring-accent focus:border-transparent focus:outline-none transition-all appearance-none"
+                                    value={newSideUnit}
+                                    onChange={(e) => setNewSideUnit(e.target.value as 'g' | 'ml' | 'portions')}
+                                  >
+                                    <option value="g">g</option>
+                                    <option value="ml">ml</option>
+                                    <option value="portions">portions</option>
+                                  </select>
+                                </div>
+                              </div>
+                              <div>
+                                <label className="block text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2">Cost / GP%</label>
+                                <div className="bg-main-bg border border-border-grey rounded-xl py-3 px-4">
+                                  <p className="text-xs font-bold text-text-navy">£{sideCostPreview.toFixed(2)}</p>
+                                  <p className="text-[10px] font-bold text-accent">{sideGP.toFixed(1)}% GP</p>
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-3">
+                              <Button
+                                onClick={handleAddSide}
+                                className="bg-accent hover:opacity-90 text-white rounded-xl px-6 py-3 text-[10px] font-bold uppercase tracking-widest transition-all shadow-md shadow-accent/20"
+                              >
+                                {editingSideId ? (
+                                  <>
+                                    <Check className="mr-2 h-4 w-4 inline" />
+                                    Update Side
+                                  </>
+                                ) : (
+                                  <>
+                                    <Plus className="mr-2 h-4 w-4 inline" />
+                                    Add Side
+                                  </>
+                                )}
+                              </Button>
+                              {editingSideId && (
+                                <button
+                                  type="button"
+                                  onClick={handleCancelEditSide}
+                                  className="text-[10px] font-bold uppercase tracking-widest text-text-muted hover:text-text-navy transition-all"
+                                >
+                                  Cancel
+                                </button>
+                              )}
+                            </div>
+
+                            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                              {(editingRecipe.sides || []).map(side => {
+                                const gp = side.price > 0 ? ((side.price - side.cost) / side.price) * 100 : 0;
+                                return (
+                                  <div
+                                    key={side.id}
+                                    className={`flex items-center justify-between p-4 rounded-2xl border bg-card-bg ${
+                                      editingSideId === side.id ? 'border-accent shadow-sm' : 'border-border-grey'
+                                    }`}
+                                  >
+                                    <div>
+                                      <p className="text-xs font-bold text-text-navy">{side.name}</p>
+                                      <p className="text-[10px] text-text-muted">{side.weight}{side.unit} · £{(side.price / 100).toFixed(2)}</p>
+                                      <p className="text-[10px] font-bold text-accent">{gp.toFixed(1)}% GP</p>
+                                    </div>
+                                    <div className="flex items-center gap-1">
+                                      <button type="button" onClick={() => handleEditSide(side)} className="p-2 text-text-muted hover:text-accent hover:bg-accent/10 rounded-xl transition-all">
+                                        <Edit2 className="h-4 w-4" />
+                                      </button>
+                                      <button type="button" onClick={() => handleDeleteSide(side.id)} className="p-2 text-error hover:bg-error/10 rounded-xl transition-all">
+                                        <Trash2 className="h-4 w-4" />
+                                      </button>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                              {(!editingRecipe.sides || editingRecipe.sides.length === 0) && (
+                                <div className="col-span-full py-8 text-center bg-card-bg rounded-2xl border border-dashed border-border-grey">
+                                  <p className="text-xs text-text-muted">No sides added yet.</p>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* SECTION 2 — ADD-ON */}
+                          <div className="space-y-4">
+                            <div>
+                              <h3 className="text-lg font-bold text-text-navy uppercase tracking-widest">Add-on</h3>
+                              <p className="text-xs text-text-muted">An optional extra that can be added to this item.</p>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
+                              <div className="md:col-span-2">
+                                <label className="block text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2">Name</label>
+                                <input
+                                  type="text"
+                                  className="w-full bg-card-bg border border-border-grey rounded-xl py-3 px-4 text-text-navy focus:ring-2 focus:ring-accent focus:border-transparent focus:outline-none transition-all"
+                                  value={newAddonName}
+                                  onChange={(e) => setNewAddonName(e.target.value)}
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2">Price (£)</label>
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  min="0"
+                                  className="w-full bg-card-bg border border-border-grey rounded-xl py-3 px-4 text-text-navy focus:ring-2 focus:ring-accent focus:border-transparent focus:outline-none transition-all"
+                                  value={newAddonPrice}
+                                  onChange={(e) => setNewAddonPrice(e.target.value === '' ? '' : parseFloat(e.target.value))}
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2">Weight</label>
+                                <div className="flex gap-2">
+                                  <input
+                                    type="number"
+                                    step="0.01"
+                                    min="0"
+                                    className="w-full bg-card-bg border border-border-grey rounded-xl py-3 px-4 text-text-navy focus:ring-2 focus:ring-accent focus:border-transparent focus:outline-none transition-all"
+                                    value={newAddonWeight}
+                                    onChange={(e) => setNewAddonWeight(e.target.value === '' ? '' : parseFloat(e.target.value))}
+                                  />
+                                  <select
+                                    className="bg-card-bg border border-border-grey rounded-xl py-3 px-2 text-text-navy focus:ring-2 focus:ring-accent focus:border-transparent focus:outline-none transition-all appearance-none"
+                                    value={newAddonUnit}
+                                    onChange={(e) => setNewAddonUnit(e.target.value as 'g' | 'ml' | 'portions')}
+                                  >
+                                    <option value="g">g</option>
+                                    <option value="ml">ml</option>
+                                    <option value="portions">portions</option>
+                                  </select>
+                                </div>
+                              </div>
+                              <div>
+                                <label className="block text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2">Cost / GP%</label>
+                                <div className="bg-main-bg border border-border-grey rounded-xl py-3 px-4">
+                                  <p className="text-xs font-bold text-text-navy">£{addonCostPreview.toFixed(2)}</p>
+                                  <p className="text-[10px] font-bold text-accent">{addonGP.toFixed(1)}% GP</p>
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-3">
+                              <Button
+                                onClick={handleAddAddon}
+                                className="bg-accent hover:opacity-90 text-white rounded-xl px-6 py-3 text-[10px] font-bold uppercase tracking-widest transition-all shadow-md shadow-accent/20"
+                              >
+                                {editingAddonId ? (
+                                  <>
+                                    <Check className="mr-2 h-4 w-4 inline" />
+                                    Update Add-on
+                                  </>
+                                ) : (
+                                  <>
+                                    <Plus className="mr-2 h-4 w-4 inline" />
+                                    Add Add-on
+                                  </>
+                                )}
+                              </Button>
+                              {editingAddonId && (
+                                <button
+                                  type="button"
+                                  onClick={handleCancelEditAddon}
+                                  className="text-[10px] font-bold uppercase tracking-widest text-text-muted hover:text-text-navy transition-all"
+                                >
+                                  Cancel
+                                </button>
+                              )}
+                            </div>
+
+                            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                              {(editingRecipe.addons || []).map(addon => {
+                                const gp = addon.price > 0 ? ((addon.price - addon.cost) / addon.price) * 100 : 0;
+                                return (
+                                  <div
+                                    key={addon.id}
+                                    className={`flex items-center justify-between p-4 rounded-2xl border bg-card-bg ${
+                                      editingAddonId === addon.id ? 'border-accent shadow-sm' : 'border-border-grey'
+                                    }`}
+                                  >
+                                    <div>
+                                      <p className="text-xs font-bold text-text-navy">{addon.name}</p>
+                                      <p className="text-[10px] text-text-muted">{addon.weight}{addon.unit} · £{(addon.price / 100).toFixed(2)}</p>
+                                      <p className="text-[10px] font-bold text-accent">{gp.toFixed(1)}% GP</p>
+                                    </div>
+                                    <div className="flex items-center gap-1">
+                                      <button type="button" onClick={() => handleEditAddon(addon)} className="p-2 text-text-muted hover:text-accent hover:bg-accent/10 rounded-xl transition-all">
+                                        <Edit2 className="h-4 w-4" />
+                                      </button>
+                                      <button type="button" onClick={() => handleDeleteAddon(addon.id)} className="p-2 text-error hover:bg-error/10 rounded-xl transition-all">
+                                        <Trash2 className="h-4 w-4" />
+                                      </button>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                              {(!editingRecipe.addons || editingRecipe.addons.length === 0) && (
+                                <div className="col-span-full py-8 text-center bg-card-bg rounded-2xl border border-dashed border-border-grey">
+                                  <p className="text-xs text-text-muted">No add-ons added yet.</p>
+                                </div>
+                              )}
+                            </div>
                           </div>
                         </div>
-
-                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-                          {modifiers.map(mod => {
-                            const isSelected = (editingRecipe.allowedModifiers || []).includes(mod.id);
-                            return (
-                              <button
-                                key={mod.id}
-                                type="button"
-                                onClick={() => {
-                                  const newMods = isSelected
-                                    ? (editingRecipe.allowedModifiers || []).filter(id => id !== mod.id)
-                                    : [...(editingRecipe.allowedModifiers || []), mod.id];
-                                  setEditingRecipe(prev => ({ ...prev, allowedModifiers: newMods }));
-                                }}
-                                className={`flex items-center justify-between p-4 rounded-2xl border transition-all ${
-                                  isSelected 
-                                    ? 'bg-accent/10 border-accent shadow-sm' 
-                                    : 'bg-card-bg border-border-grey hover:border-accent/40'
-                                }`}
-                              >
-                                <div className="text-left">
-                                  <p className="text-xs font-bold text-text-navy">{mod.name}</p>
-                                  <p className="text-[10px] text-accent font-bold mt-1">£{mod.price.toFixed(2)}</p>
-                                </div>
-                                <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${
-                                  isSelected ? 'bg-accent border-accent' : 'border-border-grey'
-                                }`}>
-                                  {isSelected && <Check className="h-3 w-3 text-white" />}
-                                </div>
-                              </button>
-                            );
-                          })}
-                          {modifiers.length === 0 && (
-                            <div className="col-span-full py-12 text-center bg-card-bg rounded-2xl border border-dashed border-border-grey">
-                              <Zap className="h-8 w-8 text-text-muted mx-auto mb-2 opacity-50" />
-                              <p className="text-xs text-text-muted">No modifiers found. Create them in the Modifiers tab first.</p>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    )}
+                      );
+                    })()}
                   </div>
               <div className="bg-card-bg px-8 py-6 border-t border-border-grey flex flex-col sm:flex-row-reverse gap-3">
                 <Button 
@@ -3819,6 +5270,504 @@ const handleSave = async () => {
                 <Button 
                   onClick={() => setProducingBatch(null)} 
                   variant="secondary" 
+                  className="w-full sm:w-auto bg-transparent border border-border-grey text-text-navy hover:bg-card-bg font-bold uppercase tracking-widest text-[10px] py-4 rounded-xl"
+                >
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isSideAddonModalOpen && (
+        <div className="fixed inset-0 z-[100] overflow-y-auto" role="dialog" aria-modal="true">
+          <div className="flex items-center justify-center min-h-screen p-4 text-center">
+            <div className="fixed inset-0 bg-black/80 backdrop-blur-sm transition-opacity" onClick={handleCloseSideAddonModal}></div>
+
+            <div className="inline-block align-bottom bg-main-bg sm:rounded-3xl text-left overflow-hidden shadow-2xl transform transition-all sm:my-8 sm:align-middle sm:max-w-xl w-full border-x sm:border border-border-grey h-full sm:h-auto">
+              <div className="bg-card-bg px-4 sm:px-8 py-6 sm:py-8 h-full sm:h-auto overflow-y-auto">
+                <div className="flex justify-between items-start mb-6">
+                  <h3 className="text-lg sm:text-xl font-bold text-text-navy">
+                    {editingSideAddonId ? 'Edit' : 'Create'} {sideAddonType === 'side' ? 'Side' : 'Add-on'}
+                  </h3>
+                  <button onClick={handleCloseSideAddonModal} className="p-2 text-text-muted hover:text-text-navy">
+                    <X className="h-5 w-5" />
+                  </button>
+                </div>
+
+                <div className="space-y-5">
+                  <div className="flex bg-secondary-surface p-1 rounded-xl border border-border-grey">
+                    {(['side', 'addon'] as const).map(t => (
+                      <button
+                        key={t}
+                        type="button"
+                        onClick={() => handleSetSideAddonType(t)}
+                        className={`flex-1 py-2.5 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all ${
+                          sideAddonType === t ? 'bg-accent text-white shadow-lg' : 'text-text-muted hover:text-text-navy'
+                        }`}
+                      >
+                        {t === 'side' ? 'Side' : 'Add-on'}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2">Source Type</label>
+                    <div className="flex bg-secondary-surface p-1 rounded-xl border border-border-grey">
+                      {(['batch', 'raw_ingredient'] as const).map(st => (
+                        <button
+                          key={st}
+                          type="button"
+                          onClick={() => { setSideAddonSourceType(st); handleClearSideAddonSource(); }}
+                          className={`flex-1 py-2.5 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all ${
+                            sideAddonSourceType === st ? 'bg-accent text-white shadow-lg' : 'text-text-muted hover:text-text-navy'
+                          }`}
+                        >
+                          {st === 'batch' ? 'Batch' : 'Raw Ingredient'}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="relative">
+                    <label className="block text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2">Source</label>
+                    {sideAddonSourceId ? (
+                      <div className="flex items-center justify-between p-4 bg-secondary-surface rounded-xl border border-border-grey">
+                        <div>
+                          <p className="text-sm font-bold text-text-navy">{sideAddonSourceName}</p>
+                          <p className="text-[10px] text-text-muted">Cost per unit: £{sideAddonSourceCostPerUnit.toFixed(4)}</p>
+                        </div>
+                        <button type="button" onClick={handleClearSideAddonSource} className="text-[10px] font-bold text-accent uppercase tracking-widest">
+                          Change
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="relative">
+                          <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-text-muted" />
+                          <input
+                            type="text"
+                            placeholder={sideAddonSourceType === 'batch' ? 'Search batch recipes...' : 'Search inventory items...'}
+                            value={sideAddonSourceSearch}
+                            onChange={(e) => setSideAddonSourceSearch(e.target.value)}
+                            className="w-full bg-main-bg border border-border-grey rounded-xl py-3 pl-12 pr-4 text-text-navy focus:ring-2 focus:ring-accent focus:outline-none text-sm"
+                          />
+                        </div>
+                        {sideAddonSourceResults.length > 0 && (
+                          <div className="absolute z-10 mt-1 w-full bg-card-bg border border-border-grey rounded-xl shadow-2xl max-h-56 overflow-y-auto">
+                            {sideAddonSourceResults.map((r: any) => (
+                              <button
+                                key={r.id}
+                                type="button"
+                                onClick={() => handleSelectSideAddonSource(r.id, r.name)}
+                                className="w-full text-left px-4 py-3 text-sm text-text-navy hover:bg-secondary-surface transition-colors border-b border-border-grey last:border-b-0"
+                              >
+                                {r.name}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2">Name</label>
+                    <input
+                      type="text"
+                      value={sideAddonName}
+                      onChange={(e) => setSideAddonName(e.target.value)}
+                      className="w-full bg-main-bg border border-border-grey rounded-xl py-3 px-4 text-text-navy focus:ring-2 focus:ring-accent focus:outline-none text-sm"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2">Weight</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={sideAddonWeight}
+                        onChange={(e) => setSideAddonWeight(e.target.value === '' ? '' : parseFloat(e.target.value))}
+                        className="w-full bg-main-bg border border-border-grey rounded-xl py-3 px-4 text-text-navy focus:ring-2 focus:ring-accent focus:outline-none text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2">Unit</label>
+                      <select
+                        value={sideAddonUnit}
+                        onChange={(e) => setSideAddonUnit(e.target.value as 'g' | 'ml' | 'portions')}
+                        className="w-full bg-main-bg border border-border-grey rounded-xl py-3 px-4 text-text-navy focus:ring-2 focus:ring-accent focus:outline-none text-sm appearance-none"
+                      >
+                        <option value="g">g</option>
+                        <option value="ml">ml</option>
+                        <option value="portions">portions</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2">Price (£)</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={sideAddonPrice}
+                      onChange={(e) => setSideAddonPrice(e.target.value === '' ? '' : parseFloat(e.target.value))}
+                      className="w-full bg-main-bg border border-border-grey rounded-xl py-3 px-4 text-text-navy focus:ring-2 focus:ring-accent focus:outline-none text-sm"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4 p-4 bg-secondary-surface rounded-xl border border-border-grey">
+                    <div>
+                      <span className="text-[10px] font-bold text-text-muted uppercase tracking-widest block mb-1">Cost</span>
+                      <span className="text-sm font-bold text-text-navy">£{(sideAddonCostPence / 100).toFixed(2)}</span>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-[10px] font-bold text-text-muted uppercase tracking-widest block mb-1">GP%</span>
+                      <span className="text-sm font-bold text-success">{sideAddonGP.toFixed(1)}%</span>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2">Location</label>
+                    <div className="w-full bg-secondary-surface border border-border-grey rounded-xl py-3 px-4 text-text-muted text-sm">
+                      {LOCATION_ID}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-card-bg px-8 py-6 border-t border-border-grey flex flex-col sm:flex-row-reverse gap-3">
+                <Button
+                  onClick={handleSaveSideAddon}
+                  isLoading={isSavingSideAddon}
+                  variant="primary"
+                  className="w-full sm:w-auto bg-accent hover:opacity-90 text-white font-bold uppercase tracking-widest text-[10px] py-4 rounded-xl shadow-lg shadow-accent/20"
+                >
+                  Save & Sync to POS
+                </Button>
+                <Button
+                  onClick={handleCloseSideAddonModal}
+                  variant="secondary"
+                  className="w-full sm:w-auto bg-transparent border border-border-grey text-text-navy hover:bg-card-bg font-bold uppercase tracking-widest text-[10px] py-4 rounded-xl"
+                >
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isSetMenuModalOpen && (
+        <div className="fixed inset-0 z-[100] overflow-y-auto" role="dialog" aria-modal="true">
+          <div className="flex items-center justify-center min-h-screen p-4 text-center">
+            <div className="fixed inset-0 bg-black/80 backdrop-blur-sm transition-opacity" onClick={handleCloseSetMenuModal}></div>
+
+            <div className="inline-block align-bottom bg-main-bg sm:rounded-3xl text-left overflow-hidden shadow-2xl transform transition-all sm:my-8 sm:align-middle sm:max-w-3xl w-full border-x sm:border border-border-grey h-full sm:h-auto">
+              <div className="bg-card-bg px-4 sm:px-8 py-6 sm:py-8 h-full sm:h-auto overflow-y-auto">
+                <div className="flex justify-between items-start mb-6">
+                  <h3 className="text-lg sm:text-xl font-bold text-text-navy flex items-center gap-2">
+                    <Calendar className="h-5 w-5 text-accent" />
+                    {setMenus.some(sm => sm.id === editingSetMenu.id) ? 'Edit Event Menu' : 'Create Event Menu'}
+                  </h3>
+                  <button onClick={handleCloseSetMenuModal} className="p-2 text-text-muted hover:text-text-navy">
+                    <X className="h-5 w-5" />
+                  </button>
+                </div>
+
+                <div className="space-y-8">
+                  {/* SECTION 1 — EVENT DETAILS */}
+                  <div className="space-y-4">
+                    <h4 className="text-[10px] font-bold text-accent uppercase tracking-widest">Event Details</h4>
+                    <div>
+                      <label className="block text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2">Event Name</label>
+                      <input
+                        type="text"
+                        value={editingSetMenu.name || ''}
+                        onChange={(e) => setEditingSetMenu(prev => ({ ...prev, name: e.target.value }))}
+                        placeholder="e.g. Valentine's Day 2026"
+                        className="w-full bg-main-bg border border-border-grey rounded-xl py-3 px-4 text-text-navy focus:ring-accent focus:border-accent focus:outline-none text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2">Description</label>
+                      <input
+                        type="text"
+                        value={editingSetMenu.description || ''}
+                        onChange={(e) => setEditingSetMenu(prev => ({ ...prev, description: e.target.value }))}
+                        placeholder="Short description for staff/guests"
+                        className="w-full bg-main-bg border border-border-grey rounded-xl py-3 px-4 text-text-navy focus:ring-accent focus:border-accent focus:outline-none text-sm"
+                      />
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                      <div>
+                        <label className="block text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2">Event Date</label>
+                        <input
+                          type="date"
+                          value={editingSetMenu.eventDate || ''}
+                          onChange={(e) => setEditingSetMenu(prev => ({ ...prev, eventDate: e.target.value }))}
+                          className="w-full bg-main-bg border border-border-grey rounded-xl py-3 px-4 text-text-navy focus:ring-accent focus:border-accent focus:outline-none text-sm"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2">Price per Head</label>
+                        <input
+                          type="number"
+                          value={editingSetMenu.pricePerHead ? editingSetMenu.pricePerHead / 100 : ''}
+                          onChange={(e) => setEditingSetMenu(prev => ({ ...prev, pricePerHead: e.target.value === '' ? 0 : Math.round(Number(e.target.value) * 100) }))}
+                          placeholder="e.g. 45"
+                          min="0"
+                          className="w-full bg-main-bg border border-border-grey rounded-xl py-3 px-4 text-text-navy focus:ring-accent focus:border-accent focus:outline-none text-sm"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2">Covers per Booking</label>
+                        <input
+                          type="number"
+                          value={editingSetMenu.covers ?? 1}
+                          onChange={(e) => setEditingSetMenu(prev => ({ ...prev, covers: Math.max(1, Number(e.target.value) || 1) }))}
+                          min="1"
+                          className="w-full bg-main-bg border border-border-grey rounded-xl py-3 px-4 text-text-navy focus:ring-accent focus:border-accent focus:outline-none text-sm"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2">Covers (estimated)</label>
+                        <input
+                          type="number"
+                          value={setMenuEstimatedCovers}
+                          onChange={(e) => setSetMenuEstimatedCovers(e.target.value === '' ? '' : Number(e.target.value))}
+                          placeholder="e.g. 40"
+                          min="0"
+                          className="w-full bg-main-bg border border-border-grey rounded-xl py-3 px-4 text-text-navy focus:ring-accent focus:border-accent focus:outline-none text-sm"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* SECTION 2 — BUILD THE MENU */}
+                  <div className="space-y-4">
+                    <div className="flex justify-between items-center">
+                      <h4 className="text-[10px] font-bold text-accent uppercase tracking-widest">Build The Menu</h4>
+                      <button type="button" onClick={handleAddCourse} className="text-[10px] font-bold uppercase tracking-widest text-accent hover:opacity-80 flex items-center">
+                        <Plus className="h-3 w-3 mr-1.5" /> Add Course
+                      </button>
+                    </div>
+
+                    {(editingSetMenu.courses || []).length === 0 && (
+                      <p className="text-xs text-text-muted italic">No courses yet. Add one to start building the menu.</p>
+                    )}
+
+                    {(editingSetMenu.courses || []).map(course => (
+                      <div key={course.id} className="bg-main-bg border border-border-grey rounded-2xl p-4 space-y-3">
+                        <div className="flex gap-2 items-center">
+                          <input
+                            type="text"
+                            placeholder="Course name, e.g. Starter"
+                            value={course.name}
+                            onChange={(e) => handleUpdateCourseName(course.id, e.target.value)}
+                            className="flex-1 bg-card-bg border border-border-grey rounded-xl py-2.5 px-3 text-text-navy text-sm font-bold focus:ring-accent focus:border-accent focus:outline-none"
+                          />
+                          <button type="button" onClick={() => handleDeleteCourse(course.id)} className="p-2 text-text-muted hover:text-error transition-colors">
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
+
+                        {course.items.length > 0 && (
+                          <div className="space-y-1.5">
+                            {course.items.map(item => (
+                              <div key={item.recipeId} className="flex justify-between items-center bg-card-bg rounded-xl px-3 py-2 border border-border-grey">
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <span className="text-sm text-text-navy truncate">{item.recipeName}</span>
+                                  {item.isNew && <span className="text-[8px] font-black uppercase tracking-widest text-accent bg-accent/10 px-1.5 py-0.5 rounded-full flex-shrink-0">New</span>}
+                                </div>
+                                <div className="flex items-center gap-3 flex-shrink-0">
+                                  <span className="text-xs text-text-muted font-bold">£{(item.cost / 100).toFixed(2)}</span>
+                                  <button type="button" onClick={() => handleRemoveDishFromCourse(course.id, item.recipeId)} className="text-text-muted hover:text-error">
+                                    <X className="h-3.5 w-3.5" />
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => { setSetMenuSearchCourseId(prev => prev === course.id ? null : course.id); setSetMenuDishSearch(''); setSetMenuNewDishCourseId(null); }}
+                            className="flex-1 text-[10px] font-bold uppercase tracking-widest text-accent hover:opacity-80 border border-accent/30 rounded-xl py-2 flex items-center justify-center"
+                          >
+                            <Search className="h-3 w-3 mr-1.5" /> Add Existing Dish
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => { setSetMenuNewDishCourseId(prev => prev === course.id ? null : course.id); setNewDishName(''); setNewDishDescription(''); setNewDishCost(''); setSetMenuSearchCourseId(null); }}
+                            className="flex-1 text-[10px] font-bold uppercase tracking-widest text-accent hover:opacity-80 border border-accent/30 rounded-xl py-2 flex items-center justify-center"
+                          >
+                            <Plus className="h-3 w-3 mr-1.5" /> Create New Dish
+                          </button>
+                        </div>
+
+                        {setMenuSearchCourseId === course.id && (
+                          <div className="relative">
+                            <div className="relative">
+                              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-text-muted" />
+                              <input
+                                type="text"
+                                placeholder="Search food/beverage recipes..."
+                                value={setMenuDishSearch}
+                                onChange={(e) => setSetMenuDishSearch(e.target.value)}
+                                className="w-full bg-card-bg border border-border-grey rounded-xl py-2.5 pl-9 pr-3 text-text-navy text-sm focus:ring-accent focus:border-accent focus:outline-none"
+                                autoFocus
+                              />
+                            </div>
+                            {setMenuDishSearchResults.length > 0 && (
+                              <div className="mt-1 bg-card-bg border border-border-grey rounded-xl shadow-xl max-h-48 overflow-y-auto">
+                                {setMenuDishSearchResults.map(r => {
+                                  const rCostPence = Math.round(calculateTotalCostShared(r.ingredients, inventoryItems, recipes) * 100);
+                                  const rPriceExVat = r.sellingPrice / (1 + (Number(r.vatRate) || 20) / 100);
+                                  const rGP = rPriceExVat > 0 ? calculateGP(rPriceExVat, rCostPence / 100) : 0;
+                                  return (
+                                    <button
+                                      key={r.id}
+                                      type="button"
+                                      onClick={() => handleAddExistingDishToCourse(course.id, r)}
+                                      className="w-full text-left px-3 py-2.5 text-sm text-text-navy hover:bg-secondary-surface transition-colors border-b border-border-grey last:border-b-0 flex justify-between items-center gap-2"
+                                    >
+                                      <span className="truncate">{r.name}</span>
+                                      <span className="text-[10px] text-text-muted font-bold flex-shrink-0">£{(rCostPence / 100).toFixed(2)} · {rGP.toFixed(0)}% GP</span>
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {setMenuNewDishCourseId === course.id && (
+                          <div className="bg-card-bg border border-border-grey rounded-xl p-3 space-y-2">
+                            <input
+                              type="text"
+                              placeholder="Dish name"
+                              value={newDishName}
+                              onChange={(e) => setNewDishName(e.target.value)}
+                              className="w-full bg-main-bg border border-border-grey rounded-lg py-2 px-3 text-text-navy text-sm focus:ring-accent focus:border-accent focus:outline-none"
+                            />
+                            <input
+                              type="text"
+                              placeholder="Description (optional)"
+                              value={newDishDescription}
+                              onChange={(e) => setNewDishDescription(e.target.value)}
+                              className="w-full bg-main-bg border border-border-grey rounded-lg py-2 px-3 text-text-navy text-sm focus:ring-accent focus:border-accent focus:outline-none"
+                            />
+                            <input
+                              type="number"
+                              placeholder="Cost estimate (£)"
+                              value={newDishCost}
+                              onChange={(e) => setNewDishCost(e.target.value === '' ? '' : Number(e.target.value))}
+                              min="0"
+                              className="w-full bg-main-bg border border-border-grey rounded-lg py-2 px-3 text-text-navy text-sm focus:ring-accent focus:border-accent focus:outline-none"
+                            />
+                            <p className="text-[9px] text-text-muted italic">Ingredients can be added later via the recipe editor. This creates a real recipe, tagged Special, and it'll appear in the Food tab too.</p>
+                            <div className="flex gap-2">
+                              <Button
+                                onClick={handleSaveNewDish}
+                                disabled={!newDishName.trim() || isSavingNewDish}
+                                className="flex-1 bg-accent hover:opacity-90 text-white py-2 rounded-lg font-bold uppercase tracking-widest text-[9px] disabled:opacity-50"
+                              >
+                                {isSavingNewDish ? <Loader2 className="h-4 w-4 animate-spin mx-auto" /> : 'Create'}
+                              </Button>
+                              <Button
+                                onClick={() => setSetMenuNewDishCourseId(null)}
+                                variant="secondary"
+                                className="flex-1 bg-transparent border border-border-grey text-text-navy hover:bg-main-bg py-2 rounded-lg font-bold uppercase tracking-widest text-[9px]"
+                              >
+                                Cancel
+                              </Button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* SECTION 3 — COST SUMMARY */}
+                  <div className="bg-accent/5 border border-accent/20 rounded-2xl p-6 space-y-2">
+                    <h4 className="text-[10px] font-bold text-accent uppercase tracking-widest mb-2">Cost Summary</h4>
+                    {(() => {
+                      const totalCost = getSetMenuTotalCost(editingSetMenu.courses);
+                      const pricePerHead = Math.round(Number(editingSetMenu.pricePerHead) || 0);
+                      const pricePerHeadExVat = pricePerHead / 1.2;
+                      const gpPerHead = pricePerHeadExVat > 0 ? calculateGP(pricePerHeadExVat, totalCost) : 0;
+                      const coversPerBooking = Math.max(1, Number(editingSetMenu.covers) || 1);
+                      const totalPerBooking = pricePerHead * coversPerBooking;
+                      const covers = Number(setMenuEstimatedCovers) || 0;
+                      const revenue = pricePerHead * covers;
+                      const profit = (pricePerHead - totalCost) * covers;
+                      return (
+                        <>
+                          <div className="flex justify-between text-sm">
+                            <span className="text-text-muted">Price per head</span>
+                            <span className="font-bold text-text-navy">£{(pricePerHead / 100).toFixed(2)}</span>
+                          </div>
+                          <div className="flex justify-between text-sm">
+                            <span className="text-text-muted">Covers per booking</span>
+                            <span className="font-bold text-text-navy">{coversPerBooking}</span>
+                          </div>
+                          <div className="flex justify-between text-sm">
+                            <span className="text-text-muted">Total per booking</span>
+                            <span className="font-bold text-text-navy">£{(totalPerBooking / 100).toFixed(2)}</span>
+                          </div>
+                          <div className="flex justify-between text-sm">
+                            <span className="text-text-muted">Total menu cost</span>
+                            <span className="font-bold text-text-navy">£{(totalCost / 100).toFixed(2)}</span>
+                          </div>
+                          <div className="flex justify-between text-sm">
+                            <span className="text-text-muted">GP per head</span>
+                            <span className="font-bold text-success">{gpPerHead.toFixed(1)}%</span>
+                          </div>
+                          <div className="flex justify-between text-sm">
+                            <span className="text-text-muted">Estimated covers</span>
+                            <span className="font-bold text-text-navy">{covers || '—'}</span>
+                          </div>
+                          <div className="flex justify-between text-sm pt-2 border-t border-accent/20">
+                            <span className="text-text-muted">Total event revenue</span>
+                            <span className="font-bold text-text-navy">£{(revenue / 100).toFixed(2)}</span>
+                          </div>
+                          <div className="flex justify-between text-sm">
+                            <span className="text-text-muted">Total event profit</span>
+                            <span className="font-bold text-success">£{(profit / 100).toFixed(2)}</span>
+                          </div>
+                        </>
+                      );
+                    })()}
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-card-bg px-8 py-6 border-t border-border-grey flex flex-col sm:flex-row-reverse gap-3">
+                <Button
+                  onClick={() => persistSetMenu(true)}
+                  isLoading={isSavingSetMenu}
+                  className="w-full sm:w-auto bg-accent hover:opacity-90 text-white font-bold uppercase tracking-widest text-[10px] py-4 rounded-xl shadow-lg shadow-accent/20"
+                >
+                  Activate on POS
+                </Button>
+                <Button
+                  onClick={() => persistSetMenu(false)}
+                  isLoading={isSavingSetMenu}
+                  variant="secondary"
+                  className="w-full sm:w-auto bg-transparent border border-border-grey text-text-navy hover:bg-card-bg font-bold uppercase tracking-widest text-[10px] py-4 rounded-xl"
+                >
+                  Save as Draft
+                </Button>
+                <Button
+                  onClick={handleCloseSetMenuModal}
+                  variant="secondary"
                   className="w-full sm:w-auto bg-transparent border border-border-grey text-text-navy hover:bg-card-bg font-bold uppercase tracking-widest text-[10px] py-4 rounded-xl"
                 >
                   Cancel
