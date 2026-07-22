@@ -4,6 +4,9 @@ node_modules/
 # Build output
 dist/
 
+# Firebase CLI deploy cache
+.firebase/
+
 # Environment variables — never commit real values
 .env
 .env.local
