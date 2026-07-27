@@ -5,21 +5,28 @@ import { Button } from './Button';
 import { Upload, FileText, Check, AlertCircle, History, Clock, CheckCircle, Search, Filter, Plus, X, AlertTriangle, Trash2 } from 'lucide-react';
 import { parseInvoiceImage, handleAiError } from '../services/geminiService';
 import { InventoryItem, Supplier, Invoice, Unit } from '../types';
+import { PACKAGING_TO_UNIT } from '../utils/unitConversions';
 
 interface InvoiceProcessorProps {
   onProcessInvoice: (invoice: Invoice) => void;
   onApproveInvoice: (invoice: Invoice) => void;
   suppliers: Supplier[];
   invoices: Invoice[];
+  inventoryItems: InventoryItem[];
   onUpdateInvoice: (id: string, updates: Partial<Invoice>) => void;
   onAddSupplier: (supplier: Supplier) => void;
 }
 
-export const InvoiceProcessor: React.FC<InvoiceProcessorProps> = ({ 
-  onProcessInvoice, 
+// Full packaging vocabulary items are actually bought in, as selectable invoice units.
+const PACKAGING_UNITS: Unit[] = ['packs', 'box', 'cases', 'sack', 'bottles', 'vacuum pack', 'bags', 'tray', 'tin', 'jar', 'tub', 'sachet', 'loose', 'pcs'];
+const METRIC_UNITS: Unit[] = ['kg', 'g', 'L', 'ml'];
+
+export const InvoiceProcessor: React.FC<InvoiceProcessorProps> = ({
+  onProcessInvoice,
   onApproveInvoice,
-  suppliers, 
-  invoices, 
+  suppliers,
+  invoices,
+  inventoryItems,
   onUpdateInvoice,
   onAddSupplier
 }) => {
@@ -195,9 +202,25 @@ export const InvoiceProcessor: React.FC<InvoiceProcessorProps> = ({
   const updateManualItem = (index: number, field: string, value: any) => {
     setManualInvoice(prev => ({
       ...prev,
-      items: prev.items.map((item, i) => i === index ? { ...item, [field]: value } : item)
+      items: prev.items.map((item, i) => {
+        if (i !== index) return item;
+        const updated = { ...item, [field]: value };
+        // When the item name matches a known inventory item, default the unit to how that
+        // item is actually packaged (bottle/bag/tray/vacuum pack/etc) instead of leaving it
+        // on the generic 'pcs' default — the user can still override it after.
+        if (field === 'name') {
+          const match = inventoryItems.find(inv => inv.name.toLowerCase() === String(value).toLowerCase());
+          if (match?.packaging) {
+            updated.unit = PACKAGING_TO_UNIT[match.packaging] || updated.unit;
+          }
+        }
+        return updated;
+      })
     }));
   };
+
+  const matchedInventoryItem = (name: string) =>
+    inventoryItems.find(inv => inv.name.toLowerCase() === name.toLowerCase());
 
   return (
     <div className="space-y-6">
@@ -317,19 +340,29 @@ export const InvoiceProcessor: React.FC<InvoiceProcessorProps> = ({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 dark:divide-slate-800 bg-white dark:bg-slate-900">
-                  {manualInvoice.items.map((item, idx) => (
+                  {manualInvoice.items.map((item, idx) => {
+                    const match = matchedInventoryItem(item.name);
+                    const packUnit = match?.packaging ? PACKAGING_TO_UNIT[match.packaging] : undefined;
+                    const caseUnit = match?.caseSize ? (PACKAGING_TO_UNIT[match.casePackaging || 'case'] || 'cases') : undefined;
+                    return (
                     <tr key={idx}>
                       <td className="px-6 py-4">
-                        <input 
+                        <input
                           type="text"
+                          list="invoice-inventory-items"
                           placeholder="Item name..."
                           className="w-full bg-transparent border-none focus:ring-0 text-xs font-bold text-gray-900 dark:text-white"
                           value={item.name}
                           onChange={(e) => updateManualItem(idx, 'name', e.target.value)}
                         />
+                        {match && (
+                          <p className="text-[9px] font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-widest mt-0.5">
+                            Matched: bought by {match.packaging}{match.caseSize ? ` or ${match.casePackaging || 'case'} (${match.caseSize} ${match.packaging}s)` : ''}
+                          </p>
+                        )}
                       </td>
                       <td className="px-6 py-4">
-                        <input 
+                        <input
                           type="number"
                           className="w-20 bg-transparent border-none focus:ring-0 text-xs font-bold text-gray-900 dark:text-white"
                           value={item.quantity}
@@ -337,19 +370,19 @@ export const InvoiceProcessor: React.FC<InvoiceProcessorProps> = ({
                         />
                       </td>
                       <td className="px-6 py-4">
-                        <select 
+                        <select
                           className="bg-transparent border-none focus:ring-0 text-xs font-bold text-gray-900 dark:text-white appearance-none cursor-pointer"
                           value={item.unit}
                           onChange={(e) => updateManualItem(idx, 'unit', e.target.value)}
                         >
-                          <option value="pcs">pcs</option>
-                          <option value="kg">kg</option>
-                          <option value="g">g</option>
-                          <option value="L">L</option>
-                          <option value="ml">ml</option>
-                          <option value="box">box</option>
-                          <option value="cases">cases</option>
-                          <option value="packs">packs</option>
+                          {packUnit && <option value={packUnit}>{packUnit} (pack)</option>}
+                          {caseUnit && caseUnit !== packUnit && <option value={caseUnit}>{caseUnit} (case)</option>}
+                          <optgroup label="Packaging">
+                            {PACKAGING_UNITS.map(u => <option key={u} value={u}>{u}</option>)}
+                          </optgroup>
+                          <optgroup label="Weight / Volume">
+                            {METRIC_UNITS.map(u => <option key={u} value={u}>{u}</option>)}
+                          </optgroup>
                         </select>
                       </td>
                       <td className="px-6 py-4">
@@ -370,10 +403,13 @@ export const InvoiceProcessor: React.FC<InvoiceProcessorProps> = ({
                         </button>
                       </td>
                     </tr>
-                  ))}
+                  );})}
                 </tbody>
               </table>
-              <button 
+              <datalist id="invoice-inventory-items">
+                {inventoryItems.map(inv => <option key={inv.id} value={inv.name} />)}
+              </datalist>
+              <button
                 onClick={addManualItem}
                 className="w-full py-4 bg-gray-50 dark:bg-slate-800/50 text-[10px] font-black text-accent uppercase tracking-widest hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors flex items-center justify-center"
               >
@@ -387,7 +423,7 @@ export const InvoiceProcessor: React.FC<InvoiceProcessorProps> = ({
               </div>
               <div className="flex gap-4">
                 <Button variant="secondary" onClick={() => setIsManualEntry(false)} className="px-8 py-3 rounded-xl font-black uppercase tracking-widest text-[10px]">Cancel</Button>
-                <Button onClick={handleManualConfirm} className="px-8 py-3 rounded-xl font-black uppercase tracking-widest text-[10px] bg-emerald-600 hover:bg-emerald-700 text-white shadow-lg shadow-emerald-500/20">
+                <Button onClick={handleManualConfirm} className="px-8 py-3 rounded-xl font-black uppercase tracking-widest text-[10px]">
                   Save Invoice
                 </Button>
               </div>
@@ -539,7 +575,7 @@ export const InvoiceProcessor: React.FC<InvoiceProcessorProps> = ({
                           Review extracted data carefully. Invoices will be saved as "Pending" for approval.
                       </div>
 
-                      <Button onClick={handleConfirm} className="w-full py-4 rounded-xl font-black uppercase tracking-widest text-[10px] bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-500 dark:hover:bg-emerald-600 text-white shadow-lg shadow-emerald-500/20">
+                      <Button onClick={handleConfirm} className="w-full py-4 rounded-xl font-black uppercase tracking-widest text-[10px]">
                           <Check className="mr-2 h-4 w-4" />
                           Save Invoice
                       </Button>

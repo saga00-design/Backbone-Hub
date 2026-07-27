@@ -3,13 +3,36 @@ import React, { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { InventoryItem, StockCountItem, Unit, StockCountRecord, InventoryType, MovementType } from '../types';
 import { Button } from './Button';
+import { SearchInput } from './SearchInput';
 import { analyzeDiscrepancies } from '../services/geminiService';
-import { convertToBaseUnit, convertFromBaseUnit } from '../utils/unitConversions';
+import { convertToBaseUnit, convertFromBaseUnit, CONVERSION_FACTORS, roundTo, getQtyDecimals, getQtyStep } from '../utils/unitConversions';
 import { jsPDF } from "jspdf";
 import autoTable from 'jspdf-autotable';
-import { Save, FileText, CheckCircle, Clock, History as HistoryIcon, ChevronDown, ChevronUp, Search, ScanBarcode, Camera } from 'lucide-react';
+import { Save, FileText, CheckCircle, Clock, History as HistoryIcon, ChevronDown, ChevronUp, ScanBarcode, Camera } from 'lucide-react';
 import { BarcodeScanner } from './BarcodeScanner';
+import { ItemSpecsTooltip } from './ItemSpecsTooltip';
 import { toast } from 'sonner';
+
+// The shared convertToBaseUnit() special-cases unit === 'pcs' to ignore unitSize entirely —
+// correct for genuinely piece-counted items (unitSize is legitimately 1 there), but for an
+// item mislabeled as 'pcs' that actually has a real pack size recorded in unitSize, it
+// silently drops the pack multiplier. Because Expected Qty is displayed via
+// convertFromBaseUnit() (which does NOT special-case 'pcs'), the two functions aren't true
+// inverses for a mislabeled item — typing an Actual count back in and converting it with
+// convertToBaseUnit() then lands on a different base quantity than Expected used, producing
+// a formula mismatch (not a real stock discrepancy) in both the £ figures and, more
+// seriously, in the real stock quantity write on completion. This local helper always
+// applies unitSize, keeping Expected and Actual on the same footing regardless of unit
+// label — it does not fix the underlying mislabeling itself, which is a separate,
+// item-by-item data correction.
+const toBaseQtyConsistent = (qty: number, unit: Unit, unitSize?: number): number => {
+  const factor = CONVERSION_FACTORS[unit] || 1;
+  const size = unitSize !== undefined && unitSize > 0 ? unitSize : 1;
+  if (['kg', 'g', 'gr', 'L', 'ml', 'cl'].includes(unit)) {
+    return roundTo(qty * factor);
+  }
+  return roundTo(qty * size * factor);
+};
 
 interface StockTakingProps {
   items: InventoryItem[];
@@ -32,7 +55,7 @@ export const StockTaking: React.FC<StockTakingProps> = ({ items, onUpdateInvento
         const existing = prevCounts.find(c => c.itemId === item.id);
         if (existing) {
           const itemBaseQty = item.quantity || 0;
-          const actualBaseQty = existing.actualQuantity === '' ? itemBaseQty : convertToBaseUnit(Number(existing.actualQuantity), existing.unit as Unit, item.unitSize);
+          const actualBaseQty = existing.actualQuantity === '' ? itemBaseQty : toBaseQtyConsistent(Number(existing.actualQuantity), existing.unit as Unit, item.unitSize);
           const discrepancyBase = actualBaseQty - itemBaseQty;
           
           return {
@@ -77,7 +100,7 @@ export const StockTaking: React.FC<StockTakingProps> = ({ items, onUpdateInvento
         const item = items.find(i => i.id === itemId);
         const costPerBase = item ? (item.averageCostBase || item.pricePerUnit) : 0;
         
-        const actualBaseQty = newVal === '' ? c.expectedQuantity : convertToBaseUnit(newVal, c.unit as Unit, item?.unitSize);
+        const actualBaseQty = newVal === '' ? c.expectedQuantity : toBaseQtyConsistent(newVal, c.unit as Unit, item?.unitSize);
         const discrepancyBase = actualBaseQty - c.expectedQuantity;
         
         return {
@@ -98,7 +121,7 @@ export const StockTaking: React.FC<StockTakingProps> = ({ items, onUpdateInvento
         const item = items.find(i => i.id === itemId);
         const costPerBase = item ? (item.averageCostBase || item.pricePerUnit) : 0;
         
-        const actualBaseQty = c.actualQuantity === '' ? c.expectedQuantity : convertToBaseUnit(Number(c.actualQuantity), newUnit, item?.unitSize);
+        const actualBaseQty = c.actualQuantity === '' ? c.expectedQuantity : toBaseQtyConsistent(Number(c.actualQuantity), newUnit, item?.unitSize);
         const discrepancyBase = actualBaseQty - c.expectedQuantity;
 
         return {
@@ -172,12 +195,13 @@ export const StockTaking: React.FC<StockTakingProps> = ({ items, onUpdateInvento
       const expectedInUnit = convertFromBaseUnit(row.expectedQuantity, row.unit as Unit, invItem?.unitSize);
       const actualInUnit = row.actualQuantity as number;
       const varianceInUnit = actualInUnit - expectedInUnit;
+      const qtyDecimals = getQtyDecimals(row.unit);
 
       return [
         row.itemName,
-        `${expectedInUnit.toFixed(2)} ${row.unit}`,
-        `${actualInUnit.toFixed(2)} ${row.unit}`,
-        varianceInUnit > 0 ? `+${varianceInUnit.toFixed(2)} ${row.unit}` : `${varianceInUnit.toFixed(2)} ${row.unit}`,
+        `${expectedInUnit.toFixed(qtyDecimals)} ${row.unit}`,
+        `${actualInUnit.toFixed(qtyDecimals)} ${row.unit}`,
+        varianceInUnit > 0 ? `+${varianceInUnit.toFixed(qtyDecimals)} ${row.unit}` : `${varianceInUnit.toFixed(qtyDecimals)} ${row.unit}`,
         `£${row.expectedValue.toFixed(2)}`,
         `£${row.actualValue.toFixed(2)}`,
         `£${row.varianceValue.toFixed(2)}`
@@ -253,9 +277,24 @@ export const StockTaking: React.FC<StockTakingProps> = ({ items, onUpdateInvento
     doc.save(`stock-report-${new Date().toISOString().split('T')[0]}.pdf`);
 
     // 4. Update Global Inventory State (only for counted items)
+    // Uses toBaseQtyConsistent (not the raw convertToBaseUnit pcs special-case) — this writes
+    // the item's REAL stock quantity in Firestore, so it must apply the same pack-size
+    // multiplier used to display the count, or a mislabeled item's true stock would be
+    // silently corrupted on every completed stock take.
+    //
+    // Zero-discrepancy items are the exception: toBaseQtyConsistent expects a freshly-typed
+    // DISPLAY-unit number, but a zero discrepancy means either the count field was left blank
+    // (defaulted to expectedQuantity above, which is already a BASE-unit number) or the typed
+    // count simply confirmed the existing figure. Running either through toBaseQtyConsistent
+    // again double-converts an already-base-unit number — for any item whose unit is a metric
+    // multiple of its base unit (kg, L, etc.) this silently inflated stock by ~1000x on a
+    // stocktake that found no real change at all. expectedQuantity is already correct in base
+    // units, so a zero-discrepancy item writes back exactly what it already had — no conversion.
     onUpdateInventory(countedItems.map(c => {
       const invItem = items.find(i => i.id === c.itemId);
-      const actualBaseQty = convertToBaseUnit(Number(c.actualQuantity), c.unit as Unit, invItem?.unitSize);
+      const actualBaseQty = c.discrepancy === 0
+        ? c.expectedQuantity
+        : toBaseQtyConsistent(Number(c.actualQuantity), c.unit as Unit, invItem?.unitSize);
       return { id: c.itemId, quantity: actualBaseQty };
     }), 'ADJUSTMENT', `stocktake-${Date.now()}`);
 
@@ -396,19 +435,14 @@ export const StockTaking: React.FC<StockTakingProps> = ({ items, onUpdateInvento
                    <option key={cat} value={cat}>{cat}</option>
                  ))}
                </select>
-               <div className="relative rounded-xl shadow-sm w-full sm:w-64 flex group">
-                    <div className="relative flex-grow">
-                      <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                          <Search className="h-4 w-4 text-text-muted/50 group-focus-within:text-accent transition-colors" />
-                      </div>
-                      <input
-                          type="text"
-                          className="bg-main-bg border-border-grey text-text-navy block w-full pl-11 py-2.5 text-sm rounded-l-xl focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent transition-all placeholder-text-muted/30"
-                          placeholder="Search item or barcode..."
-                          value={searchTerm}
-                          onChange={(e) => setSearchTerm(e.target.value)}
-                      />
-                    </div>
+               <div className="relative rounded-xl shadow-sm w-full sm:w-64 flex">
+                    <SearchInput
+                      value={searchTerm}
+                      onChange={setSearchTerm}
+                      placeholder="Search item or barcode..."
+                      className="flex-grow"
+                      rounded="left"
+                    />
                     <button
                       type="button"
                       onClick={() => setIsScanning(true)}
@@ -443,6 +477,7 @@ export const StockTaking: React.FC<StockTakingProps> = ({ items, onUpdateInvento
                   filteredCounts.map((item) => {
                     const invItem = items.find(i => i.id === item.itemId);
                     const expectedInUnit = convertFromBaseUnit(item.expectedQuantity, item.unit as Unit, invItem?.unitSize);
+                    const qtyDecimals = getQtyDecimals(item.unit);
                     return (
                         <tr key={item.itemId} className="hover:bg-main-bg transition-colors group">
                         <td className="px-8 py-5 whitespace-nowrap">
@@ -453,7 +488,10 @@ export const StockTaking: React.FC<StockTakingProps> = ({ items, onUpdateInvento
                                     </div>
                                 )}
                                 <div>
-                                    <div className="text-sm font-bold text-text-navy group-hover:text-accent transition-colors">{item.itemName}</div>
+                                    <div className="text-sm font-bold text-text-navy group-hover:text-accent transition-colors flex items-center gap-1.5">
+                                      {item.itemName}
+                                      {invItem && <ItemSpecsTooltip item={invItem} />}
+                                    </div>
                                     {invItem?.barcode && (
                                         <div className="text-[10px] text-text-muted font-bold uppercase tracking-widest flex items-center mt-1">
                                             <ScanBarcode className="h-3 w-3 mr-1.5 text-accent" />
@@ -465,19 +503,19 @@ export const StockTaking: React.FC<StockTakingProps> = ({ items, onUpdateInvento
                         </td>
                         <td className="px-8 py-5 whitespace-nowrap">
                             <div className="text-sm font-bold text-text-muted">
-                              {expectedInUnit.toFixed(4)} <span className="text-[10px] uppercase tracking-widest">{item.unit}</span>
+                              {expectedInUnit.toFixed(qtyDecimals)} <span className="text-[10px] uppercase tracking-widest">{item.unit}</span>
                             </div>
                         </td>
                         <td className="px-8 py-5 whitespace-nowrap flex items-center">
                             <input
                             type="number"
                             min="0"
-                            step="any"
+                            step={getQtyStep(item.unit)}
                             className="w-28 bg-main-bg border-border-grey rounded-xl px-4 py-2 text-sm text-text-navy focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent transition-all placeholder-text-muted/30"
                             value={item.actualQuantity}
                             onChange={(e) => handleQuantityChange(item.itemId, e.target.value)}
-                            placeholder="0.0000"
-                            /> 
+                            placeholder={(0).toFixed(qtyDecimals)}
+                            />
                             <select
                               className="ml-3 bg-main-bg border-border-grey rounded-xl px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-text-muted focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent transition-all appearance-none cursor-pointer"
                               value={item.unit}
@@ -489,6 +527,9 @@ export const StockTaking: React.FC<StockTakingProps> = ({ items, onUpdateInvento
                               <option value="ml">ml</option>
                               <option value="pcs">pcs</option>
                               <option value="box">box</option>
+                              <option value="bags">bags</option>
+                              <option value="packs">packs</option>
+                              <option value="cases">cases</option>
                               <option value="portions">portions</option>
                               <option value="servings">servings</option>
                               <option value="bottles">bottles</option>
@@ -513,6 +554,8 @@ export const StockTaking: React.FC<StockTakingProps> = ({ items, onUpdateInvento
             ) : (
               filteredCounts.map((item) => {
                 const invItem = items.find(i => i.id === item.itemId);
+                const expectedInUnit = convertFromBaseUnit(item.expectedQuantity, item.unit as Unit, invItem?.unitSize);
+                const qtyDecimals = getQtyDecimals(item.unit);
                 return (
                   <div key={item.itemId} className="p-6 space-y-4 bg-card-bg">
                     <div className="flex justify-between items-start">
@@ -521,7 +564,10 @@ export const StockTaking: React.FC<StockTakingProps> = ({ items, onUpdateInvento
                           <img className="h-12 w-12 rounded-lg object-cover mr-4 shadow-sm border border-border-grey" src={invItem.imageUrl} alt="" referrerPolicy="no-referrer" />
                         )}
                         <div>
-                          <div className="text-sm font-bold text-text-navy">{item.itemName}</div>
+                          <div className="text-sm font-bold text-text-navy flex items-center gap-1.5">
+                            {item.itemName}
+                            {invItem && <ItemSpecsTooltip item={invItem} />}
+                          </div>
                           {invItem?.barcode && (
                             <div className="text-[10px] text-text-muted font-bold uppercase tracking-widest flex items-center mt-1">
                               <ScanBarcode className="h-3 w-3 mr-1.5 text-accent" />
@@ -531,14 +577,14 @@ export const StockTaking: React.FC<StockTakingProps> = ({ items, onUpdateInvento
                         </div>
                       </div>
                       <div className="text-[10px] font-bold text-text-muted uppercase tracking-widest bg-main-bg px-2 py-1 rounded-lg border border-border-grey">
-                        Exp: {item.expectedQuantity} {item.unit}
+                        Exp: {expectedInUnit.toFixed(qtyDecimals)} {item.unit}
                       </div>
                     </div>
                     <div className="flex items-center gap-3">
                       <input
                         type="number"
                         min="0"
-                        step="any"
+                        step={getQtyStep(item.unit)}
                         placeholder="Count"
                         className="flex-1 bg-main-bg border-border-grey rounded-xl px-4 py-3 text-sm text-text-navy focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent transition-all"
                         value={item.actualQuantity}
@@ -555,6 +601,9 @@ export const StockTaking: React.FC<StockTakingProps> = ({ items, onUpdateInvento
                         <option value="ml">ml</option>
                         <option value="pcs">pcs</option>
                         <option value="box">box</option>
+                        <option value="bags">bags</option>
+                        <option value="packs">packs</option>
+                        <option value="cases">cases</option>
                         <option value="portions">portions</option>
                         <option value="servings">servings</option>
                         <option value="bottles">bottles</option>
@@ -617,6 +666,7 @@ export const StockTaking: React.FC<StockTakingProps> = ({ items, onUpdateInvento
                     const expectedInUnit = convertFromBaseUnit(item.expectedQuantity, item.unit as Unit, invItem?.unitSize);
                     const actualInUnit = item.actualQuantity === '' ? expectedInUnit : Number(item.actualQuantity);
                     const varianceInUnit = actualInUnit - expectedInUnit;
+                    const qtyDecimals = getQtyDecimals(item.unit);
 
                     return (
                         <tr key={item.itemId} className="hover:bg-main-bg transition-colors">
@@ -633,14 +683,14 @@ export const StockTaking: React.FC<StockTakingProps> = ({ items, onUpdateInvento
                             </div>
                         </td>
                         <td className="px-8 py-5 whitespace-nowrap text-sm text-text-muted">
-                            {expectedInUnit.toFixed(4)} {item.unit}
+                            {expectedInUnit.toFixed(qtyDecimals)} {item.unit}
                         </td>
                         <td className="px-8 py-5 whitespace-nowrap text-sm text-text-navy">
-                            {actualInUnit.toFixed(4)} {item.unit}
+                            {actualInUnit.toFixed(qtyDecimals)} {item.unit}
                         </td>
                         <td className="px-8 py-5 whitespace-nowrap text-sm">
                             <span className={`font-bold ${varianceInUnit < -0.0001 ? 'text-cta' : varianceInUnit > 0.0001 ? 'text-success' : 'text-text-muted'}`}>
-                            {varianceInUnit > 0.0001 ? `+${varianceInUnit.toFixed(4)}` : varianceInUnit.toFixed(4)}
+                            {varianceInUnit > 0.0001 ? `+${varianceInUnit.toFixed(qtyDecimals)}` : varianceInUnit.toFixed(qtyDecimals)}
                             </span>
                         </td>
                         {checkPermission('inventory', 'viewCosts') && (
@@ -678,6 +728,7 @@ export const StockTaking: React.FC<StockTakingProps> = ({ items, onUpdateInvento
                 const expectedInUnit = convertFromBaseUnit(item.expectedQuantity, item.unit as Unit, invItem?.unitSize);
                 const actualInUnit = item.actualQuantity === '' ? expectedInUnit : Number(item.actualQuantity);
                 const varianceInUnit = actualInUnit - expectedInUnit;
+                const qtyDecimals = getQtyDecimals(item.unit);
 
                 return (
                   <div key={item.itemId} className="p-6 space-y-3 bg-card-bg">
@@ -693,11 +744,11 @@ export const StockTaking: React.FC<StockTakingProps> = ({ items, onUpdateInvento
                       </div>
                     </div>
                     <div className="grid grid-cols-2 gap-3 text-[10px] font-bold text-text-muted uppercase tracking-widest">
-                      <div>Expected: {expectedInUnit.toFixed(2)} {item.unit}</div>
-                      <div>Actual: {actualInUnit.toFixed(2)} {item.unit}</div>
+                      <div>Expected: {expectedInUnit.toFixed(qtyDecimals)} {item.unit}</div>
+                      <div>Actual: {actualInUnit.toFixed(qtyDecimals)} {item.unit}</div>
                       <div className="col-span-2 bg-main-bg p-2 rounded-lg border border-border-grey">
                         Variance: <span className={varianceInUnit < -0.0001 ? 'text-cta' : 'text-success'}>
-                          {varianceInUnit > 0.0001 ? `+${varianceInUnit.toFixed(2)}` : varianceInUnit.toFixed(2)} {item.unit}
+                          {varianceInUnit > 0.0001 ? `+${varianceInUnit.toFixed(qtyDecimals)}` : varianceInUnit.toFixed(qtyDecimals)} {item.unit}
                         </span>
                       </div>
                     </div>
@@ -715,18 +766,12 @@ export const StockTaking: React.FC<StockTakingProps> = ({ items, onUpdateInvento
               <p className="mt-1 text-xs font-medium text-text-muted uppercase tracking-wider">Past stock counts and AI reports.</p>
             </div>
             <div className="flex flex-col sm:flex-row gap-3 w-full lg:w-auto">
-              <div className="relative rounded-xl shadow-sm w-full sm:w-64 group">
-                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                  <Search className="h-4 w-4 text-text-muted/50 group-focus-within:text-accent transition-colors" />
-                </div>
-                <input
-                  type="text"
-                  className="bg-main-bg border-border-grey text-text-navy block w-full pl-11 py-2.5 text-sm rounded-xl focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent transition-all placeholder-text-muted/30"
-                  placeholder="Search date or items..."
-                  value={historySearchTerm}
-                  onChange={(e) => setHistorySearchTerm(e.target.value)}
-                />
-              </div>
+              <SearchInput
+                value={historySearchTerm}
+                onChange={setHistorySearchTerm}
+                placeholder="Search date or items..."
+                className="w-full sm:w-64"
+              />
               <select
                 className="block w-full sm:w-auto bg-main-bg border-border-grey text-text-navy text-[10px] font-bold uppercase tracking-widest rounded-xl py-2.5 pl-4 pr-10 focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent transition-all appearance-none cursor-pointer"
                 value={historySortOrder}
@@ -817,7 +862,9 @@ export const StockTaking: React.FC<StockTakingProps> = ({ items, onUpdateInvento
                                    </tr>
                                  </thead>
                                  <tbody className="divide-y divide-border-grey">
-                                   {record.items.map((item, idx) => (
+                                   {record.items.map((item, idx) => {
+                                     const qtyDecimals = getQtyDecimals(item.unit);
+                                     return (
                                      <tr key={idx} className={Math.abs(item.variance) > 0 ? 'bg-accent/5' : ''}>
                                        <td className="px-6 py-3">
                                          <div className="flex items-center">
@@ -829,13 +876,13 @@ export const StockTaking: React.FC<StockTakingProps> = ({ items, onUpdateInvento
                                            <div className="text-sm font-bold text-text-navy">{item.name}</div>
                                          </div>
                                        </td>
-                                       <td className="px-6 py-3 text-sm text-text-muted">{item.expected} {item.unit}</td>
-                                       <td className="px-6 py-3 text-sm text-text-navy">{item.actual} {item.unit}</td>
+                                       <td className="px-6 py-3 text-sm text-text-muted">{item.expected.toFixed(qtyDecimals)} {item.unit}</td>
+                                       <td className="px-6 py-3 text-sm text-text-navy">{item.actual.toFixed(qtyDecimals)} {item.unit}</td>
                                        <td className={`px-6 py-3 text-sm font-bold ${item.variance < 0 ? 'text-cta' : item.variance > 0 ? 'text-success' : 'text-text-muted'}`}>
-                                         {item.variance > 0 ? `+${item.variance}` : item.variance}
+                                         {item.variance > 0 ? `+${item.variance.toFixed(qtyDecimals)}` : item.variance.toFixed(qtyDecimals)}
                                        </td>
                                      </tr>
-                                   ))}
+                                   );})}
                                  </tbody>
                                </table>
                              </div>

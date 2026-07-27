@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { InventoryItem, Recipe, RecipeIngredient, ALLERGIES_LIST, RecipeType, MenuCategory, Unit, RecipeSide, RecipeAddon, SideAddonItem, SetMenu, SetMenuCourse, SetMenuCourseItem } from '../types';
 import { Button } from './Button';
+import { SearchInput } from './SearchInput';
 import { Plus, Trash2, Calculator, ChefHat, PoundSterling, Edit2, AlertCircle, Image as ImageIcon, Sparkles, Loader2, Upload, Camera, Check, Wheat, Shell, Egg, Fish, Flower2, Milk, Snail, Droplet, Bean, CircleDot, Sprout, FlaskConical, Nut, Leaf, Download, Minus, Search, X, BookOpen, Info, ChevronDown, Zap, Calendar } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
@@ -2437,7 +2438,7 @@ const handleSave = async () => {
               <span className="text-sm font-black">{recipes.length}</span> Total Recipes
             </span>
             <span className="inline-flex items-center gap-1.5 bg-success/10 text-success text-[10px] font-bold uppercase tracking-widest px-3 py-1 rounded-full border border-success/20">
-              <span className="text-sm font-black">{filteredRecipes.length}</span> Showing
+              <span className="text-sm font-black">{mainTab === 'sides_addons' ? sideAddonRows.length + addonRows.length : filteredRecipes.length}</span> Showing
             </span>
           </div>
         </div>
@@ -2527,16 +2528,12 @@ const handleSave = async () => {
                 <option value="Non-F&B">Non-F&B</option>
               </select>
             </div>
-            <div className="relative w-full sm:w-64">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-text-muted" />
-              <input
-                type="text"
-                placeholder="Search items..."
-                className="w-full pl-10 pr-4 py-2.5 border border-border-grey rounded-xl text-xs sm:text-sm focus:ring-accent focus:border-accent bg-main-bg text-text-navy placeholder-text-muted/50"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-              />
-            </div>
+            <SearchInput
+              value={searchTerm}
+              onChange={setSearchTerm}
+              placeholder="Search items..."
+              className="w-full sm:w-64"
+            />
             <div className="flex gap-2 w-full sm:w-fit">
               <Button onClick={downloadPDF} variant="secondary" className="flex-1 sm:flex-none bg-transparent border border-border-grey text-text-navy hover:bg-secondary-surface rounded-xl font-bold uppercase tracking-widest text-[9px] sm:text-[10px] py-3">
                 <Download className="mr-2 h-4 w-4" />
@@ -3221,16 +3218,12 @@ const handleSave = async () => {
         <>
           {/* Recipe Grid Controls */}
           <div className="flex flex-col sm:flex-row gap-4 mb-8 bg-card-bg p-6 rounded-2xl border border-border-grey">
-            <div className="relative flex-1">
-              <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-text-muted" />
-              <input
-                type="text"
-                placeholder={`Search ${mainTab === 'food_menu' ? 'food items' : mainTab === 'beverage_menu' ? 'beverage items' : 'batches'}...`}
-                className="w-full bg-main-bg border border-border-grey rounded-xl py-3 pl-12 pr-4 text-text-navy focus:ring-2 focus:ring-accent focus:border-transparent focus:outline-none text-sm placeholder-text-muted/50 transition-all"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-              />
-            </div>
+            <SearchInput
+              value={searchTerm}
+              onChange={setSearchTerm}
+              placeholder={`Search ${mainTab === 'food_menu' ? 'food items' : mainTab === 'beverage_menu' ? 'beverage items' : 'batches'}...`}
+              className="flex-1"
+            />
             {mainTab === 'batches' && (
               <select
                 className="bg-main-bg border border-border-grey rounded-xl py-3 px-6 text-text-navy focus:ring-2 focus:ring-accent focus:outline-none text-sm transition-all min-w-[160px] appearance-none"

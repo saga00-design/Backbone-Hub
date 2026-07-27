@@ -1,0 +1,14 @@
+Date,Day,Employee Name,Role,Department,Start Time,End Time,Break (Mins),Hours Scheduled,Hourly Wage,Estimated Labor Cost
+2026-05-25,Monday,ELLIOTT FRIAS,Waiter,Foh,18:00,23:00,30,4.5,13.50,60.75
+2026-05-25,Monday,Juan CanaryWharf,Chef,Kitchen,12:00,17:00,30,4.5,15.00,67.50
+2026-05-25,Monday,Elliott Rodriguez,admin,Administration,09:00,17:00,60,7,18.00,126.00
+2026-05-26,Tuesday,ELLIOTT FRIAS,Waiter,Foh,18:00,23:00,30,4.5,13.50,60.75
+2026-05-26,Tuesday,Juan CanaryWharf,Chef,Kitchen,12:00,17:30,30,5,15.00,75.00
+2026-05-27,Wednesday,ELLIOTT FRIAS,Waiter,Foh,12:00,17:00,30,4.5,13.50,60.75
+2026-05-27,Wednesday,Juan CanaryWharf,Chef,Kitchen,12:00,17:00,30,4.5,15.00,67.50
+2026-05-27,Wednesday,Elliott Rodriguez,admin,Administration,09:00,17:00,60,7,18.00,126.00
+2026-05-28,Thursday,ELLIOTT FRIAS,Waiter,Front of the house,18:00,23:00,30,4.5,13.50,60.75
+2026-05-29,Friday,Juan CanaryWharf,Chef,Kitchen,12:00,17:00,30,4.5,15.00,67.50
+2026-05-30,Saturday,ELLIOTT FRIAS,Waiter,Foh,18:00,23:30,30,5,13.50,67.50
+2026-05-30,Saturday,Elliott Rodriguez,admin,Administration,09:00,17:00,60,7,18.00,126.00
+2026-05-31,Sunday,Juan CanaryWharf,Chef,Kitchen,12:00,18:00,30,5.5,15.00,82.50

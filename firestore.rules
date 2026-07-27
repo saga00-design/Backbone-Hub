@@ -160,6 +160,10 @@ service cloud.firestore {
       allow read, write: if isAuthenticated();
     }
 
+    match /weeklyCostEntries/{docId} {
+      allow read, write: if isAuthenticated();
+    }
+
     // ── VAT ───────────────────────────────────────────────────
     match /vatTracker/{docId} {
       allow read, write: if isAuthenticated();

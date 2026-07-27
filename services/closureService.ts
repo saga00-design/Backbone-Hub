@@ -27,6 +27,7 @@ import { generateForecast } from './predictionService';
 import { processStaffPerformance } from './staffPerformanceService';
 import { runMenuEngineering } from './menuEngineeringService';
 import { Recipe, InventoryItem } from '../types';
+import { getAiClient, handleAiError } from './geminiService';
 
 /**
  * Calculates and saves a daily or shift closure.
@@ -691,6 +692,23 @@ export async function performClosure(params: {
       } catch (fErr) {
         console.warn("Auto-background tasks failed after closure:", fErr);
       }
+
+      // Generate the day's AI insight exactly once, at closure time, and cache it on the
+      // closure document. The Dashboard only ever reads this cached field — it never
+      // triggers a live AI call itself, no matter how many times it's viewed.
+      try {
+        const lowStockForInsight = Array.from(inventoryMap.values())
+          .filter((i: any) => (Number(i.quantity) || 0) <= (Number(i.minStockLevel) || 0))
+          .slice(0, 15)
+          .map((i: any) => ({ name: i.name, qty: i.quantity, min: i.minStockLevel, supplier: i.supplier }));
+
+        const aiInsight = await generateDailyAiInsight(closure, lowStockForInsight);
+        if (aiInsight) {
+          await updateDoc(closureRef, { aiInsight });
+        }
+      } catch (aiErr) {
+        console.warn("Daily AI insight generation failed:", aiErr);
+      }
     }
 
     return closure;
@@ -699,6 +717,52 @@ export async function performClosure(params: {
     console.error("Closure failed:", error);
     handleFirestoreError(error, OperationType.WRITE, 'dailyClosures (performClosure)');
     throw error;
+  }
+}
+
+/**
+ * Generates one strategic insight summary for the closed business day.
+ * Called exactly once per DAY closure from performClosure — never from the Dashboard,
+ * so viewing the dashboard (any number of times, by any number of staff) never spends tokens.
+ */
+async function generateDailyAiInsight(
+  closure: DailyClosure,
+  lowStockItems: { name: string; qty: number; min: number; supplier?: string }[]
+): Promise<string> {
+  try {
+    const ai = getAiClient();
+    const { totals, insights, date } = closure;
+
+    const prompt = `Act as an expert Restaurant Operations & Supply Chain Manager.
+    Analyze this business day's closing figures (${date}) and provide a strategic summary for tomorrow's shift.
+
+    TODAY'S RESULTS:
+    Gross Sales: £${totals.grossSales.toFixed(2)}, Net Sales: £${totals.netSales.toFixed(2)}, Orders: ${totals.orderCount}, Average Order Value: £${totals.averageOrderValue.toFixed(2)}
+
+    TOP ITEMS: ${JSON.stringify(insights?.topItems || [])}
+    LOW MARGIN ITEMS: ${JSON.stringify(insights?.lowMarginItems || [])}
+    SLOW HOURS: ${JSON.stringify(insights?.slowHours || [])}
+    PROFIT WARNINGS: ${JSON.stringify(insights?.profitWarnings || [])}
+
+    LOW / OUT OF STOCK ITEMS: ${JSON.stringify(lowStockItems)}
+
+    Please provide:
+    1. URGENT ACTIONS: 3 immediate steps to prevent out-of-stock or waste tomorrow.
+    2. FORECAST: Predict demand for the next 7 days based on today's trends.
+    3. MARGIN PROTECTION: Recommendations on where to cut waste or negotiate better pricing.
+    4. TEAM BRIEFING NOTE: A short one-liner for the staff about tomorrow's focus.
+
+    Format with bold headers and clear bullet points. Be ruthless about operational efficiency.`;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-3.1-flash-lite-preview',
+      contents: prompt,
+    });
+
+    return response.text || '';
+  } catch (error) {
+    console.warn("[Closure] AI insight generation failed:", handleAiError(error));
+    return '';
   }
 }
 

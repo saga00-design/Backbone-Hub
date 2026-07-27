@@ -14,7 +14,6 @@ export const APP_SECTIONS = [
   { id: 'stocktake', name: 'Stock Count' },
   { id: 'invoices', name: 'Invoices' },
   { id: 'suppliers', name: 'Suppliers' },
-  { id: 'staffing_rota', name: 'Staffing & Rota' },
 ];
 
 export const DEFAULT_PERMISSIONS: Record<string, AppPermissions> = {
@@ -26,8 +25,7 @@ export const DEFAULT_PERMISSIONS: Record<string, AppPermissions> = {
     staff: { viewProfiles: true, editProfiles: true, editSalaries: true, manageRoles: true, viewTraining: true, viewBriefing: true, manageBriefing: true, viewBriefingTargets: true, viewBriefingChallenges: true, viewBriefing86: true, viewBriefingPerformance: true },
     settings: { view: true, managePermissions: true, manageAutomation: true },
     stockCount: { view: true, startCount: true, editCount: true, deleteCount: true, viewVariances: true, finalizeCount: true },
-    tables: { view: true, editLayout: true, manageZones: true, seatCustomers: true, transferOrders: true, closeTable: true },
-    staffingRota: { view: true, manageForecasts: true, buildRota: true, approveRota: true, viewBudgets: true, manageAvailability: true }
+    tables: { view: true, editLayout: true, manageZones: true, seatCustomers: true, transferOrders: true, closeTable: true }
   },
   Manager: {
     inventory: { view: true, create: true, edit: true, delete: true, manageSuppliers: true, viewCosts: true, processInvoices: true },
@@ -37,8 +35,7 @@ export const DEFAULT_PERMISSIONS: Record<string, AppPermissions> = {
     staff: { viewProfiles: true, editProfiles: true, editSalaries: false, manageRoles: false, viewTraining: true, viewBriefing: true, manageBriefing: true, viewBriefingTargets: true, viewBriefingChallenges: true, viewBriefing86: true, viewBriefingPerformance: true },
     settings: { view: true, managePermissions: false, manageAutomation: false },
     stockCount: { view: true, startCount: true, editCount: true, deleteCount: true, viewVariances: true, finalizeCount: true },
-    tables: { view: true, editLayout: true, manageZones: true, seatCustomers: true, transferOrders: true, closeTable: true },
-    staffingRota: { view: true, manageForecasts: true, buildRota: true, approveRota: true, viewBudgets: true, manageAvailability: true }
+    tables: { view: true, editLayout: true, manageZones: true, seatCustomers: true, transferOrders: true, closeTable: true }
   },
   Waiter: {
     inventory: { view: false, create: false, edit: false, delete: false, manageSuppliers: false, viewCosts: false, processInvoices: false },
@@ -48,8 +45,7 @@ export const DEFAULT_PERMISSIONS: Record<string, AppPermissions> = {
     staff: { viewProfiles: false, editProfiles: false, editSalaries: false, manageRoles: false, viewTraining: true, viewBriefing: true, manageBriefing: false, viewBriefingTargets: true, viewBriefingChallenges: true, viewBriefing86: true, viewBriefingPerformance: true },
     settings: { view: false, managePermissions: false, manageAutomation: false },
     stockCount: { view: false, startCount: false, editCount: false, deleteCount: false, viewVariances: false, finalizeCount: false },
-    tables: { view: false, editLayout: false, manageZones: false, seatCustomers: false, transferOrders: false, closeTable: false },
-    staffingRota: { view: true, manageForecasts: false, buildRota: false, approveRota: false, viewBudgets: false, manageAvailability: true }
+    tables: { view: false, editLayout: false, manageZones: false, seatCustomers: false, transferOrders: false, closeTable: false }
   },
   Bartender: {
     inventory: { view: false, create: false, edit: false, delete: false, manageSuppliers: false, viewCosts: false, processInvoices: false },
@@ -59,8 +55,7 @@ export const DEFAULT_PERMISSIONS: Record<string, AppPermissions> = {
     staff: { viewProfiles: false, editProfiles: false, editSalaries: false, manageRoles: false, viewTraining: true, viewBriefing: true, manageBriefing: false, viewBriefingTargets: false, viewBriefingChallenges: false, viewBriefing86: true, viewBriefingPerformance: false },
     settings: { view: false, managePermissions: false, manageAutomation: false },
     stockCount: { view: false, startCount: false, editCount: false, deleteCount: false, viewVariances: false, finalizeCount: false },
-    tables: { view: false, editLayout: false, manageZones: false, seatCustomers: false, transferOrders: false, closeTable: false },
-    staffingRota: { view: true, manageForecasts: false, buildRota: false, approveRota: false, viewBudgets: false, manageAvailability: true }
+    tables: { view: false, editLayout: false, manageZones: false, seatCustomers: false, transferOrders: false, closeTable: false }
   },
   Chef: {
     inventory: { view: true, create: true, edit: true, delete: false, manageSuppliers: true, viewCosts: false, processInvoices: true },
@@ -70,8 +65,7 @@ export const DEFAULT_PERMISSIONS: Record<string, AppPermissions> = {
     staff: { viewProfiles: false, editProfiles: false, editSalaries: false, manageRoles: false, viewTraining: true, viewBriefing: true, manageBriefing: true, viewBriefingTargets: true, viewBriefingChallenges: true, viewBriefing86: true, viewBriefingPerformance: true },
     settings: { view: false, managePermissions: false, manageAutomation: false },
     stockCount: { view: true, startCount: true, editCount: true, deleteCount: false, viewVariances: true, finalizeCount: false },
-    tables: { view: false, editLayout: false, manageZones: false, seatCustomers: false, transferOrders: false, closeTable: false },
-    staffingRota: { view: true, manageForecasts: false, buildRota: false, approveRota: false, viewBudgets: true, manageAvailability: true }
+    tables: { view: false, editLayout: false, manageZones: false, seatCustomers: false, transferOrders: false, closeTable: false }
   }
 };
 
@@ -91,6 +85,31 @@ export const DEFAULT_DEPARTMENTS = [
   { id: 'admin', name: 'Admin' },
   { id: 'custom', name: 'Custom' },
 ];
+
+// Single source of truth for the Morning/Lunch/Dinner shift windows.
+// Boundaries (12:00 and 17:00) are the ones already hardcoded in the Labour
+// Intelligence "Shift Profitability" card; 06:00 reuses the app's existing
+// business-day cutoff hour (see utils/businessDay.ts). Not new numbers.
+export interface ShiftWindowDefinition {
+  name: 'Morning' | 'Lunch' | 'Dinner';
+  startHour: number; // inclusive, 24h clock
+  endHour: number; // exclusive, 24h clock (24 = midnight, wraps into next calendar day up to the 6am cutoff)
+  label: string;
+}
+
+export const SHIFT_WINDOWS: ShiftWindowDefinition[] = [
+  { name: 'Morning', startHour: 6, endHour: 12, label: '06:00 - 12:00' },
+  { name: 'Lunch', startHour: 12, endHour: 17, label: '12:00 - 17:00' },
+  { name: 'Dinner', startHour: 17, endHour: 24, label: '17:00 - 23:30' },
+];
+
+/** Assigns an hour (0-23) to a Morning/Lunch/Dinner window. Hours 0-5 (post-midnight,
+ * pre-cutoff) fold into Dinner since they belong to the prior business day's evening. */
+export function getShiftWindowForHour(hour: number): ShiftWindowDefinition {
+  if (hour >= 6 && hour < 12) return SHIFT_WINDOWS[0];
+  if (hour >= 12 && hour < 17) return SHIFT_WINDOWS[1];
+  return SHIFT_WINDOWS[2];
+}
 
 export const DEFAULT_CATEGORIES = [
   'Food',

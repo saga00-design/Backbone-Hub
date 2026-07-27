@@ -1,7 +1,7 @@
 
 export type InventoryCategory = string;
 export type InventoryType = string;
-export type Unit = 'kg' | 'g' | 'gr' | 'L' | 'ml' | 'cl' | 'pcs' | 'box' | 'bottles' | 'bags' | 'portions' | 'cans' | 'kegs' | 'servings' | 'cases' | 'packs' | 'custom';
+export type Unit = 'kg' | 'g' | 'gr' | 'L' | 'ml' | 'cl' | 'pcs' | 'box' | 'bottles' | 'bags' | 'portions' | 'cans' | 'kegs' | 'servings' | 'cases' | 'packs' | 'tray' | 'vacuum pack' | 'sack' | 'tin' | 'jar' | 'tub' | 'sachet' | 'loose' | 'custom';
 export type MovementType = 'RECEIPT' | 'SALE' | 'WASTE' | 'ADJUSTMENT' | 'PRODUCTION' | 'TRANSFER' | 'STOCKTAKE';
 
 export interface StockMovement {
@@ -39,6 +39,8 @@ export interface InventoryItem {
   unitSize: number; // Size of a single pack in base units
   unit: Unit; // Unit of the unitSize (L, kg, etc.)
   packaging?: string; // e.g. bottle, box, pack
+  caseSize?: number; // Number of packs per case/box/sack, if this item is also bought by the case
+  casePackaging?: string; // e.g. case, box, sack
   minStockLevel: number;
   pricePerUnit: number; // Cost per BASE UNIT
   averageCostBase?: number; // Weighted average cost per base unit
@@ -629,6 +631,82 @@ export interface ExpenseRecord {
   status: 'Pending' | 'Approved' | 'Rejected';
 }
 
+// Manual WEEK-based P&L cost entry (Operation Costs > P&L Cost Entry tab). One document per
+// Monday-Sunday week (see utils/fiscalCalendar.ts). Rollup views (Period/Monthly/Quarterly)
+// sum these weekly documents client-side rather than being stored separately. Deliberately
+// excludes Restaurant/Deliveroo sales, COGS, and Wages — those are automated elsewhere (POS,
+// recipe costing, Labour Import) and must not be re-entered here. NOT currently wired into
+// services/pnlEngine.ts — this is data capture only; wiring it into the P&L waterfall is a
+// separate follow-up task.
+export interface WeeklyCostEntry {
+  id: string; // `${locationId}-W${weekStartDate}`
+  locationId: string;
+  weekId: string;
+  weekStartDate: string; // YYYY-MM-DD (Monday)
+  weekEndDate: string;   // YYYY-MM-DD (Sunday)
+  lastUpdated: string;
+
+  // Labour (partial — Wages is automated via Labour Import, excluded here)
+  salaries: number;
+  otherRota: number;
+  bonuses: number;
+  statutoryPaymentsAndPensions: number;
+  uniforms: number;
+  staffRecruitment: number;
+  staffFood: number;
+  staffWelfareAndTravel: number;
+
+  // Cleaning costs
+  cleaningProducts: number;
+  tradeRefuse: number;
+  contractCleaning: number;
+  laundry: number;
+
+  // Delivery costs
+  takeAwayPackaging: number;
+  deliverooCharges: number;
+
+  // Disposables
+  replacementEquipmentAndCrockery: number;
+  menusFoodAndCocktail: number;
+  stickersLabelsAndTillRolls: number;
+  postageAndStationery: number;
+  sauces: number;
+  plantsAndDecoration: number;
+  deliveryCharges: number;
+
+  // Utilities
+  telephoneItAndEpos: number;
+  music: number;
+  maintenanceContracts: number;
+  repairsAndMaintenance: number;
+  electricity: number;
+  gas: number;
+  water: number;
+
+  // Admin
+  centralSupportAdminAndVouchers: number;
+  bankingDifferences: number;
+  sundryCosts: number;
+
+  // Variable costs
+  advertisingAndPromotions: number;
+  staffTraining: number;
+  mysteryDiner: number;
+  bankCharges: number;
+  creditCardCharges: number;
+  healthAndSafety: number;
+
+  // Fixed costs
+  rent: number;
+  turnoverRent: number;
+  serviceCharge: number;
+  rates: number;
+  insurance: number;
+  legalAndProfessional: number;
+  recruitmentFeesAndRMLarge: number;
+}
+
 // --- Shift Briefing & Performance ---
 
 export type ShiftType = 'Lunch' | 'Dinner' | 'All Day';
@@ -841,6 +919,9 @@ export interface DailyClosure {
     totalPayments: number;
     createdAt: string;
   };
+  // Generated once per business day at closure time (see closureService.performClosure).
+  // Dashboard reads this cached field instead of triggering a live AI call on view.
+  aiInsight?: string;
 }
 
 export interface StaffingForecast {
@@ -1282,14 +1363,6 @@ export interface AppPermissions {
     transferOrders: boolean;
     closeTable: boolean;
   };
-  staffingRota: {
-    view: boolean;
-    manageForecasts: boolean;
-    buildRota: boolean;
-    approveRota: boolean;
-    viewBudgets: boolean;
-    manageAvailability: boolean;
-  };
 }
 
 export interface LabourShift {
@@ -1307,7 +1380,8 @@ export interface LabourShift {
   totalCost: number;
   locationId: string;
   importedAt: string;
-  source: string; // e.g. "Time Tracker Pro CSV"
+  source: string; // e.g. "Time Tracker Pro CSV", "Rota Export CSV"
+  shiftWindow?: string; // 'Morning' | 'Lunch' | 'Dinner', auto-assigned from clock-in time
 }
 
 export interface LabourForecasting {

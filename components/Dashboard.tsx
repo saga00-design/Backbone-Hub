@@ -1,19 +1,31 @@
 
 import React, { useMemo, useState } from 'react';
-import { InventoryItem, SalesImportRecord } from '../types';
-import { TrendingUp, AlertTriangle, PoundSterling, Brain, RefreshCw, ArrowRight, Banknote, ShoppingCart, Calendar, Clock, BarChart3, Bot, BookOpen, Monitor } from 'lucide-react';
+import { InventoryItem, DailyClosure } from '../types';
+import { TrendingUp, AlertTriangle, PoundSterling, Brain, RefreshCw, ArrowRight, Banknote, ShoppingCart, Clock, Bot, Wifi, WifiOff, ChevronDown, ChevronUp } from 'lucide-react';
 import { Button } from './Button';
-import { GoogleGenAI, Type } from '@google/genai';
-import { getAiClient, handleAiError } from '../services/geminiService';
-import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid, Legend } from 'recharts';
+import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts';
+
+interface LivePosSalesSummary {
+  totalPaid: number;
+  grossSales: number;
+  netSales: number;
+  vatTotal: number;
+  serviceChargeTotal: number;
+  discountTotal: number;
+  orderCount: number;
+  salesByPaymentMethod: Record<string, number>;
+}
 
 interface DashboardProps {
   items: InventoryItem[];
-  salesHistory: SalesImportRecord[];
   totalRevenue: number;
   posPaymentsCount: number;
+  isPosLive: boolean;
   databaseId?: string;
   orderCountToday: number;
+  livePosSalesSummary: LivePosSalesSummary;
+  todayCovers: number;
+  todaysClosure: DailyClosure | null;
   setCurrentView?: (view: any) => void;
   onAddToCart?: (item: InventoryItem, quantity: number) => void;
 }
@@ -28,69 +40,21 @@ interface Alert {
   targetView?: string;
 }
 
-export const Dashboard: React.FC<DashboardProps> = ({ 
-  items, 
-  salesHistory, 
-  totalRevenue, 
+const money = (v: number) => `£${(v || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+export const Dashboard: React.FC<DashboardProps> = ({
+  items,
+  totalRevenue,
   posPaymentsCount,
+  isPosLive,
   databaseId,
   orderCountToday,
-  setCurrentView, 
-  onAddToCart 
+  livePosSalesSummary,
+  todayCovers,
+  todaysClosure,
+  setCurrentView,
+  onAddToCart
 }) => {
-  const [forecast, setForecast] = useState<string | null>(null);
-  const [isForecasting, setIsForecasting] = useState(false);
-
-  const handleForecast = async () => {
-    setIsForecasting(true);
-    setForecast(null);
-    try {
-      const ai = getAiClient();
-      
-      // Select items for analysis: focus on low stock or high usage
-      const suspiciousItems = items.filter(i => 
-        (i.quantity <= (i.minStockLevel || 5) * 1.5) || 
-        (i.dailyUsageRate && i.dailyUsageRate > 0)
-      ).slice(0, 15);
-
-      const prompt = `Act as an expert Restaurant Operations & Supply Chain Manager. 
-      Analyze the following data to provide a strategic stock forecast and profitability recommendations.
-      
-      SALES CONTEXT (Last 20 records):
-      ${JSON.stringify(salesHistory.slice(0, 20).map(s => ({ date: s.date, total: s.totalSales, matched: s.matchedCount })))}
-      
-      CRITICAL INVENTORY ITEMS:
-      ${JSON.stringify(suspiciousItems.map(i => ({ 
-        name: i.name, 
-        qty: i.quantity, 
-        min: i.minStockLevel, 
-        usage: i.dailyUsageRate,
-        supplier: i.supplier,
-        expiry: i.expiryDate
-      })))}
-      
-      Please provide:
-      1. URGENT ACTIONS: 3 immediate steps to prevent out-of-stock or waste.
-      2. FORECAST: Predict demand for the next 7 days based on recent sales trends.
-      3. MARGIN PROTECTION: Recommendations on where to cut waste or negotiate better pricing.
-      4. TEAM BRIEFING NOTE: A short one-liner for the staff about inventory focus.
-      
-      Format with bold headers and clear bullet points. Be ruthless about operational efficiency.`;
-
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.1-flash-lite-preview',
-        contents: prompt,
-      });
-      setForecast(response.text || 'No forecast available at this time.');
-    } catch (error) {
-      console.error("[Dashboard] AI Forecast Error:", error);
-      const message = handleAiError(error);
-      setForecast(`Analysis Failed: ${message}`);
-    } finally {
-      setIsForecasting(false);
-    }
-  };
-  
   const totalValue = items.reduce((acc, item) => {
     const q = Number(item.quantity) || 0;
     const p = Number(item.averageCostBase || item.pricePerUnit) || 0;
@@ -99,22 +63,20 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
   const lowStockItems = items.filter(item => item.quantity <= item.minStockLevel);
   const totalItems = items.length;
-  
+
   const triggerAIChat = (message: string) => {
     window.dispatchEvent(new CustomEvent('inventory-ai-chat', { detail: { message } }));
   };
-
-  const [subCategoryFilter, setSubCategoryFilter] = React.useState<string>('All');
 
   // Calculate Value per Sub Category
   const subCategoryValueMap = items.reduce((acc: Record<string, number>, item) => {
     const key = item.subCategory || item.category || 'Uncategorized';
     const currentValue = acc[key] || 0;
-    
+
     const quantity = Number(item.quantity) || 0;
     const price = Number(item.averageCostBase || item.pricePerUnit) || 0;
     const itemValue = quantity * price;
-    
+
     acc[key] = currentValue + itemValue;
     return acc;
   }, {} as Record<string, number>);
@@ -123,17 +85,22 @@ export const Dashboard: React.FC<DashboardProps> = ({
     .map(([name, value]) => ({ name, value: Number(value) }))
     .sort((a, b) => b.value - a.value);
 
-  const subCategories = useMemo(() => {
-    const subs = new Set(items.map(item => item.subCategory || item.category || 'Uncategorized'));
-    return ['All', ...Array.from(subs)].sort();
-  }, [items]);
+  const [showAllCategories, setShowAllCategories] = useState(false);
+  const TOP_CATEGORY_COUNT = 6;
+  const topCategories = subCategoryBreakdown.slice(0, TOP_CATEGORY_COUNT);
+  const remainingCategories = subCategoryBreakdown.slice(TOP_CATEGORY_COUNT);
+  const remainingTotal = remainingCategories.reduce((acc, c) => acc + c.value, 0);
 
-  const displayedBreakdown = useMemo(() => {
-    if (subCategoryFilter === 'All') return subCategoryBreakdown;
-    return subCategoryBreakdown.filter(cat => cat.name === subCategoryFilter);
-  }, [subCategoryBreakdown, subCategoryFilter]);
+  const goToInventoryCategory = (categoryName: string) => {
+    // Reuse InventoryList's existing localStorage-persisted filters (inv_filter / inv_subfilter)
+    // rather than building a new filtering/navigation mechanism.
+    localStorage.setItem('inv_filter', 'All');
+    localStorage.setItem('inv_subfilter', categoryName);
+    setCurrentView?.('inventory');
+  };
 
-  // Generate Alerts Locally (Instant)
+  // Generate Alerts Locally (Instant) — plain rule-based checks over Firestore-backed
+  // inventory data. No AI/LLM call is involved anywhere in this computation.
   const alerts = useMemo(() => {
     const generatedAlerts: Alert[] = [];
     const today = new Date();
@@ -167,37 +134,6 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 });
             }
         }
-
-        // 2. Predictive Stock Level Check (AI Lite)
-        const totalInStock = Number(item.quantity) || 0;
-        const dailyUsage = Number(item.dailyUsageRate) || 0;
-        const minLevel = Number(item.minStockLevel) || 0;
-
-        if (totalInStock <= minLevel) {
-            generatedAlerts.push({
-                id: `stock-low-${item.id}`,
-                type: 'REORDER',
-                priority: totalInStock === 0 ? 'high' : 'medium',
-                title: totalInStock === 0 ? `OUT OF STOCK: ${item.name}` : `LOW STOCK: ${item.name}`,
-                message: `${item.name} is at ${totalInStock} ${item.baseUnit}. Min level is ${minLevel}.`,
-                action: totalInStock === 0 ? 'Urgent purchase required' : `Add to reorder list for next ${item.supplier || 'delivery'}`,
-                targetView: 'orders'
-            });
-        } else if (dailyUsage > 0) {
-            const daysRemaining = totalInStock / dailyUsage;
-            // Forecast: if we'll hit min stock within 3 days, alert now
-            if (daysRemaining <= 3) {
-                generatedAlerts.push({
-                    id: `stock-fore-${item.id}`,
-                    type: 'REORDER',
-                    priority: 'medium',
-                    title: `RUNNING LOW: ${item.name}`,
-                    message: `Projected to hit critical level in ${daysRemaining.toFixed(1)} days based on usage.`,
-                    action: `Schedule order with ${item.supplier || 'supplier'}`,
-                    targetView: 'orders'
-                });
-            }
-        }
     });
 
     return generatedAlerts.sort((a, b) => {
@@ -207,7 +143,28 @@ export const Dashboard: React.FC<DashboardProps> = ({
     });
   }, [items]);
 
-  // Forecasting Logic
+  // AI Inventory Intelligence table selection
+  const [selectedStockIds, setSelectedStockIds] = useState<Set<string>>(new Set());
+  const toggleStockSelect = (id: string) => {
+    setSelectedStockIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+  const handleOrderSelected = () => {
+    if (!onAddToCart) return;
+    lowStockItems.filter(i => selectedStockIds.has(i.id)).forEach(i => onAddToCart(i, 1));
+    setSelectedStockIds(new Set());
+  };
+  const handleOrderAll = () => {
+    if (!onAddToCart) return;
+    lowStockItems.forEach(i => onAddToCart(i, 1));
+    setSelectedStockIds(new Set());
+  };
+
+  // Forecasting Logic — gated on the same dailyUsageRate signal that already reflects
+  // accumulated real usage history; renders nothing until there's genuine data.
   const forecastingData = useMemo(() => {
     return items
       .filter(item => item.dailyUsageRate && item.dailyUsageRate > 0)
@@ -227,107 +184,67 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
   const COLORS = ['#F27D26', '#141414', '#5A5A40', '#E4E3E0', '#8E9299', '#4a4a4a'];
 
+  // Gross Sales hover/click popover
+  const [grossDetailOpen, setGrossDetailOpen] = useState(false);
+  const sph = todayCovers > 0 ? totalRevenue / todayCovers : 0;
+
+  // System connectivity compact indicator — driven by whether the posTransactions listener
+  // is actively synced to the server (App.tsx: isPosStreamSynced) and the browser is online.
+  // Previously this used `posPaymentsCount > 0`, which is "has this location ever had a
+  // payment" — permanently true once any history exists, so the dot could never go red.
+  const [connDetailOpen, setConnDetailOpen] = useState(false);
+  const isOnline = isPosLive;
+
+  const expiryAlerts = alerts.filter(a => a.type === 'EXPIRY');
+
   return (
     <div className="space-y-6">
-      
-      {/* Integration Status (Visible for Debugging Sales Reflection) */}
-      <div className="bg-cta/5 border border-cta/10 rounded-2xl p-4 transition-all hover:bg-cta/10">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-cta/10 rounded-lg">
-              <Monitor className="h-4 w-4 text-cta" />
+
+      {/* Compact connectivity indicator — auto-hidden detail, unobtrusive top-corner dot */}
+      <div className="flex justify-end">
+        <div
+          className="relative"
+          onMouseEnter={() => setConnDetailOpen(true)}
+          onMouseLeave={() => setConnDetailOpen(false)}
+        >
+          <button
+            onClick={() => setConnDetailOpen(o => !o)}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-full border border-border-grey bg-card-bg hover:border-accent/40 transition-all"
+            title="System Connectivity"
+          >
+            <span className={`h-2 w-2 rounded-full animate-pulse ${isOnline ? 'bg-success' : 'bg-error'}`}></span>
+            {isOnline ? <Wifi className="h-3 w-3 text-text-muted" /> : <WifiOff className="h-3 w-3 text-error" />}
+          </button>
+
+          {connDetailOpen && (
+            <div className="absolute right-0 mt-2 w-64 bg-card-bg border border-border-grey rounded-xl shadow-xl p-4 z-30">
+              <p className="text-[10px] font-black text-text-navy uppercase tracking-widest mb-3">System Connectivity</p>
+              <div className="space-y-2 text-[11px]">
+                <div className="flex justify-between">
+                  <span className="text-text-muted font-bold uppercase">Database</span>
+                  <span className="font-mono font-medium text-text-navy truncate max-w-[120px]" title={databaseId}>{databaseId || 'default'}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-text-muted font-bold uppercase">Payments</span>
+                  <span className="font-bold text-text-navy">{posPaymentsCount} Records</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-text-muted font-bold uppercase">Today's Hub Volume</span>
+                  <span className="font-bold text-text-navy">{orderCountToday} Orders</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-text-muted font-bold uppercase">Sync Status</span>
+                  <span className={`font-bold uppercase tracking-tighter ${isOnline ? 'text-success' : 'text-error'}`}>{isOnline ? 'Live' : 'Offline'}</span>
+                </div>
+              </div>
             </div>
-            <div>
-              <h3 className="text-xs font-black text-text-navy uppercase tracking-tight">System Connectivity</h3>
-              <p className="text-[10px] text-text-muted font-bold uppercase tracking-widest italic">Live POS -&gt; Hub Data Stream</p>
-            </div>
-          </div>
-          
-          <div className="grid grid-cols-2 sm:flex sm:items-center gap-4 sm:gap-8">
-            <div className="flex flex-col">
-              <span className="text-[9px] text-text-muted font-bold uppercase">Database</span>
-              <span className="text-[11px] font-mono font-medium text-text-navy truncate max-w-[120px]" title={databaseId}>{databaseId || 'default'}</span>
-            </div>
-            <div className="flex flex-col">
-              <span className="text-[9px] text-text-muted font-bold uppercase">Payments</span>
-              <span className="text-[11px] font-bold text-text-navy">{posPaymentsCount} Records</span>
-            </div>
-            <div className="flex flex-col">
-              <span className="text-[9px] text-text-muted font-bold uppercase">Today's Hub Volume</span>
-              <span className="text-[11px] font-bold text-text-navy">{orderCountToday} Orders</span>
-            </div>
-            <div className="flex flex-col">
-              <span className="text-[9px] text-text-muted font-bold uppercase">Sync Status</span>
-              <span className="flex items-center gap-1.5">
-                <span className={`h-2 w-2 rounded-full animate-pulse ${posPaymentsCount > 0 ? 'bg-success' : 'bg-warning'}`}></span>
-                <span className="text-[11px] font-bold text-text-navy uppercase tracking-tighter">Live</span>
-              </span>
-            </div>
-          </div>
+          )}
         </div>
       </div>
-      
-      {/* Quick Actions & Stats */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-        <div className="flex items-center p-5 bg-card-bg rounded-2xl shadow-sm border border-border-grey relative overflow-hidden">
-          <div className="p-3 bg-success/10 rounded-xl border border-success/20">
-            <Banknote className="h-5 w-5 text-success" />
-          </div>
-          <div className="ml-4 text-left relative z-10">
-            <p className="text-[10px] text-text-muted font-bold uppercase tracking-widest">Gross Sales (Today)</p>
-            <p className="text-xl font-black text-text-navy tracking-tight">£{totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
-          </div>
-        </div>
 
-        <button 
-          onClick={() => setCurrentView?.('recipes')}
-          className="flex items-center p-5 bg-card-bg rounded-2xl shadow-sm border border-border-grey hover:border-accent hover:shadow-lg transition-all group relative overflow-hidden"
-        >
-          <div className="p-3 bg-primary-surface rounded-xl group-hover:bg-secondary-surface transition-colors border border-border-grey/50 group-hover:border-accent/20">
-            <BookOpen className="h-5 w-5 text-accent" />
-          </div>
-          <div className="ml-4 text-left relative z-10">
-            <p className="text-sm font-black text-text-navy uppercase tracking-tight">Recipe Book</p>
-            <p className="text-[10px] text-text-muted font-bold uppercase tracking-widest mt-0.5">Manage & Download</p>
-          </div>
-          <ArrowRight className="ml-auto h-4 w-4 text-text-muted/30 group-hover:text-accent group-hover:translate-x-1 transition-all" />
-        </button>
-
-        <button 
-          onClick={() => setCurrentView?.('inventory')}
-          className="flex items-center p-5 bg-card-bg rounded-2xl shadow-sm border border-border-grey hover:border-accent hover:shadow-lg transition-all group relative overflow-hidden"
-        >
-          <div className="p-3 bg-success/10 rounded-xl group-hover:bg-success/20 transition-colors border border-success/20">
-            <ShoppingCart className="h-5 w-5 text-success" />
-          </div>
-          <div className="ml-4 text-left relative z-10">
-            <p className="text-sm font-black text-text-navy uppercase tracking-tight">Inventory</p>
-            <p className="text-[10px] text-text-muted font-bold uppercase tracking-widest mt-0.5">Levels & Orders</p>
-          </div>
-          <ArrowRight className="ml-auto h-4 w-4 text-text-muted/30 group-hover:text-accent group-hover:translate-x-1 transition-all" />
-        </button>
-
-        <button 
-          onClick={() => triggerAIChat("Give me a summary of my business performance")}
-          className="flex items-center p-5 bg-card-bg rounded-2xl shadow-sm border border-border-grey hover:border-accent hover:shadow-lg transition-all group relative overflow-hidden"
-        >
-          <div className="p-3 bg-secondary-surface rounded-xl group-hover:bg-primary-surface transition-colors border border-border-grey/50 group-hover:border-accent/20">
-            <Brain className="h-5 w-5 text-accent" />
-          </div>
-          <div className="ml-4 text-left relative z-10">
-            <div className="flex items-center gap-2">
-              <p className="text-sm font-black text-text-navy uppercase tracking-tight">AI Insights</p>
-              <span className="text-[8px] bg-accent/20 text-accent px-1.5 py-0.5 rounded-full font-black animate-pulse">FAST MODE</span>
-            </div>
-            <p className="text-[10px] text-text-muted font-bold uppercase tracking-widest mt-0.5">Strategy & Tips</p>
-          </div>
-          <ArrowRight className="ml-auto h-4 w-4 text-text-muted/30 group-hover:text-accent group-hover:translate-x-1 transition-all" />
-        </button>
-      </div>
-
-      {/* Smart Alerts Section */}
+      {/* Smart Alerts Section — AI Inventory Intelligence (rule-based, no live AI call) */}
       <div className="bg-primary-surface border border-border-grey rounded-2xl p-4 sm:p-6 shadow-sm">
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-4">
           <div className="flex items-center">
             <div className="p-2.5 bg-accent/10 rounded-xl mr-3 border border-accent/20">
               <Brain className="h-5 w-5 text-accent" />
@@ -337,9 +254,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
               <p className="text-[10px] text-text-muted font-medium uppercase tracking-widest">Real-time critical actions</p>
             </div>
           </div>
-          <Button 
-            variant="secondary" 
-            className="text-[10px] font-black uppercase tracking-widest h-10 px-5 bg-card-bg border-border-grey text-text-navy hover:border-accent hover:text-accent transition-all rounded-xl shadow-sm flex-shrink-0 w-full sm:w-auto flex items-center justify-center" 
+          <Button
+            variant="secondary"
+            className="text-[10px] font-black uppercase tracking-widest h-10 px-5 bg-card-bg border-border-grey text-text-navy hover:border-accent hover:text-accent transition-all rounded-xl shadow-sm flex-shrink-0 w-full sm:w-auto flex items-center justify-center"
             onClick={() => window.location.reload()}
           >
             <RefreshCw className="h-3.5 w-3.5 mr-2" />
@@ -347,89 +264,165 @@ export const Dashboard: React.FC<DashboardProps> = ({
           </Button>
         </div>
 
-        {alerts.length === 0 ? (
-            <div className="text-center py-12 text-text-muted bg-card-bg rounded-2xl border border-dashed border-border-grey text-sm">
+        {lowStockItems.length === 0 && expiryAlerts.length === 0 ? (
+            <div className="text-center py-8 text-text-muted bg-card-bg rounded-2xl border border-dashed border-border-grey text-sm">
                 <p className="font-bold uppercase tracking-widest text-xs opacity-50">System Status: Optimal</p>
                 <p className="mt-2">No critical stock or expiry issues detected.</p>
             </div>
         ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              {alerts.map((alert) => (
-                <div 
-                  key={alert.id} 
-                  className={`bg-card-bg p-5 rounded-2xl border border-border-grey shadow-sm flex flex-col justify-between cursor-pointer hover:shadow-xl hover:border-accent/40 transition-all group relative overflow-hidden ${
-                    alert.type === 'EXPIRY' ? 'border-l-4 border-l-cta' : 'border-l-4 border-l-warning'
-                  }`}
-                  onClick={() => {
-                    if (setCurrentView && alert.targetView) {
-                      setCurrentView(alert.targetView);
-                    }
-                  }}
-                >
-                  <div className="relative z-10">
-                    <div className="flex justify-between items-start mb-3 gap-2">
-                        <h4 className="font-black text-text-navy text-sm leading-tight group-hover:text-accent transition-colors uppercase tracking-tight">{alert.title}</h4>
-                        <span className={`text-[9px] uppercase font-black px-2.5 py-1 rounded-lg flex-shrink-0 tracking-widest border ${
-                           alert.type === 'EXPIRY' ? 'bg-error/10 text-cta border-cta/20' : 'bg-warning/10 text-text-navy border-warning/20'
-                        }`}>
-                          {alert.type}
-                        </span>
-                    </div>
-                    <p className="text-[11px] text-text-muted mb-4 leading-relaxed line-clamp-2 font-medium">{alert.message}</p>
-                  </div>
-                  
-                  <div className="flex items-center justify-between mt-auto pt-4 border-t border-border-grey/50 relative z-10">
-                    <div className={`flex items-center text-[9px] font-black uppercase tracking-widest px-3 py-2 rounded-xl flex-1 mr-2 truncate ${
-                      alert.type === 'EXPIRY' ? 'text-cta bg-error/5' : 'text-accent bg-accent/5'
-                    }`}>
-                      <ArrowRight className="h-3 w-3 mr-2 flex-shrink-0" />
-                      <span className="truncate" title={alert.action}>{alert.action}</span>
-                    </div>
-                    {alert.type === 'REORDER' && onAddToCart && (
+          <>
+            {lowStockItems.length > 0 && (
+              <div className="bg-card-bg rounded-2xl border border-border-grey overflow-hidden">
+                <div className="flex items-center justify-between px-4 py-3 border-b border-border-grey bg-main-bg/50">
+                  <span className="text-[10px] font-black text-text-muted uppercase tracking-widest">{lowStockItems.length} item{lowStockItems.length !== 1 ? 's' : ''} need reordering</span>
+                  {onAddToCart && (
+                    <div className="flex items-center gap-2">
                       <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          const item = items.find(i => i.id === alert.id.replace('stock-', ''));
-                          if (item) {
-                            const match = alert.action.match(/Order (\d+)/);
-                            const qty = match ? parseInt(match[1]) : 1;
-                            onAddToCart(item, qty);
-                          }
-                        }}
-                        className="p-2.5 bg-accent text-white rounded-xl hover:bg-accent/90 transition-all shadow-lg shadow-accent/20 flex-shrink-0"
-                        title="Add to Cart"
+                        onClick={handleOrderSelected}
+                        disabled={selectedStockIds.size === 0}
+                        className="text-[9px] font-black uppercase tracking-widest px-3 py-1.5 rounded-lg border border-accent/30 text-accent bg-accent/5 hover:bg-accent hover:text-white transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                       >
-                        <ShoppingCart className="h-4 w-4" />
+                        Order Selected ({selectedStockIds.size})
                       </button>
-                    )}
-                  </div>
-                  
-                  {/* Subtle background decoration */}
-                  <div className="absolute -right-4 -bottom-4 opacity-[0.03] group-hover:opacity-[0.07] transition-opacity">
-                    {alert.type === 'EXPIRY' ? <Clock className="h-24 w-24" /> : <AlertTriangle className="h-24 w-24" />}
-                  </div>
+                      <button
+                        onClick={handleOrderAll}
+                        className="text-[9px] font-black uppercase tracking-widest px-3 py-1.5 rounded-lg bg-accent text-white hover:opacity-90 transition-all"
+                      >
+                        Order All
+                      </button>
+                    </div>
+                  )}
                 </div>
-              ))}
-            </div>
+                <div className="overflow-x-auto max-h-[220px] overflow-y-auto">
+                  <table className="w-full text-left">
+                    <thead className="sticky top-0 bg-card-bg">
+                      <tr className="text-[9px] text-text-muted font-black uppercase tracking-widest border-b border-border-grey">
+                        <th className="px-4 py-2 w-8"></th>
+                        <th className="px-2 py-2">Item</th>
+                        <th className="px-2 py-2">Current Stock</th>
+                        <th className="px-2 py-2">Min Level</th>
+                        <th className="px-4 py-2 text-right">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {lowStockItems.map(item => (
+                        <tr key={item.id} className="border-b border-border-grey/50 last:border-0 hover:bg-main-bg/40 transition-colors">
+                          <td className="px-4 py-2.5">
+                            <input
+                              type="checkbox"
+                              checked={selectedStockIds.has(item.id)}
+                              onChange={() => toggleStockSelect(item.id)}
+                              className="h-3.5 w-3.5 rounded border-border-grey accent-accent cursor-pointer"
+                            />
+                          </td>
+                          <td className="px-2 py-2.5 text-xs font-bold text-text-navy">
+                            {item.name}
+                            {item.quantity === 0 && <span className="ml-2 text-[8px] font-black uppercase tracking-widest text-error">Out of Stock</span>}
+                          </td>
+                          <td className="px-2 py-2.5 text-xs text-text-muted">{item.quantity} {item.baseUnit}</td>
+                          <td className="px-2 py-2.5 text-xs text-text-muted">{item.minStockLevel} {item.baseUnit}</td>
+                          <td className="px-4 py-2.5 text-right">
+                            {onAddToCart && (
+                              <button
+                                onClick={() => onAddToCart(item, 1)}
+                                className="p-1.5 bg-accent/10 text-accent rounded-lg hover:bg-accent hover:text-white transition-all"
+                                title="Add to Cart"
+                              >
+                                <ShoppingCart className="h-3.5 w-3.5" />
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {expiryAlerts.length > 0 && (
+              <div className="mt-3 space-y-1.5">
+                {expiryAlerts.map(alert => (
+                  <div
+                    key={alert.id}
+                    onClick={() => { if (setCurrentView && alert.targetView) setCurrentView(alert.targetView); }}
+                    className={`flex items-center justify-between px-4 py-2 rounded-xl border cursor-pointer hover:shadow-sm transition-all ${
+                      alert.priority === 'high' ? 'bg-error/5 border-error/20' : 'bg-warning/5 border-warning/20'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <Clock className="h-3.5 w-3.5 flex-shrink-0 text-cta" />
+                      <span className="text-[11px] font-bold text-text-navy truncate">{alert.title}</span>
+                      <span className="text-[10px] text-text-muted truncate hidden sm:inline">{alert.message}</span>
+                    </div>
+                    <ArrowRight className="h-3 w-3 text-text-muted/50 flex-shrink-0" />
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
         )}
       </div>
 
       {/* Stats Cards */}
       <div className="grid grid-cols-2 gap-4 sm:gap-6 lg:grid-cols-4">
-        <div className="bg-card-bg overflow-hidden shadow-sm rounded-2xl border border-border-grey hover:border-accent/30 hover:shadow-md transition-all duration-300">
-          <div className="p-4 sm:p-6">
+        <div
+          className="relative bg-card-bg overflow-visible shadow-sm rounded-2xl border border-border-grey hover:border-accent/30 hover:shadow-md transition-all duration-300"
+          onMouseEnter={() => setGrossDetailOpen(true)}
+          onMouseLeave={() => setGrossDetailOpen(false)}
+        >
+          <button
+            type="button"
+            onClick={() => setGrossDetailOpen(o => !o)}
+            className="w-full text-left p-4 sm:p-6"
+          >
             <div className="flex items-center">
               <div className="flex-shrink-0 p-3 bg-success/10 rounded-xl">
                 <Banknote className="h-5 w-5 sm:h-6 sm:w-6 text-success" />
               </div>
               <div className="ml-4 w-0 flex-1">
                 <dl>
-                  <dt className="text-[10px] sm:text-xs font-black text-text-muted uppercase tracking-widest truncate">Gross Sales</dt>
-                  <dd className="text-base sm:text-xl font-black text-text-navy mt-1">£{totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</dd>
+                  <dt className="text-[10px] sm:text-xs font-black text-text-muted uppercase tracking-widest truncate">Gross Sales (Today)</dt>
+                  <dd className="text-base sm:text-xl font-black text-text-navy mt-1">{money(totalRevenue)}</dd>
                 </dl>
               </div>
             </div>
-          </div>
+          </button>
+
+          {grossDetailOpen && (
+            <div className="absolute left-0 sm:left-auto sm:right-0 top-full mt-1 w-72 bg-card-bg border border-border-grey rounded-xl shadow-xl p-4 z-30">
+              <p className="text-[10px] font-black text-text-navy uppercase tracking-widest mb-3">Today's Breakdown</p>
+              <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-[11px]">
+                <div className="flex justify-between col-span-2">
+                  <span className="text-text-muted font-bold uppercase">VAT</span>
+                  <span className="font-bold text-text-navy">{money(livePosSalesSummary.vatTotal)}</span>
+                </div>
+                <div className="flex justify-between col-span-2">
+                  <span className="text-text-muted font-bold uppercase">Service Charge</span>
+                  <span className="font-bold text-text-navy">{money(livePosSalesSummary.serviceChargeTotal)}</span>
+                </div>
+                <div className="flex justify-between col-span-2">
+                  <span className="text-text-muted font-bold uppercase">Discounts</span>
+                  <span className="font-bold text-text-navy">{money(livePosSalesSummary.discountTotal)}</span>
+                </div>
+                <div className="flex justify-between col-span-2 pt-2 border-t border-border-grey">
+                  <span className="text-text-muted font-bold uppercase">Net Sales</span>
+                  <span className="font-bold text-text-navy">{money(livePosSalesSummary.netSales)}</span>
+                </div>
+                <div className="flex justify-between col-span-2">
+                  <span className="text-text-muted font-bold uppercase">Covers</span>
+                  <span className="font-bold text-text-navy">{todayCovers || '—'}</span>
+                </div>
+                <div className="flex justify-between col-span-2">
+                  <span className="text-text-muted font-bold uppercase">Spend Per Head</span>
+                  <span className="font-bold text-text-navy">{todayCovers > 0 ? money(sph) : '—'}</span>
+                </div>
+                <div className="col-span-2 pt-2 border-t border-border-grey text-[9px] text-text-muted italic">
+                  Food % / Beverage % split isn't tracked live yet — only available after tonight's closure report.
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="bg-card-bg overflow-hidden shadow-sm rounded-2xl border border-border-grey hover:border-accent/30 hover:shadow-md transition-all duration-300">
@@ -441,9 +434,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
               <div className="ml-4 w-0 flex-1">
                 <dl>
                   <dt className="text-[10px] sm:text-xs font-black text-text-muted uppercase tracking-widest truncate">Holding Value</dt>
-                  <dd className="text-base sm:text-xl font-black text-text-navy mt-1">£{totalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</dd>
+                  <dd className="text-base sm:text-xl font-black text-text-navy mt-1">{money(totalValue)}</dd>
                 </dl>
-                <button 
+                <button
                   onClick={() => triggerAIChat("tell me how can we improve this")}
                   className="mt-4 px-3 py-1.5 bg-accent/5 text-accent text-[9px] font-black uppercase tracking-widest rounded-xl border border-accent/20 hover:bg-accent hover:text-white transition-all shadow-sm inline-flex items-center group/btn"
                 >
@@ -466,7 +459,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                   <dt className="text-[10px] sm:text-xs font-black text-text-muted uppercase tracking-widest truncate">Low Stock</dt>
                   <dd className="text-base sm:text-xl font-black text-text-navy mt-1">{lowStockItems.length}</dd>
                 </dl>
-                <button 
+                <button
                   onClick={() => triggerAIChat("tell me which items are low in stock")}
                   className="mt-4 px-3 py-1.5 bg-cta/5 text-cta text-[9px] font-black uppercase tracking-widest rounded-xl border border-cta/20 hover:bg-cta hover:text-white transition-all shadow-sm inline-flex items-center group/btn"
                 >
@@ -491,7 +484,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                     {totalItems > 0 ? Math.round(((totalItems - lowStockItems.length) / totalItems) * 100) : 0}%
                   </dd>
                 </dl>
-                <button 
+                <button
                   onClick={() => triggerAIChat("tell me how can we improve")}
                   className="mt-4 px-3 py-1.5 bg-accent/5 text-accent text-[9px] font-black uppercase tracking-widest rounded-xl border border-accent/20 hover:bg-accent hover:text-white transition-all shadow-sm inline-flex items-center group/btn"
                 >
@@ -508,22 +501,10 @@ export const Dashboard: React.FC<DashboardProps> = ({
       <div className="bg-card-bg shadow rounded-lg p-6 border border-border-grey">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-6 gap-4">
           <h3 className="text-lg leading-6 font-medium text-text-navy">Total Value by Sub Category</h3>
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-text-muted font-medium uppercase tracking-wider">Narrow down:</span>
-            <select 
-              value={subCategoryFilter}
-              onChange={(e) => setSubCategoryFilter(e.target.value)}
-              className="text-sm border border-border-grey rounded-md px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-accent cursor-pointer bg-card-bg shadow-sm min-w-[180px] text-text-navy"
-            >
-              {subCategories.map((sub) => (
-                <option key={sub} value={sub}>{sub}</option>
-              ))}
-            </select>
-          </div>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          <div className="lg:col-span-1 h-[250px]">
+          <div className="lg:col-span-1 h-[220px]">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
                 <Pie
@@ -539,7 +520,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                     <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                   ))}
                 </Pie>
-                <Tooltip 
+                <Tooltip
                   formatter={(value: number) => [`£${value.toFixed(2)}`, 'Value']}
                   contentStyle={{ backgroundColor: '#151619', border: 'none', borderRadius: '8px', color: '#fff' }}
                 />
@@ -548,161 +529,158 @@ export const Dashboard: React.FC<DashboardProps> = ({
           </div>
 
           <div className="lg:col-span-2">
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-              {displayedBreakdown.map((cat) => (
-                <div 
-                  key={cat.name} 
-                  className="bg-main-bg p-2 rounded border border-border-grey flex flex-col justify-between h-16 shadow-sm hover:shadow-md transition-shadow cursor-pointer"
-                  onClick={() => triggerAIChat(`filter by sub category ${cat.name}`)}
+            <div className="divide-y divide-border-grey/60">
+              {topCategories.map((cat) => (
+                <button
+                  key={cat.name}
+                  onClick={() => goToInventoryCategory(cat.name)}
+                  className="w-full flex items-center justify-between py-2.5 px-2 hover:bg-main-bg/60 rounded-lg transition-colors group text-left"
                 >
-                  <div className="flex justify-between items-start">
-                    <span className="text-[10px] font-medium text-text-muted uppercase tracking-wider truncate" title={cat.name}>{cat.name}</span>
+                  <span className="text-xs font-medium text-text-navy group-hover:text-accent transition-colors truncate" title={cat.name}>{cat.name}</span>
+                  <span className="text-sm font-bold text-text-navy flex items-center gap-2 flex-shrink-0">
+                    £{cat.value.toFixed(0)}
+                    <ArrowRight className="h-3 w-3 text-text-muted/30 group-hover:text-accent group-hover:translate-x-0.5 transition-all" />
+                  </span>
+                </button>
+              ))}
+              {topCategories.length === 0 && (
+                 <p className="text-text-muted text-sm py-4">No inventory data to display.</p>
+              )}
+            </div>
+
+            {remainingCategories.length > 0 && (
+              <div className="mt-2 border-t border-border-grey pt-2">
+                <button
+                  onClick={() => setShowAllCategories(o => !o)}
+                  className="w-full flex items-center justify-between py-2 px-2 text-xs font-bold text-accent hover:bg-main-bg/60 rounded-lg transition-colors"
+                >
+                  <span>+{remainingCategories.length} more categories — £{remainingTotal.toFixed(0)} total</span>
+                  {showAllCategories ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                </button>
+                {showAllCategories && (
+                  <div className="divide-y divide-border-grey/60 mt-1 max-h-[240px] overflow-y-auto">
+                    {remainingCategories.map((cat) => (
+                      <button
+                        key={cat.name}
+                        onClick={() => goToInventoryCategory(cat.name)}
+                        className="w-full flex items-center justify-between py-2.5 px-2 hover:bg-main-bg/60 rounded-lg transition-colors group text-left"
+                      >
+                        <span className="text-xs font-medium text-text-navy group-hover:text-accent transition-colors truncate" title={cat.name}>{cat.name}</span>
+                        <span className="text-sm font-bold text-text-navy flex items-center gap-2 flex-shrink-0">
+                          £{cat.value.toFixed(0)}
+                          <ArrowRight className="h-3 w-3 text-text-muted/30 group-hover:text-accent group-hover:translate-x-0.5 transition-all" />
+                        </span>
+                      </button>
+                    ))}
                   </div>
-                  <div className="flex items-baseline">
-                    <span className="text-sm font-bold text-text-navy">£{cat.value.toFixed(0)}</span>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Stock Run-out Forecast — hidden entirely until real usage data exists (dailyUsageRate > 0) */}
+      {forecastingData.length > 0 && (
+        <div className="bg-card-bg shadow-sm rounded-2xl p-6 border border-border-grey">
+          <div className="flex items-center mb-8">
+            <div className="p-2.5 bg-accent/10 rounded-xl mr-3 border border-accent/20">
+              <Clock className="h-5 w-5 text-accent" />
+            </div>
+            <div>
+              <h3 className="text-lg font-black text-text-navy uppercase tracking-tight">Stock Run-out Forecast</h3>
+              <p className="text-[10px] text-text-muted font-medium uppercase tracking-widest">Projected depletion timeline</p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
+            <div className="h-[320px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart
+                  data={forecastingData}
+                  layout="vertical"
+                  margin={{ top: 5, right: 30, left: 40, bottom: 5 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#e5e5e5" />
+                  <XAxis type="number" hide />
+                  <YAxis
+                    dataKey="name"
+                    type="category"
+                    width={100}
+                    tick={{ fontSize: 10, fill: '#141414', fontWeight: 700 }}
+                  />
+                  <Tooltip
+                    cursor={{ fill: 'rgba(242, 125, 38, 0.05)' }}
+                    formatter={(value: number) => [`${value} days`, 'Remaining']}
+                    contentStyle={{ backgroundColor: '#151619', border: 'none', borderRadius: '12px', color: '#fff', padding: '12px' }}
+                  />
+                  <Bar
+                    dataKey="daysRemaining"
+                    radius={[0, 6, 6, 0]}
+                    barSize={24}
+                  >
+                    {forecastingData.map((entry, index) => (
+                      <Cell
+                        key={`cell-${index}`}
+                        fill={entry.status === 'critical' ? '#FF4444' : entry.status === 'warning' ? '#F27D26' : '#5A5A40'}
+                      />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+
+            <div className="space-y-3">
+              {forecastingData.map((item) => (
+                <div key={item.id} className="flex items-center justify-between p-4 bg-primary-surface rounded-xl border border-border-grey hover:border-accent/30 transition-all group cursor-pointer">
+                  <div className="flex flex-col">
+                    <span className="text-sm font-black text-text-navy uppercase tracking-tight group-hover:text-accent transition-colors">{item.name}</span>
+                    <span className="text-[9px] text-text-muted font-bold uppercase tracking-widest mt-0.5">{item.subCategory || item.category}</span>
+                  </div>
+                  <div className="text-right">
+                    <div className={`text-xs font-black uppercase tracking-widest ${
+                      item.status === 'critical' ? 'text-cta' : item.status === 'warning' ? 'text-warning' : 'text-success'
+                    }`}>
+                      {item.daysRemaining} days left
+                    </div>
+                    <div className="text-[10px] text-text-muted font-medium mt-1">
+                      Usage: <span className="font-bold text-text-navy">{item.dailyUsageRate}</span> {item.unit}/day
+                    </div>
                   </div>
                 </div>
               ))}
-              {displayedBreakdown.length === 0 && (
-                 <p className="text-text-muted text-sm col-span-full">No inventory data to display.</p>
-              )}
             </div>
-            
-            {subCategoryFilter !== 'All' && (
-              <div className="mt-4 flex justify-end">
-                <button 
-                  onClick={() => setSubCategoryFilter('All')}
-                  className="text-xs text-text-muted hover:text-text-navy font-medium underline"
-                >
-                  Show all sub categories
-                </button>
-              </div>
-            )}
           </div>
         </div>
-      </div>
+      )}
 
-      {/* Stock Run-out Forecast */}
-      <div className="bg-card-bg shadow-sm rounded-2xl p-6 border border-border-grey">
-        <div className="flex items-center mb-8">
-          <div className="p-2.5 bg-accent/10 rounded-xl mr-3 border border-accent/20">
-            <Clock className="h-5 w-5 text-accent" />
-          </div>
-          <div>
-            <h3 className="text-lg font-black text-text-navy uppercase tracking-tight">Stock Run-out Forecast</h3>
-            <p className="text-[10px] text-text-muted font-medium uppercase tracking-widest">Projected depletion timeline</p>
-          </div>
-        </div>
-        
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
-          <div className="h-[320px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart
-                data={forecastingData}
-                layout="vertical"
-                margin={{ top: 5, right: 30, left: 40, bottom: 5 }}
-              >
-                <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#e5e5e5" />
-                <XAxis type="number" hide />
-                <YAxis 
-                  dataKey="name" 
-                  type="category" 
-                  width={100} 
-                  tick={{ fontSize: 10, fill: '#141414', fontWeight: 700 }}
-                />
-                <Tooltip 
-                  cursor={{ fill: 'rgba(242, 125, 38, 0.05)' }}
-                  formatter={(value: number) => [`${value} days`, 'Remaining']}
-                  contentStyle={{ backgroundColor: '#151619', border: 'none', borderRadius: '12px', color: '#fff', padding: '12px' }}
-                />
-                <Bar 
-                  dataKey="daysRemaining" 
-                  radius={[0, 6, 6, 0]}
-                  barSize={24}
-                >
-                  {forecastingData.map((entry, index) => (
-                    <Cell 
-                      key={`cell-${index}`} 
-                      fill={entry.status === 'critical' ? '#FF4444' : entry.status === 'warning' ? '#F27D26' : '#5A5A40'} 
-                    />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
+      {/* AI Sales Forecasting — read-only cached insight generated once at daily closure.
+          Renders nothing until a closure has produced one; never triggers a live AI call. */}
+      {todaysClosure?.aiInsight && (
+        <div className="bg-card-bg shadow-2xl rounded-2xl p-6 sm:p-10 border border-border-grey relative overflow-hidden">
+          <div className="absolute top-0 right-0 p-10 opacity-[0.02] pointer-events-none">
+            <Bot className="h-48 w-48" />
           </div>
 
-          <div className="space-y-3">
-            {forecastingData.map((item) => (
-              <div key={item.id} className="flex items-center justify-between p-4 bg-primary-surface rounded-xl border border-border-grey hover:border-accent/30 transition-all group cursor-pointer">
-                <div className="flex flex-col">
-                  <span className="text-sm font-black text-text-navy uppercase tracking-tight group-hover:text-accent transition-colors">{item.name}</span>
-                  <span className="text-[9px] text-text-muted font-bold uppercase tracking-widest mt-0.5">{item.subCategory || item.category}</span>
-                </div>
-                <div className="text-right">
-                  <div className={`text-xs font-black uppercase tracking-widest ${
-                    item.status === 'critical' ? 'text-cta' : item.status === 'warning' ? 'text-warning' : 'text-success'
-                  }`}>
-                    {item.daysRemaining} days left
-                  </div>
-                  <div className="text-[10px] text-text-muted font-medium mt-1">
-                    Usage: <span className="font-bold text-text-navy">{item.dailyUsageRate}</span> {item.unit}/day
-                  </div>
-                </div>
-              </div>
-            ))}
-            {forecastingData.length === 0 && (
-              <div className="text-center py-12 text-text-muted bg-primary-surface rounded-xl border border-dashed border-border-grey">
-                <p className="text-sm font-medium">No usage data available for forecasting.</p>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* AI Forecasting Section */}
-      <div className="bg-card-bg shadow-2xl rounded-2xl p-6 sm:p-10 border border-border-grey relative overflow-hidden">
-        <div className="absolute top-0 right-0 p-10 opacity-[0.02] pointer-events-none">
-          <Bot className="h-48 w-48" />
-        </div>
-        
-        <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between mb-10 gap-8 relative z-10">
-          <div className="flex items-center">
+          <div className="flex items-center mb-6 relative z-10">
             <div className="p-4 bg-accent/10 rounded-2xl mr-5 border border-accent/20">
               <Bot className="h-8 w-8 text-accent" />
             </div>
             <div>
               <h3 className="text-xl sm:text-2xl font-black text-text-navy uppercase tracking-tight">AI Sales Forecasting</h3>
-              <p className="text-xs text-text-muted font-bold uppercase tracking-widest mt-1.5 max-w-md">Predict stock needs based on historical sales velocity and seasonal trends</p>
+              <p className="text-xs text-text-muted font-bold uppercase tracking-widest mt-1.5 max-w-md">Generated automatically at last night's closure — {todaysClosure.date}</p>
             </div>
           </div>
-          <Button 
-            onClick={handleForecast} 
-            disabled={isForecasting} 
-            className="bg-accent hover:bg-accent/90 text-white shadow-xl shadow-accent/20 font-black uppercase tracking-widest text-xs px-10 py-4 rounded-xl w-full lg:w-auto flex items-center justify-center transition-all transform hover:scale-[1.02] active:scale-[0.98]"
-          >
-            {isForecasting ? (
-              <>
-                <RefreshCw className="h-4 w-4 mr-3 animate-spin" />
-                Processing...
-              </>
-            ) : (
-              <>
-                <TrendingUp className="h-4 w-4 mr-3" />
-                Generate Forecast
-              </>
-            )}
-          </Button>
-        </div>
-        {forecast && (
+
           <div className="bg-primary-surface p-8 rounded-2xl text-sm text-text-navy border border-border-grey whitespace-pre-wrap leading-relaxed shadow-inner relative z-10 font-medium">
             <div className="flex items-center mb-4 text-accent">
               <Brain className="h-4 w-4 mr-2" />
               <span className="text-[10px] font-black uppercase tracking-widest">Intelligence Output</span>
             </div>
-            {forecast}
+            {todaysClosure.aiInsight}
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 };

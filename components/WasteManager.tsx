@@ -143,7 +143,7 @@ export const WasteManager: React.FC<WasteManagerProps> = ({
           </button>
           <button
             onClick={() => setIsFormOpen(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-cta text-white rounded-xl text-sm font-semibold hover:opacity-90 transition-colors shadow-sm"
+            className="flex items-center gap-2 px-4 py-2 bg-accent text-white rounded-xl text-sm font-semibold hover:opacity-90 transition-colors shadow-sm"
           >
             <Plus className="w-4 h-4" />
             Record Waste
@@ -385,7 +385,7 @@ export const WasteManager: React.FC<WasteManagerProps> = ({
                   </button>
                   <button
                     type="submit"
-                    className="flex-1 px-6 py-3 bg-cta text-white rounded-xl font-bold hover:opacity-90 transition-colors shadow-lg shadow-cta/20"
+                    className="flex-1 px-6 py-3 bg-accent text-white rounded-xl font-bold hover:opacity-90 transition-colors shadow-lg shadow-accent/20"
                   >
                     Save Record
                   </button>

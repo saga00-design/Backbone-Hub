@@ -1,4 +1,5 @@
 import React from 'react';
+import { twMerge } from 'tailwind-merge';
 
 interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: 'primary' | 'secondary' | 'danger' | 'ghost' | 'accent';
@@ -23,8 +24,11 @@ export const Button: React.FC<ButtonProps> = ({
     lg: "px-6 py-3 text-base",
   };
 
+  // `primary` is the app's standard call-to-action color (accent blue) — matches Update Briefing,
+  // Save Changes, Save Recipe, Order All, etc. `cta` is reserved for danger/urgent states
+  // (delete, out-of-stock, expired) via the `danger` variant or one-off `bg-cta` usage.
   const variants = {
-    primary: "border-transparent text-white bg-cta hover:opacity-90 focus:ring-cta shadow-lg shadow-cta/20",
+    primary: "border-transparent text-white bg-accent hover:opacity-90 focus:ring-accent shadow-lg shadow-accent/20",
     secondary: "border-border-grey text-text-navy bg-card-bg hover:bg-primary-surface focus:ring-accent shadow-sm",
     danger: "border-transparent text-white bg-error hover:opacity-90 focus:ring-error shadow-sm",
     ghost: "border-transparent text-text-muted hover:bg-secondary-surface hover:text-text-navy",
@@ -34,7 +38,7 @@ export const Button: React.FC<ButtonProps> = ({
   return (
     <button
       disabled={isLoading || disabled}
-      className={`${baseStyles} ${sizes[size]} ${variants[variant]} ${isLoading ? 'opacity-70 cursor-not-allowed' : ''} ${className}`}
+      className={twMerge(baseStyles, sizes[size], variants[variant], isLoading ? 'opacity-70 cursor-not-allowed' : '', className)}
       {...props}
     >
       {isLoading ? (

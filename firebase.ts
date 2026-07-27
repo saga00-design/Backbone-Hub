@@ -13,7 +13,7 @@ import {
   sendPasswordResetEmail, 
   signOut 
 } from 'firebase/auth';
-import { 
+import {
   getFirestore,
   collection,
   doc,
@@ -32,7 +32,8 @@ import {
   increment,
   initializeFirestore,
   enableIndexedDbPersistence,
-  writeBatch
+  writeBatch,
+  FieldValue
 } from 'firebase/firestore';
 
 const firebaseConfig = {
@@ -203,6 +204,10 @@ export async function testConnection() {
 export function cleanObject(obj: any): any {
   if (obj === null || obj === undefined) return obj;
   if (typeof obj !== 'object') return obj;
+  // FieldValue sentinels (increment(), serverTimestamp(), arrayUnion(), etc.) must pass through
+  // untouched — rebuilding them via Object.keys() below strips their class identity, so Firestore
+  // no longer recognizes them as transforms and writes their raw internal fields as literal data.
+  if (obj instanceof FieldValue) return obj;
   if (Array.isArray(obj)) return obj.map((item) => cleanObject(item));
 
   const result: any = {};

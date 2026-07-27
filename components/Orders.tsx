@@ -2,6 +2,9 @@ import React, { useState } from 'react';
 import { Order, OrderItem, Supplier, InventoryItem, Recipe, POSOrder } from '../types';
 import { ShoppingCart, Package, Search, Filter, Plus, Minus, Check, Clock, ChevronDown, ChevronUp, Users, PoundSterling, Zap } from 'lucide-react';
 import { Button } from './Button';
+import { SearchInput } from './SearchInput';
+import { formatPacksLabel, formatCaseBoxSackLabel } from '../utils/unitConversions';
+import { ItemSpecsTooltip } from './ItemSpecsTooltip';
 
 interface OrdersProps {
   cart: OrderItem[];
@@ -59,6 +62,19 @@ export const Orders: React.FC<OrdersProps> = ({
     return matchesSearch && matchesCategory && matchesSubCategory && matchesSupplier;
   });
 
+  // Looks up the source inventory item for an OrderItem/cart line so quantities can be shown
+  // the way people actually buy things (packs/cases) instead of raw base units (g/ml/pcs).
+  const getInvItem = (inventoryItemId: string) => inventoryItems.find(i => i.id === inventoryItemId);
+
+  const formatOrderQty = (item: OrderItem) => {
+    const invItem = getInvItem(item.inventoryItemId);
+    if (!invItem) return `${item.quantity} ${item.unit}`;
+    return formatPacksLabel(item.quantity, invItem);
+  };
+
+  const getCasesCount = (invItem: InventoryItem, baseQty: number) =>
+    invItem.caseSize && invItem.unitSize ? baseQty / (invItem.unitSize * invItem.caseSize) : 0;
+
   // Group cart items by supplier
   const cartBySupplier = cart.reduce((acc, item) => {
     const supplier = item.supplier || 'Unknown Supplier';
@@ -71,7 +87,7 @@ export const Orders: React.FC<OrdersProps> = ({
   const [copiedSupplier, setCopiedSupplier] = useState<string | null>(null);
 
   const copyToClipboard = (supplier: string, items: OrderItem[], totalAmount: number) => {
-    const text = `Order from Backbone Hub - ${new Date().toLocaleDateString()}\n\nSupplier: ${supplier}\n\nItems:\n${items.map(i => `- ${i.quantity} ${i.unit} of ${i.name} (ID: ${i.inventoryItemId})`).join('\n')}\n\nTotal: £${totalAmount.toFixed(2)}`;
+    const text = `Order from Backbone Hub - ${new Date().toLocaleDateString()}\n\nSupplier: ${supplier}\n\nItems:\n${items.map(i => `- ${formatOrderQty(i)} of ${i.name} (ID: ${i.inventoryItemId})`).join('\n')}\n\nTotal: £${totalAmount.toFixed(2)}`;
     
     navigator.clipboard.writeText(text).then(() => {
       setCopiedSupplier(supplier);
@@ -325,7 +341,7 @@ export const Orders: React.FC<OrdersProps> = ({
                                        Print Bill
                                     </Button>
                                     {order.status === 'Open' && (
-                                       <Button className="text-[9px] h-8 bg-cta text-white font-black uppercase tracking-widest px-4">
+                                       <Button className="text-[9px] h-8 font-black uppercase tracking-widest px-4">
                                           Send to Kitchen
                                        </Button>
                                     )}
@@ -357,18 +373,12 @@ export const Orders: React.FC<OrdersProps> = ({
       {activeTab === 'create' && (
         <div className="bg-white rounded-lg shadow-sm overflow-hidden">
           <div className="p-4 border-b border-gray-200 bg-gray-50 flex flex-col sm:flex-row gap-4 flex-wrap">
-            <div className="relative rounded-md shadow-sm flex-1 min-w-[200px]">
-              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                <Search className="h-5 w-5 text-gray-400" />
-              </div>
-              <input
-                type="text"
-                className="focus:ring-accent focus:border-accent block w-full pl-10 sm:text-sm border-gray-300 rounded-md p-2 border"
-                placeholder="Search items..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-              />
-            </div>
+            <SearchInput
+              value={searchTerm}
+              onChange={setSearchTerm}
+              placeholder="Search items..."
+              className="flex-1 min-w-[200px]"
+            />
             <div className="flex gap-4 flex-wrap">
               <div className="relative rounded-md shadow-sm min-w-[150px]">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
@@ -421,6 +431,7 @@ export const Orders: React.FC<OrdersProps> = ({
                   <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Item</th>
                   <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Supplier</th>
                   <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Stock</th>
+                  <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Case/Box/Sack</th>
                   {checkPermission('inventory', 'viewCosts') && (
                     <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Price</th>
                   )}
@@ -431,7 +442,24 @@ export const Orders: React.FC<OrdersProps> = ({
                 {filteredItems.map(item => {
                   const cartItem = cart.find(c => c.inventoryItemId === item.id);
                   const orderQuantity = cartItem ? cartItem.quantity : 0;
-                  
+                  const unitSize = item.unitSize || 1;
+                  const packsValue = Number((orderQuantity / unitSize).toFixed(2));
+                  const casesValue = getCasesCount(item, orderQuantity);
+                  const pricePerPack = item.pricePerUnit * unitSize;
+
+                  // Cart quantity is stored in base units, so any pack/case count the user
+                  // types is converted to a delta in base units before being handed to onUpdateCart.
+                  const setPacks = (newPacksStr: string) => {
+                    const newPacks = parseFloat(newPacksStr);
+                    if (isNaN(newPacks) || newPacks < 0) return;
+                    onUpdateCart(item, (newPacks * unitSize) - orderQuantity);
+                  };
+                  const setCases = (newCasesStr: string) => {
+                    const newCases = parseFloat(newCasesStr);
+                    if (isNaN(newCases) || newCases < 0 || !item.caseSize) return;
+                    onUpdateCart(item, (newCases * unitSize * item.caseSize) - orderQuantity);
+                  };
+
                   return (
                     <tr key={item.id} className="hover:bg-gray-50">
                       <td className="px-6 py-4 whitespace-nowrap">
@@ -453,30 +481,82 @@ export const Orders: React.FC<OrdersProps> = ({
                         {item.supplier || 'Unknown'}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="text-sm text-gray-900">{item.quantity} {item.unit}</div>
-                        <div className="text-xs text-gray-500">Min: {item.minStockLevel}</div>
+                        <div className="text-sm text-gray-900">{formatPacksLabel(item.quantity, item)}</div>
+                        <div className="text-xs text-gray-500">Min: {formatPacksLabel(item.minStockLevel || 0, item)}</div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm">
+                        {(() => {
+                          const caseInfo = formatCaseBoxSackLabel(item);
+                          return (
+                            <span className="inline-flex items-center gap-1.5">
+                              {caseInfo.isSet ? (
+                                <span className="text-gray-900">{caseInfo.label}</span>
+                              ) : (
+                                <span className="text-xs text-gray-400 uppercase tracking-wide">{caseInfo.label}</span>
+                              )}
+                              <ItemSpecsTooltip item={item} />
+                            </span>
+                          );
+                        })()}
                       </td>
                       {checkPermission('inventory', 'viewCosts') && (
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                          £{item.pricePerUnit.toFixed(2)} / {item.unit}
+                          £{pricePerPack.toFixed(2)} / {item.packaging || item.unit}
+                          {item.caseSize && (
+                            <div className="text-xs text-gray-400">£{(pricePerPack * item.caseSize).toFixed(2)} / {item.casePackaging || 'case'}</div>
+                          )}
                         </td>
                       )}
                       <td className="px-6 py-4 whitespace-nowrap text-center">
-                        <div className="flex items-center justify-center space-x-2">
-                          <button 
-                            onClick={() => onUpdateCart(item, -1)}
-                            className="p-1 rounded-full text-gray-500 hover:bg-gray-100"
-                            disabled={orderQuantity === 0}
-                          >
-                            <Minus className="h-4 w-4" />
-                          </button>
-                          <span className="w-8 text-center font-medium">{orderQuantity}</span>
-                          <button 
-                            onClick={() => onUpdateCart(item, 1)}
-                            className="p-1 rounded-full text-accent hover:bg-accent/10"
-                          >
-                            <Plus className="h-4 w-4" />
-                          </button>
+                        {/* Fixed-width, centered wrapper so the +/- controls sit at the same
+                            horizontal position on every row regardless of the packaging label's
+                            length ("PACKS" vs "BOTTLES" vs "VACUUM PACKS"). */}
+                        <div className="flex flex-col items-center gap-1 w-32 mx-auto">
+                          <div className="flex items-center justify-center space-x-2">
+                            <button
+                              onClick={() => onUpdateCart(item, -unitSize)}
+                              className="p-1 rounded-full text-gray-500 hover:bg-gray-100"
+                              disabled={orderQuantity === 0}
+                              title={`Remove 1 ${item.packaging || item.unit}`}
+                            >
+                              <Minus className="h-4 w-4" />
+                            </button>
+                            <input
+                              type="number"
+                              min="0"
+                              step="any"
+                              className="w-16 text-center font-medium border border-gray-200 rounded-md py-1 text-sm focus:outline-none focus:ring-1 focus:ring-accent"
+                              value={packsValue}
+                              onChange={(e) => setPacks(e.target.value)}
+                              title={`Quantity in ${item.packaging || item.unit}s`}
+                            />
+                            <button
+                              onClick={() => onUpdateCart(item, unitSize)}
+                              className="p-1 rounded-full text-accent hover:bg-accent/10"
+                              title={`Add 1 ${item.packaging || item.unit}`}
+                            >
+                              <Plus className="h-4 w-4" />
+                            </button>
+                          </div>
+                          <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wide text-center">
+                            {item.packaging || item.unit}{packsValue !== 1 ? 's' : ''}
+                          </span>
+                          {item.caseSize && (
+                            <div className="flex items-center justify-center gap-1 mt-0.5">
+                              <input
+                                type="number"
+                                min="0"
+                                step="any"
+                                className="w-14 text-center text-xs border border-gray-200 rounded-md py-0.5 focus:outline-none focus:ring-1 focus:ring-accent"
+                                value={Number(casesValue.toFixed(2))}
+                                onChange={(e) => setCases(e.target.value)}
+                                title={`Quantity in ${item.casePackaging || 'case'}s`}
+                              />
+                              <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wide">
+                                {item.casePackaging || 'case'}{casesValue !== 1 ? 's' : ''}
+                              </span>
+                            </div>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -531,26 +611,47 @@ export const Orders: React.FC<OrdersProps> = ({
                       <tbody className="divide-y divide-gray-100">
                         {items.map(item => {
                           const invItem = inventoryItems.find(i => i.id === item.inventoryItemId);
+                          const unitSize = invItem?.unitSize || 1;
+                          const packsValue = Number((item.quantity / unitSize).toFixed(2));
+                          const pricePerPack = item.pricePerUnit * unitSize;
+
+                          const setPacks = (newPacksStr: string) => {
+                            const newPacks = parseFloat(newPacksStr);
+                            if (isNaN(newPacks) || newPacks < 0 || !invItem) return;
+                            onUpdateCart(invItem, (newPacks * unitSize) - item.quantity);
+                          };
+
                           return (
                             <tr key={item.inventoryItemId}>
                               <td className="py-3 text-sm font-medium text-gray-900">{item.name}</td>
                               <td className="py-3 text-sm text-gray-500">{item.category}</td>
-                              <td className="py-3 text-sm text-gray-500 text-right">£{item.pricePerUnit.toFixed(2)} / {item.unit}</td>
+                              <td className="py-3 text-sm text-gray-500 text-right">£{pricePerPack.toFixed(2)} / {invItem?.packaging || item.unit}</td>
                               <td className="py-3 text-sm text-gray-500 text-center">
                                 <div className="flex items-center justify-center space-x-2">
-                                  <button 
-                                    onClick={() => invItem && onUpdateCart(invItem, -1)}
+                                  <button
+                                    onClick={() => invItem && onUpdateCart(invItem, -unitSize)}
                                     className="p-1 rounded-full text-gray-500 hover:bg-gray-100"
                                   >
                                     <Minus className="h-4 w-4" />
                                   </button>
-                                  <span className="w-8 text-center font-medium">{item.quantity}</span>
-                                  <button 
-                                    onClick={() => invItem && onUpdateCart(invItem, 1)}
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    step="any"
+                                    className="w-16 text-center font-medium border border-gray-200 rounded-md py-1 text-sm focus:outline-none focus:ring-1 focus:ring-accent"
+                                    value={packsValue}
+                                    onChange={(e) => setPacks(e.target.value)}
+                                    disabled={!invItem}
+                                  />
+                                  <button
+                                    onClick={() => invItem && onUpdateCart(invItem, unitSize)}
                                     className="p-1 rounded-full text-accent hover:bg-accent/10"
                                   >
                                     <Plus className="h-4 w-4" />
                                   </button>
+                                </div>
+                                <div className="text-[9px] font-medium text-gray-400 uppercase tracking-wide mt-1">
+                                  {invItem?.packaging || item.unit}{packsValue !== 1 ? 's' : ''}
                                 </div>
                               </td>
                               <td className="py-3 text-sm font-medium text-gray-900 text-right">
@@ -618,7 +719,7 @@ export const Orders: React.FC<OrdersProps> = ({
                             return;
                           }
                           const subject = `Order from Backbone Hub - ${new Date().toLocaleDateString()}`;
-                          const body = `Please find our order below:\n\n${items.map(i => `- ${i.quantity} ${i.unit} of ${i.name}`).join('\n')}\n\nTotal: £${totalAmount.toFixed(2)}`;
+                          const body = `Please find our order below:\n\n${items.map(i => `- ${formatOrderQty(i)} of ${i.name}`).join('\n')}\n\nTotal: £${totalAmount.toFixed(2)}`;
                           const cc = ccEmails[supplier] ? `&cc=${encodeURIComponent(ccEmails[supplier])}` : '';
                           const mailtoUrl = `mailto:${targetEmail}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}${cc}`;
                           
@@ -700,7 +801,7 @@ export const Orders: React.FC<OrdersProps> = ({
                           {order.items.map(item => (
                             <tr key={item.inventoryItemId}>
                               <td className="py-2 text-sm text-gray-900">{item.name}</td>
-                              <td className="py-2 text-sm text-gray-500 text-right">{item.quantity} {item.unit}</td>
+                              <td className="py-2 text-sm text-gray-500 text-right">{formatOrderQty(item)}</td>
                               <td className="py-2 text-sm text-gray-500 text-right">£{item.pricePerUnit.toFixed(2)}</td>
                               <td className="py-2 text-sm font-medium text-gray-900 text-right">£{(item.quantity * item.pricePerUnit).toFixed(2)}</td>
                             </tr>
@@ -736,7 +837,7 @@ export const Orders: React.FC<OrdersProps> = ({
                               const supplierDetails = suppliers.find(s => s.name === order.supplier);
                               if (!supplierDetails?.email) return;
                               const subject = `Order from Backbone Hub - ${new Date(order.date).toLocaleDateString()}`;
-                              const body = `Please find our order below:\n\n${order.items.map(i => `- ${i.quantity} ${i.unit} of ${i.name}`).join('\n')}\n\nTotal: £${order.totalAmount.toFixed(2)}`;
+                              const body = `Please find our order below:\n\n${order.items.map(i => `- ${formatOrderQty(i)} of ${i.name}`).join('\n')}\n\nTotal: £${order.totalAmount.toFixed(2)}`;
                               window.open(`mailto:${supplierDetails.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`);
                             }} 
                             variant="secondary"

@@ -186,13 +186,16 @@ const seedData = async (collectionName: string) => {
       break;
     case 'liabilities':
       const sampleLiabilities = [
-        { name: 'Monthly Rent', amount: 4500, dueDate: '2026-05-15', type: 'Rent', status: 'Pending' },
-        { name: 'Electricity Bill', amount: 800, dueDate: '2026-05-10', type: 'Utility', status: 'Pending' },
-        { name: 'Supplier Payment: Fresh Veg', amount: 1200, dueDate: '2026-05-08', type: 'Supplier', status: 'Pending' },
-        { name: 'Staff Insurance', amount: 600, dueDate: '2026-05-25', type: 'Insurance', status: 'Pending' }
+        { key: 'monthly-rent', name: 'Monthly Rent', amount: 4500, dueDate: '2026-05-15', type: 'Rent', status: 'Pending' },
+        { key: 'electricity-bill', name: 'Electricity Bill', amount: 800, dueDate: '2026-05-10', type: 'Utility', status: 'Pending' },
+        { key: 'supplier-fresh-veg', name: 'Supplier Payment: Fresh Veg', amount: 1200, dueDate: '2026-05-08', type: 'Supplier', status: 'Pending' },
+        { key: 'staff-insurance', name: 'Staff Insurance', amount: 600, dueDate: '2026-05-25', type: 'Insurance', status: 'Pending' }
       ];
-      for (const l of sampleLiabilities) {
-        const id = `lib-${Date.now()}-${Math.random()}`;
+      for (const { key, ...l } of sampleLiabilities) {
+        // Deterministic ID (not Date.now()/Math.random()) so re-running this seed — e.g. two
+        // overlapping calls racing past the `snapshot.empty` check before either write lands —
+        // overwrites the same document instead of creating a duplicate.
+        const id = `lib-seed-${LOCATION_ID}-${key}`;
         await setDoc(doc(db, 'liabilities', id), {
           ...l,
           id,

@@ -13,28 +13,26 @@ import { TrainingCenter } from './components/TrainingCenter';
 import { StockAvailabilityManager } from './components/StockAvailabilityManager';
 import { SalesImport } from './components/SalesImport';
 import { Reports } from './components/Reports';
-import ManagerMode from './components/ManagerMode';
 import { SupplierManager } from './components/SupplierManager';
 import { TableManager } from './components/TableManager';
 import { Settings } from './components/Settings';
 import { Orders } from './components/Orders';
-import { InventoryItem, InventoryCategory, Unit, StockCountRecord, Recipe, SalesImportRecord, Supplier, Order, OrderItem, Invoice, MenuCategory, POSOrder, POSPayment, WasteRecord, ExpenseRecord, MovementType, StockMovement, InventoryType, Table, DailyClosure, Forecast, StaffPerformanceRecord, AppPermissions, StaffCertification, AuditLog, StaffMember, MonthlyTarget, LabourShift, SideAddonItem } from './types';
+import { InventoryItem, InventoryCategory, Unit, StockCountRecord, Recipe, SalesImportRecord, Supplier, Order, OrderItem, Invoice, MenuCategory, POSOrder, POSPayment, WasteRecord, ExpenseRecord, MovementType, StockMovement, InventoryType, Table, DailyClosure, ClosureType, Forecast, StaffPerformanceRecord, AppPermissions, StaffCertification, AuditLog, StaffMember, MonthlyTarget, SideAddonItem } from './types';
 import { logAuditAction } from './services/auditService';
-import { LayoutDashboard, Package, ClipboardCheck, FileInput, Menu, X, ChefHat, TrendingUp, Truck, Settings as SettingsIcon, BookOpen, Sun, Moon, ShoppingCart, AlertCircle, LogIn, LogOut, Trash2, Receipt, Megaphone, LayoutList, Zap, PoundSterling, Users } from 'lucide-react';
+import { getBusinessDay } from './utils/businessDay';
+import { LayoutDashboard, Package, ClipboardCheck, FileInput, Menu, X, ChefHat, TrendingUp, Truck, Settings as SettingsIcon, BookOpen, Sun, Moon, ShoppingCart, AlertCircle, LogIn, LogOut, Trash2, ReceiptPoundSterling, Megaphone, LayoutList, PoundSterling } from 'lucide-react';
 import { Toaster, toast } from 'sonner';
 import { auth, db, googleProvider, signInWithPopup, onAuthStateChanged, collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, onSnapshot, handleFirestoreError, OperationType, User, cleanObject, signOut, increment, query, where, orderBy, limit, testConnection, LOCATION_ID, writeBatch } from './firebase';
 import { DEFAULT_PERMISSIONS } from './constants';
 import { calculateTotalCost, mapCategoryId } from './utils/recipeUtils';
-import { convertToBaseUnit, CONVERSION_FACTORS } from './utils/unitConversions';
+import { convertToBaseUnit, CONVERSION_FACTORS, PACKAGING_TO_UNIT, toSafeNumber } from './utils/unitConversions';
 import { normalizeCurrency, normalizeTimestamp, normalizeStatus } from './utils/currencyUtils';
 import { OfflineBanner } from './components/OfflineBanner';
 import { WasteManager } from './components/WasteManager';
-import { ExpenseManager } from './components/ExpenseManager';
+import { OperationCosts } from './components/OperationCosts';
 import { ShiftBriefingManager } from './components/ShiftBriefingManager';
-import { POSDashboard } from './components/POSDashboard';
 import { FinancialCommandCenter } from './components/FinancialCommandCenter';
 import { LabourIntelligence } from './components/LabourIntelligence';
-import { StaffingRotaHub } from './components/StaffingRotaHub';
 import { HardHat } from 'lucide-react';
 
 
@@ -379,7 +377,7 @@ const INITIAL_RECIPES: Recipe[] = [
   { id: 'na-3', name: 'Still Water', description: 'Natural Spring Water', type: 'menu_item', category: 'Beverage', subCategory: 'Non-alcoholic', sellingPrice: 2.00, lastUpdated: '2023-10-28', ingredients: [] }
 ];
 
-type View = 'dashboard' | 'manager' | 'inventory' | 'stocktake' | 'invoices' | 'recipes' | 'sales' | 'suppliers' | 'settings' | 'training' | 'orders' | 'reports' | 'waste' | 'expenses' | 'briefing' | 'tables' | 'pos_dashboard' | 'financial_command' | 'labour' | 'staffing_rota';
+type View = 'dashboard' | 'inventory' | 'stocktake' | 'invoices' | 'recipes' | 'sales' | 'suppliers' | 'settings' | 'training' | 'orders' | 'reports' | 'waste' | 'expenses' | 'briefing' | 'tables' | 'financial_command' | 'labour';
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -401,6 +399,24 @@ const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [tables, setTables] = useState<Table[]>([]);
   const [posOrders, setPosOrders] = useState<POSOrder[]>([]);
   const [posTransactions, setPosTransactions] = useState<any[]>([]);
+  // Genuine live-connectivity signal for the System Connectivity dot: true only while the
+  // posTransactions listener is actively synced to the server (not serving stale local cache)
+  // AND the browser itself reports a network connection. Previously the dot's color was driven
+  // by `posPaymentsCount > 0`, which just means "this location has ever had a payment" — that's
+  // permanently true once any history exists, so the dot could never meaningfully go red.
+  const [isPosStreamSynced, setIsPosStreamSynced] = useState(false);
+  const [isBrowserOnline, setIsBrowserOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
+
+  useEffect(() => {
+    const goOnline = () => setIsBrowserOnline(true);
+    const goOffline = () => setIsBrowserOnline(false);
+    window.addEventListener('online', goOnline);
+    window.addEventListener('offline', goOffline);
+    return () => {
+      window.removeEventListener('online', goOnline);
+      window.removeEventListener('offline', goOffline);
+    };
+  }, []);
   const [posPayments, setPosPayments] = useState<POSPayment[]>([]);
   const [closures, setClosures] = useState<DailyClosure[]>([]);
   const [permissionsConfig, setPermissionsConfig] = useState<Record<string, AppPermissions>>(DEFAULT_PERMISSIONS);
@@ -410,7 +426,6 @@ const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [quizSubmissions, setQuizSubmissions] = useState<any[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [monthlyTargets, setMonthlyTargets] = useState<MonthlyTarget[]>([]);
-  const [labourShifts, setLabourShifts] = useState<LabourShift[]>([]);
   const [staffMembers, setStaffMembers] = useState<StaffMember[]>([]);
   const [livePosSalesSummary, setLivePosSalesSummary] = useState({
     totalPaid: 0,
@@ -424,18 +439,6 @@ const [recipes, setRecipes] = useState<Recipe[]>([]);
   });
   const [cart, setCart] = useState<OrderItem[]>([]);
   const [totalRevenue, setTotalRevenue] = useState(0);
-const getBusinessDay = (): string => {
-  const now = new Date();
-  const londonHour = parseInt(
-    now.toLocaleString('en-GB', { timeZone: 'Europe/London', hour: 'numeric', hour12: false })
-  );
-  if (londonHour < 6) {
-    const yesterday = new Date(now);
-    yesterday.setDate(yesterday.getDate() - 1);
-    return yesterday.toLocaleDateString('en-CA', { timeZone: 'Europe/London' });
-  }
-  return now.toLocaleDateString('en-CA', { timeZone: 'Europe/London' });
-};
   // Helper to safely get date portion from various formats
   const safeDateSplit = (date: any): string => {
     if (!date) return '';
@@ -822,9 +825,13 @@ const today = londonHour < 6
     collection(db, 'posTransactions'),
     where('locationId', '==', LOCATION_ID)
   ),
+  { includeMetadataChanges: true },
   (snapshot: any) => {
     const data = snapshot.docs.map((d: any) => ({ id: d.id, ...d.data() }));
     setPosTransactions(data);
+    // fromCache === false means this snapshot came from an active server connection —
+    // the genuine "is the live POS -> Hub stream actually connected right now" signal.
+    setIsPosStreamSynced(!snapshot.metadata.fromCache);
   },
   (err: any) => handleFirestoreError(err, OperationType.LIST, 'posTransactions')
 );
@@ -879,7 +886,14 @@ const today = londonHour < 6
       setWasteRecords(data);
     }, (err: any) => handleFirestoreError(err, OperationType.LIST, 'waste'));
 
-    const unsubClosures = onSnapshot(query(collection(db, 'dailyClosures'), where('locationId', '==', LOCATION_ID), orderBy('date', 'desc'), limit(30)), (snapshot: any) => {
+    // Date-scoped instead of a flat result-count limit() — a count cap silently truncates
+    // wide date ranges (e.g. Quarterly) once a business accumulates more than that many
+    // DAY+SHIFT closures. 400 days comfortably covers every period Financial Command's
+    // selectors currently offer (Week/Period/Month/Quarter, all within the current year).
+    const closuresCutoff = new Date();
+    closuresCutoff.setDate(closuresCutoff.getDate() - 400);
+    const closuresCutoffKey = closuresCutoff.toISOString().split('T')[0];
+    const unsubClosures = onSnapshot(query(collection(db, 'dailyClosures'), where('locationId', '==', LOCATION_ID), where('date', '>=', closuresCutoffKey), orderBy('date', 'desc')), (snapshot: any) => {
       const data = snapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() } as DailyClosure));
       setClosures(data);
     }, (err: any) => handleFirestoreError(err, OperationType.LIST, 'dailyClosures'));
@@ -927,11 +941,6 @@ const today = londonHour < 6
         if (data?.mappings) setItemRecipeMappings(data.mappings);
       }
     });
-
-    const unsubLabour = onSnapshot(query(collection(db, 'labourShifts'), where('locationId', '==', LOCATION_ID), orderBy('date', 'desc'), limit(1000)), (snapshot: any) => {
-      const data = snapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() } as LabourShift));
-      setLabourShifts(data);
-    }, (err: any) => handleFirestoreError(err, OperationType.LIST, 'labourShifts'));
 
     const unsubUser = onSnapshot(doc(db, `users/${userId}`), (snapshot: any) => {
       const data = snapshot.data();
@@ -994,7 +1003,6 @@ const today = londonHour < 6
       unsubCertifications();
       unsubQuizSubmissions();
       unsubAuditLogs();
-      unsubLabour();
       unsubMonthlyTargets();
       unsubPermissions();
       unsubClosures();
@@ -1223,7 +1231,7 @@ const today = londonHour < 6
       
       const item = isRecipe ? recipes.find(r => r.id === id) : items.find(i => i.id === id);
       if (item) {
-        const currentQty = (item as any).quantity || 0;
+        const currentQty = toSafeNumber((item as any).quantity);
         let delta = 0;
         let finalNewQuantity = 0;
 
@@ -1300,9 +1308,9 @@ const today = londonHour < 6
     setItems(prev => prev.map(item => {
       const update = updates.find(u => u.id === item.id);
       if (update) {
-        let newQty = item.quantity;
+        let newQty = toSafeNumber(item.quantity);
         if (update.delta !== undefined) {
-          newQty = item.quantity + update.delta;
+          newQty = toSafeNumber(item.quantity) + update.delta;
         } else if (update.quantity !== undefined) {
           newQty = update.quantity;
         }
@@ -1955,16 +1963,24 @@ const today = londonHour < 6
       const baseUnit = inventoryType === 'LIQUID' ? 'ml' : inventoryType === 'SOLID' ? 'g' : 'pcs';
       
       const existingItem = items.find(i => i.name.toLowerCase() === item.name.toLowerCase());
-      const unitSize = existingItem?.unitSize || 1;
-      
-      // Safety Check: Mandatory Unit Size for complex conversions
       const itemUnit = (unit || 'pcs') as Unit;
-      if (existingItem && itemUnit !== existingItem.baseUnit && unitSize === 1) {
+
+      // Case-tier: this line was received by the case/box/sack (e.g. "2 cases"), not by the
+      // pack — detected when the line's unit matches the item's own case-packaging label.
+      // A case's base-unit size is the pack size times how many packs make up one case.
+      const caseUnit = existingItem ? (PACKAGING_TO_UNIT[existingItem.casePackaging || 'case'] || 'cases') : undefined;
+      const isCaseTier = !!(existingItem && existingItem.caseSize && itemUnit === caseUnit);
+      const tierBaseSize = isCaseTier
+        ? (existingItem!.unitSize || 1) * (existingItem!.caseSize || 1)
+        : (existingItem?.unitSize || 1);
+
+      // Safety Check: Mandatory Unit Size for complex conversions
+      if (existingItem && !isCaseTier && itemUnit !== existingItem.baseUnit && tierBaseSize === 1) {
         toast.error(`Unit Mismatch: ${item.name} is received in ${itemUnit} but stored in ${existingItem.baseUnit}. Please update its Unit Size in Inventory first.`, { duration: 6000 });
         return;
       }
 
-      const quantityInBase = convertToBaseUnit(item.quantity, itemUnit, unitSize);
+      const quantityInBase = convertToBaseUnit(item.quantity, itemUnit, tierBaseSize);
       const pricePerBase = item.price ? (item.price / quantityInBase) : 0;
       
       if (existingItem) {
@@ -2694,10 +2710,7 @@ const today = londonHour < 6
             <nav className="flex-1 px-4 py-4 space-y-1 overflow-y-auto">
               <NavItem view="dashboard" icon={LayoutDashboard} label="Dashboard" />
               {checkPermission('reports', 'viewFinancials') && <NavItem view="labour" icon={HardHat} label="Labour Import" />}
-              {checkPermission('staffingRota', 'view') && <NavItem view="staffing_rota" icon={Users} label="Staffing & Rota" />}
               {checkPermission('reports', 'viewFinancials') && <NavItem view="financial_command" icon={PoundSterling} label="Financial Command" />}
-              {checkPermission('reports', 'viewSales') && <NavItem view="pos_dashboard" icon={Zap} label="POS Dashboard" />}
-              {checkPermission('reports', 'viewSales') && <NavItem view="manager" icon={Zap} label="Manager Mode" />}
               {checkPermission('staff', 'viewBriefing') && <NavItem view="briefing" icon={Megaphone} label="Shift Briefing" />}
               {checkPermission('inventory', 'view') && <NavItem view="inventory" icon={Package} label="Inventory" />}
               {checkPermission('orders', 'view') && <NavItem view="orders" icon={ShoppingCart} label="Stock Orders" />}
@@ -2708,7 +2721,7 @@ const today = londonHour < 6
               {checkPermission('stockCount', 'view') && <NavItem view="stocktake" icon={ClipboardCheck} label="Stock Count" />}
               {checkPermission('inventory', 'edit') && <NavItem view="waste" icon={Trash2} label="Waste Records" />}
               {checkPermission('inventory', 'processInvoices') && <NavItem view="invoices" icon={FileInput} label="Invoices" />}
-              {checkPermission('reports', 'viewFinancials') && <NavItem view="expenses" icon={Receipt} label="Expenses" />}
+              {checkPermission('reports', 'viewFinancials') && <NavItem view="expenses" icon={ReceiptPoundSterling} label="Operation Costs" />}
               {checkPermission('inventory', 'manageSuppliers') && <NavItem view="suppliers" icon={Truck} label="Suppliers" />}
               {checkPermission('reports', 'viewSales') && <NavItem view="reports" icon={TrendingUp} label="Reports" />}
             </nav>
@@ -2765,7 +2778,6 @@ const today = londonHour < 6
                 <h1 className="text-xl sm:text-2xl font-bold leading-none">
                   {currentView === 'dashboard' && 'Backbone Hub'}
                   {currentView === 'financial_command' && 'Financial Command Center'}
-                  {currentView === 'manager' && 'Manager Workflow'}
                   {currentView === 'inventory' && 'Inventory Management'}
                   {currentView === 'orders' && 'Stock Orders'}
                   {currentView === 'recipes' && 'Menu & Recipes'}
@@ -2774,11 +2786,10 @@ const today = londonHour < 6
                   {currentView === 'stocktake' && 'Stock Count'}
                   {currentView === 'waste' && 'Waste Management'}
                   {currentView === 'invoices' && 'Invoice Processing'}
-                  {currentView === 'expenses' && 'Expense Tracking'}
+                  {currentView === 'expenses' && 'Operation Costs'}
                   {currentView === 'suppliers' && 'Supplier Management'}
                   {currentView === 'briefing' && 'Shift Briefing & Performance'}
                   {currentView === 'reports' && 'Business Reports'}
-                  {currentView === 'staffing_rota' && 'Staffing & Rota Intelligence'}
                   {currentView === 'settings' && 'System Settings'}
                 </h1>
                 {currentView === 'dashboard' && (
@@ -2798,14 +2809,17 @@ const today = londonHour < 6
 
             {currentView === 'dashboard' && (
               <Dashboard
-                  items={combinedItems} 
-                  salesHistory={salesHistory} 
-                  totalRevenue={combinedTotalRevenue} 
+                  items={combinedItems}
+                  totalRevenue={combinedTotalRevenue}
                   posPaymentsCount={posPayments.length}
+                  isPosLive={isPosStreamSynced && isBrowserOnline}
                   databaseId={(db as any)._databaseId?.database}
                   orderCountToday={liveSalesData.aggregate.numberOfPaidOrders}
-                  setCurrentView={setCurrentView} 
-                  onAddToCart={handleAddToCart} 
+                  livePosSalesSummary={livePosSalesSummary}
+                  todayCovers={liveSalesData.aggregate.todayCovers}
+                  todaysClosure={closures.find(c => c.type === ClosureType.DAY && c.date === getBusinessDay()) || null}
+                  setCurrentView={setCurrentView}
+                  onAddToCart={handleAddToCart}
                 />
               )}
 
@@ -2813,28 +2827,19 @@ const today = londonHour < 6
               <FinancialCommandCenter
                 closures={closures}
                 orders={posOrders}
-                payments={posPayments}
+                liveSalesData={liveSalesData}
                 staff={staffMembers}
                 monthlyTargets={monthlyTargets}
                 inventory={items}
                 recipes={recipes}
                 forecasts={forecasts}
+                expenseRecords={expenseRecords}
+                wasteRecords={wasteRecords}
+                stockCountRecords={stockHistory}
                 onOpenView={setCurrentView}
               />
             )}
 
-            {currentView === 'manager' && (
-              <ManagerMode 
-                inventory={items}
-                payments={posPayments}
-                orders={posOrders}
-                closures={closures}
-                forecasts={forecasts}
-                staffPerformance={staffPerformance}
-                onNavigate={(tab) => setCurrentView(tab as any)}
-              />
-            )}
-            
             {currentView === 'inventory' && (
               <InventoryList 
                 items={combinedItems} 
@@ -2900,21 +2905,6 @@ const today = londonHour < 6
               />
             )}
 
-            {currentView === 'pos_dashboard' && (
-              <POSDashboard 
-                orders={posOrders} 
-                payments={posPayments}
-                tables={tables} 
-                forecasts={forecasts} 
-                staff={staffMembers}
-                recipes={recipes}
-                inventory={items}
-                locationId={LOCATION_ID}
-                onNotifyStaff={(m) => toast.info(`Broadcast: ${m}`)}
-                onPushSuggestion={(m) => toast.success(`Pushed to staff: ${m}`)}
-              />
-            )}
-
             {currentView === 'sales' && (
               <SalesImport
                 recipes={recipes}
@@ -2949,18 +2939,19 @@ const today = londonHour < 6
             )}
             
             {currentView === 'invoices' && (
-              <InvoiceProcessor 
-                onProcessInvoice={handleAddFromInvoice} 
+              <InvoiceProcessor
+                onProcessInvoice={handleAddFromInvoice}
                 onApproveInvoice={handleApproveInvoice}
                 suppliers={suppliers}
                 invoices={invoices}
+                inventoryItems={combinedItems}
                 onUpdateInvoice={(id, updates) => setInvoices(prev => prev.map(inv => inv.id === id ? { ...inv, ...updates } : inv))}
                 onAddSupplier={handleAddSupplier}
               />
             )}
 
             {currentView === 'expenses' && (
-              <ExpenseManager
+              <OperationCosts
                 expenseRecords={expenseRecords}
                 onSaveExpense={handleSaveExpense}
                 onDeleteExpense={handleDeleteExpense}
@@ -2983,18 +2974,8 @@ const today = londonHour < 6
               <ShiftBriefingManager recipes={recipes} checkPermission={checkPermission} userRole={userRole} />
             )}
 
-            {currentView === 'staffing_rota' && (
-              <StaffingRotaHub 
-                staff={staffMembers} 
-                orders={posOrders} 
-                closures={closures} 
-                shifts={labourShifts}
-                onSetCurrentView={setCurrentView}
-              />
-            )}
-
             {currentView === 'labour' && (
-              <LabourIntelligence staff={staffMembers} orders={posOrders} closures={closures} />
+              <LabourIntelligence staff={staffMembers} orders={posOrders} />
             )}
 
             {currentView === 'tables' && (

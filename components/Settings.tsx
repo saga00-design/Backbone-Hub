@@ -432,8 +432,7 @@ export const Settings: React.FC<SettingsProps> = ({ auditLogs = [] }) => {
     staff: 'Staff, Training & Briefing',
     settings: 'System Configuration',
     stockCount: 'Stock Count',
-    tables: 'Table Manager',
-    staffingRota: 'Staffing & Rota Intelligence'
+    tables: 'Table Manager'
   };
 
   const togglePermission = async (roleId: string, module: keyof AppPermissions, action: string) => {

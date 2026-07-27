@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { InventoryItem, InventoryCategory, OrderItem, Unit, InventoryType, Recipe } from '../types';
 import { 
   Search, Filter, Plus, Calendar, AlertTriangle, Pencil, Clock, Tag, 
@@ -8,9 +8,11 @@ import {
 } from 'lucide-react';
 import Papa from 'papaparse';
 import { Button } from './Button';
+import { SearchInput } from './SearchInput';
 import { toast } from 'sonner';
 import { DEFAULT_DEPARTMENTS } from '../constants';
-import { formatDisplayValue, formatPricePerUnit, convertToBaseUnit } from '../utils/unitConversions';
+import { formatPricePerUnit, convertToBaseUnit, formatPacksLabel, formatPackSize, formatPriceItem, formatCaseBoxSackLabel, toSafeNumber } from '../utils/unitConversions';
+import { ItemSpecsTooltip } from './ItemSpecsTooltip';
 
 interface InventoryListProps {
   items: InventoryItem[];
@@ -42,7 +44,7 @@ export const InventoryList: React.FC<InventoryListProps> = ({
   const [searchTerm, setSearchTerm] = useState(() => localStorage.getItem('inv_search') || '');
   const [categoryFilter, setCategoryFilter] = useState(() => localStorage.getItem('inv_filter') || 'All');
   const [departmentFilter, setDepartmentFilter] = useState('All');
-  const [subCategoryFilter, setSubCategoryFilter] = useState('All');
+  const [subCategoryFilter, setSubCategoryFilter] = useState(() => localStorage.getItem('inv_subfilter') || 'All');
   const [expiryFilter, setExpiryFilter] = useState('All');
   const [stockLevelFilter, setStockLevelFilter] = useState<'All' | 'Low Stock' | 'Out of Stock' | 'Healthy'>('All');
   const [vatFilter, setVatFilter] = useState<'All' | 'Has VAT' | 'No VAT' | 'Missing'>('All');
@@ -54,11 +56,15 @@ export const InventoryList: React.FC<InventoryListProps> = ({
   const [showColumnSelector, setShowColumnSelector] = useState(false);
   const [visibleColumns, setVisibleColumns] = useState<string[]>(() => {
     const saved = localStorage.getItem('inv_columns');
-    return saved ? JSON.parse(saved) : ['Status', 'Item', 'Category', 'Stock Quantity', 'Size', 'Unit', 'Price/Unit', 'Total Cost', 'Retail Price', 'VAT', 'Order'];
+    return saved ? JSON.parse(saved) : ['Status', 'Item', 'Category', 'Size', 'Unit', 'Price/Unit', 'Stock Quantity', 'Total Cost', 'Price/Item', 'Case/Box/Sack', 'Retail Price', 'VAT', 'Order'];
   });
 
-  const allColumns = ['Status', 'Item', 'Category', 'Stock Quantity', 'Size', 'Unit', 
-    ...(checkPermission('inventory', 'viewCosts') ? ['Price/Unit', 'Total Cost', 'Retail Price', 'VAT'] : []),
+  const allColumns = ['Status', 'Item', 'Category', 'Size', 'Unit',
+    ...(checkPermission('inventory', 'viewCosts') ? ['Price/Unit'] : []),
+    'Stock Quantity',
+    ...(checkPermission('inventory', 'viewCosts') ? ['Total Cost', 'Price/Item'] : []),
+    'Case/Box/Sack',
+    ...(checkPermission('inventory', 'viewCosts') ? ['Retail Price', 'VAT'] : []),
     'Supplier', 'Storage Location', 'Expiry Status', 'Order'
   ];
 
@@ -80,9 +86,19 @@ export const InventoryList: React.FC<InventoryListProps> = ({
   useEffect(() => {
     localStorage.setItem('inv_filter', categoryFilter);
   }, [categoryFilter]);
-  
-  // Reset sub-category when category changes
+
   useEffect(() => {
+    localStorage.setItem('inv_subfilter', subCategoryFilter);
+  }, [subCategoryFilter]);
+
+  // Reset sub-category when category changes (skip the initial mount so a
+  // deep-linked sub-category filter, e.g. from the Dashboard, survives first render)
+  const isFirstCategoryRender = useRef(true);
+  useEffect(() => {
+    if (isFirstCategoryRender.current) {
+      isFirstCategoryRender.current = false;
+      return;
+    }
     setSubCategoryFilter('All');
   }, [categoryFilter]);
 
@@ -246,36 +262,7 @@ export const InventoryList: React.FC<InventoryListProps> = ({
     };
   };
 
-  const formatQuantity = (qty: number, type: InventoryType) => {
-    const display = formatDisplayValue(qty, type);
-    return `${Number(display.value.toFixed(3))} ${display.unit}`;
-  };
-
-  const formatStockQuantity = (item: InventoryItem) => {
-    if (!item.unitSize || item.unitSize === 0) return formatQuantity(item.quantity, item.inventoryType);
-    const packs = item.quantity / item.unitSize;
-    const roundedPacks = Number(packs.toFixed(2));
-    
-    if (item.packaging) {
-      const pluralSuffix = roundedPacks !== 1 ? 's' : '';
-      // Simple pluralization for common cases
-      let label = item.packaging;
-      if (roundedPacks !== 1) {
-        if (label.toLowerCase().endsWith('y')) label = label.slice(0, -1) + 'ies';
-        else if (label.toLowerCase().endsWith('x') || label.toLowerCase().endsWith('s')) label = label + 'es';
-        else label = label + 's';
-      }
-      return `${roundedPacks} ${label}`;
-    }
-    
-    return `${roundedPacks} ${item.unit}`;
-  };
-
-  const formatPackSize = (item: InventoryItem) => {
-    if (!item.unitSize) return 1;
-    const factor = convertToBaseUnit(1, item.unit);
-    return Number((item.unitSize / factor).toFixed(3));
-  };
+  const formatStockQuantity = (item: InventoryItem) => formatPacksLabel(item.quantity, item);
 
   const formatPricePerPack = (item: InventoryItem) => {
     const factor = convertToBaseUnit(1, item.unit);
@@ -291,7 +278,7 @@ export const InventoryList: React.FC<InventoryListProps> = ({
   };
 
   const calculateTotalCost = (item: InventoryItem) => {
-    return (item.quantity || 0) * (item.pricePerUnit || 0);
+    return toSafeNumber(item.quantity) * toSafeNumber(item.pricePerUnit);
   };
 
   const handleExport = () => {
@@ -520,13 +507,19 @@ export const InventoryList: React.FC<InventoryListProps> = ({
           <Button 
             onClick={() => {
               filteredItems.forEach(item => {
+                // minStockLevel and quantity are both already stored in base units — no
+                // metric conversion is needed here. Only convert the base-unit shortfall
+                // into a pack count via unitSize (previously this was ALSO multiplied by
+                // convertToBaseUnit(1, item.unit), which for a metric unit like 'kg'
+                // re-applied the same factor a second time and inflated packsToOrder by
+                // that factor, e.g. ~1000x for a kg-labeled item).
                 const missing = (item.minStockLevel || 0) - item.quantity;
                 if (missing > 0) {
-                  // Calculate packs needed
-                  const factor = convertToBaseUnit(1, item.unit);
-                  const baseMissing = missing * factor;
-                  const packsToOrder = Math.ceil(baseMissing / (item.unitSize || 1));
-                  onAddToCart(item, packsToOrder);
+                  const packsToOrder = Math.ceil(missing / (item.unitSize || 1));
+                  // Cart quantity is stored in base units, so the pack count must be converted
+                  // back before adding — passing packsToOrder directly would add e.g. "3" grams
+                  // to the cart instead of 3 packs' worth.
+                  onAddToCart(item, packsToOrder * (item.unitSize || 1));
                 }
               });
               toast.success(`added missing stock for ${filteredItems.length} items to order`);
@@ -540,26 +533,20 @@ export const InventoryList: React.FC<InventoryListProps> = ({
       </div>
 
       <div className="p-6 border-b border-border-grey bg-secondary-surface flex flex-col lg:flex-row gap-6">
-        <div className="relative rounded-xl shadow-sm flex-1">
-          <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-            <Search className="h-5 w-5 text-text-muted" />
-          </div>
-          <input
-            type="text"
-            className="bg-card-bg border-border-grey text-text-navy focus:ring-accent focus:border-accent block w-full pl-12 sm:text-sm rounded-xl p-3 border placeholder-text-muted/50"
-            placeholder="Search items..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-          />
-        </div>
-        
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:flex lg:flex-row gap-4">
-            <div className="relative rounded-xl shadow-sm min-w-[160px]">
-                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                    <Building className="h-4 w-4 text-text-muted" />
+        <SearchInput
+          value={searchTerm}
+          onChange={setSearchTerm}
+          placeholder="Search items..."
+          className="flex-1 lg:flex-none lg:w-[156px]"
+        />
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:flex lg:flex-row lg:flex-nowrap gap-1.5">
+            <div className="relative rounded-xl shadow-sm w-full lg:w-[100px] lg:flex-shrink-0">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <Building className="h-3.5 w-3.5 text-text-muted" />
                 </div>
                 <select
-                    className="bg-card-bg border-border-grey text-text-navy focus:ring-accent focus:border-accent block w-full pl-10 text-sm rounded-xl py-3 border appearance-none"
+                    className="bg-card-bg border-border-grey text-text-navy focus:ring-accent focus:border-accent block w-full pl-8 pr-2 text-xs rounded-xl py-2.5 border appearance-none"
                     value={departmentFilter}
                     onChange={(e) => setDepartmentFilter(e.target.value)}
                 >
@@ -570,12 +557,12 @@ export const InventoryList: React.FC<InventoryListProps> = ({
                 </select>
             </div>
 
-            <div className="relative rounded-xl shadow-sm min-w-[160px]">
-                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                    <Filter className="h-4 w-4 text-text-muted" />
+            <div className="relative rounded-xl shadow-sm w-full lg:w-[100px] lg:flex-shrink-0">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <Filter className="h-3.5 w-3.5 text-text-muted" />
                 </div>
                 <select
-                    className="bg-card-bg border-border-grey text-text-navy focus:ring-accent focus:border-accent block w-full pl-10 text-sm rounded-xl py-3 border appearance-none"
+                    className="bg-card-bg border-border-grey text-text-navy focus:ring-accent focus:border-accent block w-full pl-8 pr-2 text-xs rounded-xl py-2.5 border appearance-none"
                     value={categoryFilter}
                     onChange={(e) => setCategoryFilter(e.target.value)}
                 >
@@ -586,12 +573,12 @@ export const InventoryList: React.FC<InventoryListProps> = ({
                 </select>
             </div>
 
-            <div className="relative rounded-xl shadow-sm min-w-[160px]">
-                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                    <Tag className="h-4 w-4 text-text-muted" />
+            <div className="relative rounded-xl shadow-sm w-full lg:w-[100px] lg:flex-shrink-0">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <Tag className="h-3.5 w-3.5 text-text-muted" />
                 </div>
                 <select
-                    className="bg-card-bg border-border-grey text-text-navy focus:ring-accent focus:border-accent block w-full pl-10 text-sm rounded-xl py-3 border appearance-none disabled:opacity-50"
+                    className="bg-card-bg border-border-grey text-text-navy focus:ring-accent focus:border-accent block w-full pl-8 pr-2 text-xs rounded-xl py-2.5 border appearance-none disabled:opacity-50"
                     value={subCategoryFilter}
                     onChange={(e) => setSubCategoryFilter(e.target.value)}
                     disabled={availableSubCategories.length === 0}
@@ -603,12 +590,12 @@ export const InventoryList: React.FC<InventoryListProps> = ({
                 </select>
             </div>
 
-            <div className="relative rounded-xl shadow-sm min-w-[160px]">
-                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                    <AlertTriangle className="h-4 w-4 text-text-muted" />
+            <div className="relative rounded-xl shadow-sm w-full lg:w-[100px] lg:flex-shrink-0">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <AlertTriangle className="h-3.5 w-3.5 text-text-muted" />
                 </div>
                 <select
-                    className="bg-card-bg border-border-grey text-text-navy focus:ring-accent focus:border-accent block w-full pl-10 text-sm rounded-xl py-3 border appearance-none"
+                    className="bg-card-bg border-border-grey text-text-navy focus:ring-accent focus:border-accent block w-full pl-8 pr-2 text-xs rounded-xl py-2.5 border appearance-none"
                     value={stockLevelFilter}
                     onChange={(e) => setStockLevelFilter(e.target.value as any)}
                 >
@@ -619,12 +606,12 @@ export const InventoryList: React.FC<InventoryListProps> = ({
                 </select>
             </div>
 
-            <div className="relative rounded-xl shadow-sm min-w-[160px]">
-                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                    <Clock className="h-4 w-4 text-text-muted" />
+            <div className="relative rounded-xl shadow-sm w-full lg:w-[100px] lg:flex-shrink-0">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <Clock className="h-3.5 w-3.5 text-text-muted" />
                 </div>
                 <select
-                    className="bg-card-bg border-border-grey text-text-navy focus:ring-accent focus:border-accent block w-full pl-10 text-sm rounded-xl py-3 border appearance-none"
+                    className="bg-card-bg border-border-grey text-text-navy focus:ring-accent focus:border-accent block w-full pl-8 pr-2 text-xs rounded-xl py-2.5 border appearance-none"
                     value={expiryFilter}
                     onChange={(e) => setExpiryFilter(e.target.value)}
                 >
@@ -635,12 +622,12 @@ export const InventoryList: React.FC<InventoryListProps> = ({
                 </select>
             </div>
 
-            <div className="relative rounded-xl shadow-sm min-w-[160px]">
-                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                    <Receipt className="h-4 w-4 text-text-muted" />
+            <div className="relative rounded-xl shadow-sm w-full lg:w-[100px] lg:flex-shrink-0">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <Receipt className="h-3.5 w-3.5 text-text-muted" />
                 </div>
                 <select
-                    className="bg-card-bg border-border-grey text-text-navy focus:ring-accent focus:border-accent block w-full pl-10 text-sm rounded-xl py-3 border appearance-none"
+                    className="bg-card-bg border-border-grey text-text-navy focus:ring-accent focus:border-accent block w-full pl-8 pr-2 text-xs rounded-xl py-2.5 border appearance-none"
                     value={vatFilter}
                     onChange={(e) => setVatFilter(e.target.value as any)}
                 >
@@ -651,15 +638,15 @@ export const InventoryList: React.FC<InventoryListProps> = ({
                 </select>
             </div>
 
-            <div className="relative">
-                <Button 
+            <div className="relative lg:flex-shrink-0">
+                <Button
                   onClick={() => setShowColumnSelector(!showColumnSelector)}
-                  className="h-full w-full lg:w-auto bg-card-bg border-border-grey text-text-navy hover:bg-primary-surface font-bold uppercase tracking-widest text-[10px] py-3 rounded-xl"
+                  className="h-full w-full lg:w-auto bg-card-bg border-border-grey text-text-navy hover:bg-primary-surface font-bold uppercase tracking-widest text-[10px] px-3 py-2.5 rounded-xl"
                 >
-                    <Settings2 className="h-4 w-4 mr-2" />
+                    <Settings2 className="h-3.5 w-3.5 mr-1" />
                     Columns
                 </Button>
-                
+
                 {showColumnSelector && (
                     <div className="absolute right-0 mt-3 w-56 bg-card-bg rounded-2xl shadow-2xl z-50 border border-border-grey p-3 max-h-[350px] overflow-y-auto custom-scrollbar">
                         <div className="text-[10px] font-bold text-text-muted px-3 py-2 uppercase tracking-widest border-b border-border-grey mb-2 sticky top-0 bg-card-bg z-10">Show/Hide Columns</div>
@@ -667,8 +654,8 @@ export const InventoryList: React.FC<InventoryListProps> = ({
                           {allColumns.map(col => (
                               <label key={col} className="flex items-center px-3 py-2 hover:bg-primary-surface rounded-xl cursor-pointer transition-colors group">
                                   <div className="relative flex items-center">
-                                    <input 
-                                        type="checkbox" 
+                                    <input
+                                        type="checkbox"
                                         className="peer h-5 w-5 bg-card-bg border-border-grey text-accent focus:ring-accent rounded-lg transition-all"
                                         checked={visibleColumns.includes(col)}
                                         onChange={() => toggleColumn(col)}
@@ -682,23 +669,6 @@ export const InventoryList: React.FC<InventoryListProps> = ({
                     </div>
                 )}
             </div>
-
-            <Button 
-              onClick={() => {
-                setSearchTerm('');
-                setCategoryFilter('All');
-                setSubCategoryFilter('All');
-                setDepartmentFilter('All');
-                setExpiryFilter('All');
-                setStockLevelFilter('All');
-                setVatFilter('All');
-              }}
-              className="h-full w-full lg:w-auto bg-transparent border border-cta/30 text-cta hover:bg-error/10 font-bold uppercase tracking-widest text-[10px] py-3 rounded-xl"
-              title="Clear all filters"
-            >
-                <X className="h-4 w-4 mr-2" />
-                Clear
-            </Button>
         </div>
       </div>
 
@@ -819,8 +789,8 @@ export const InventoryList: React.FC<InventoryListProps> = ({
                   </th>
                 )}
                 {visibleColumns.includes('Category') && (
-                  <th 
-                    scope="col" 
+                  <th
+                    scope="col"
                     className="px-3 py-2 text-left text-[9px] font-bold text-text-muted uppercase tracking-widest cursor-pointer hover:text-accent transition-colors group"
                     onClick={() => toggleSort('Category')}
                   >
@@ -832,23 +802,9 @@ export const InventoryList: React.FC<InventoryListProps> = ({
                     </div>
                   </th>
                 )}
-                {visibleColumns.includes('Stock Quantity') && (
-                  <th 
-                    scope="col" 
-                    className="px-3 py-2 text-left text-[9px] font-bold text-text-muted uppercase tracking-widest cursor-pointer hover:text-accent transition-colors group"
-                    onClick={() => toggleSort('Stock Quantity')}
-                  >
-                    <div className="flex items-center">
-                      Stock Quantity
-                      {sortField === 'Stock Quantity' && (
-                        <TrendingUp className={`ml-1.5 h-3 w-3 transition-transform ${sortOrder === 'desc' ? 'rotate-180' : ''}`} />
-                      )}
-                    </div>
-                  </th>
-                )}
                 {visibleColumns.includes('Size') && (
-                  <th 
-                    scope="col" 
+                  <th
+                    scope="col"
                     className="px-3 py-2 text-left text-[9px] font-bold text-text-muted uppercase tracking-widest cursor-pointer hover:text-accent transition-colors group"
                     onClick={() => toggleSort('Size')}
                   >
@@ -861,8 +817,8 @@ export const InventoryList: React.FC<InventoryListProps> = ({
                   </th>
                 )}
                 {visibleColumns.includes('Unit') && (
-                  <th 
-                    scope="col" 
+                  <th
+                    scope="col"
                     className="px-3 py-2 text-left text-[9px] font-bold text-text-muted uppercase tracking-widest cursor-pointer hover:text-accent transition-colors group"
                     onClick={() => toggleSort('Unit')}
                   >
@@ -875,8 +831,8 @@ export const InventoryList: React.FC<InventoryListProps> = ({
                   </th>
                 )}
                 {visibleColumns.includes('Price/Unit') && (
-                  <th 
-                    scope="col" 
+                  <th
+                    scope="col"
                     className="px-3 py-2 text-left text-[9px] font-bold text-text-muted uppercase tracking-widest cursor-pointer hover:text-accent transition-colors group"
                     onClick={() => toggleSort('Price/Unit')}
                   >
@@ -888,9 +844,23 @@ export const InventoryList: React.FC<InventoryListProps> = ({
                     </div>
                   </th>
                 )}
+                {visibleColumns.includes('Stock Quantity') && (
+                  <th
+                    scope="col"
+                    className="px-3 py-2 text-left text-[9px] font-bold text-text-muted uppercase tracking-widest cursor-pointer hover:text-accent transition-colors group"
+                    onClick={() => toggleSort('Stock Quantity')}
+                  >
+                    <div className="flex items-center">
+                      Stock Quantity
+                      {sortField === 'Stock Quantity' && (
+                        <TrendingUp className={`ml-1.5 h-3 w-3 transition-transform ${sortOrder === 'desc' ? 'rotate-180' : ''}`} />
+                      )}
+                    </div>
+                  </th>
+                )}
                 {visibleColumns.includes('Total Cost') && (
-                  <th 
-                    scope="col" 
+                  <th
+                    scope="col"
                     className="px-3 py-2 text-left text-[9px] font-bold text-text-muted uppercase tracking-widest cursor-pointer hover:text-accent transition-colors group"
                     onClick={() => toggleSort('Total Cost')}
                   >
@@ -902,51 +872,19 @@ export const InventoryList: React.FC<InventoryListProps> = ({
                     </div>
                   </th>
                 )}
-                {visibleColumns.includes('Supplier') && (
-                  <th 
-                    scope="col" 
-                    className="px-3 py-2 text-left text-[9px] font-bold text-text-muted uppercase tracking-widest cursor-pointer hover:text-accent transition-colors group"
-                    onClick={() => toggleSort('Supplier')}
-                  >
-                    <div className="flex items-center">
-                      Supplier
-                      {sortField === 'Supplier' && (
-                        <TrendingUp className={`ml-1.5 h-3 w-3 transition-transform ${sortOrder === 'desc' ? 'rotate-180' : ''}`} />
-                      )}
-                    </div>
+                {visibleColumns.includes('Price/Item') && (
+                  <th scope="col" className="px-3 py-2 text-left text-[9px] font-bold text-text-muted uppercase tracking-widest">
+                    Price/Item
                   </th>
                 )}
-                {visibleColumns.includes('Storage Location') && (
-                   <th 
-                    scope="col" 
-                    className="px-3 py-2 text-left text-[9px] font-bold text-text-muted uppercase tracking-widest cursor-pointer hover:text-accent transition-colors group"
-                    onClick={() => toggleSort('Storage Location')}
-                  >
-                    <div className="flex items-center">
-                      Location
-                      {sortField === 'Storage Location' && (
-                        <TrendingUp className={`ml-1.5 h-3 w-3 transition-transform ${sortOrder === 'desc' ? 'rotate-180' : ''}`} />
-                      )}
-                    </div>
-                  </th>
-                )}
-                {visibleColumns.includes('Expiry Status') && (
-                  <th 
-                    scope="col" 
-                    className="px-3 py-2 text-left text-[9px] font-bold text-text-muted uppercase tracking-widest cursor-pointer hover:text-accent transition-colors group"
-                    onClick={() => toggleSort('Expiry Status')}
-                  >
-                    <div className="flex items-center">
-                      Expiry
-                      {sortField === 'Expiry Status' && (
-                        <TrendingUp className={`ml-1.5 h-3 w-3 transition-transform ${sortOrder === 'desc' ? 'rotate-180' : ''}`} />
-                      )}
-                    </div>
+                {visibleColumns.includes('Case/Box/Sack') && (
+                  <th scope="col" className="px-3 py-2 text-left text-[9px] font-bold text-text-muted uppercase tracking-widest">
+                    Case/Box/Sack
                   </th>
                 )}
                 {visibleColumns.includes('Retail Price') && (
-                  <th 
-                    scope="col" 
+                  <th
+                    scope="col"
                     className="px-3 py-2 text-left text-[9px] font-bold text-text-muted uppercase tracking-widest cursor-pointer hover:text-accent transition-colors group"
                     onClick={() => toggleSort('Retail Price')}
                   >
@@ -959,14 +897,56 @@ export const InventoryList: React.FC<InventoryListProps> = ({
                   </th>
                 )}
                 {visibleColumns.includes('VAT') && (
-                  <th 
-                    scope="col" 
+                  <th
+                    scope="col"
                     className="px-3 py-2 text-left text-[9px] font-bold text-text-muted uppercase tracking-widest cursor-pointer hover:text-accent transition-colors group"
                     onClick={() => toggleSort('VAT')}
                   >
                     <div className="flex items-center">
                       VAT
                       {sortField === 'VAT' && (
+                        <TrendingUp className={`ml-1.5 h-3 w-3 transition-transform ${sortOrder === 'desc' ? 'rotate-180' : ''}`} />
+                      )}
+                    </div>
+                  </th>
+                )}
+                {visibleColumns.includes('Supplier') && (
+                  <th
+                    scope="col"
+                    className="px-3 py-2 text-left text-[9px] font-bold text-text-muted uppercase tracking-widest cursor-pointer hover:text-accent transition-colors group"
+                    onClick={() => toggleSort('Supplier')}
+                  >
+                    <div className="flex items-center">
+                      Supplier
+                      {sortField === 'Supplier' && (
+                        <TrendingUp className={`ml-1.5 h-3 w-3 transition-transform ${sortOrder === 'desc' ? 'rotate-180' : ''}`} />
+                      )}
+                    </div>
+                  </th>
+                )}
+                {visibleColumns.includes('Storage Location') && (
+                   <th
+                    scope="col"
+                    className="px-3 py-2 text-left text-[9px] font-bold text-text-muted uppercase tracking-widest cursor-pointer hover:text-accent transition-colors group"
+                    onClick={() => toggleSort('Storage Location')}
+                  >
+                    <div className="flex items-center">
+                      Location
+                      {sortField === 'Storage Location' && (
+                        <TrendingUp className={`ml-1.5 h-3 w-3 transition-transform ${sortOrder === 'desc' ? 'rotate-180' : ''}`} />
+                      )}
+                    </div>
+                  </th>
+                )}
+                {visibleColumns.includes('Expiry Status') && (
+                  <th
+                    scope="col"
+                    className="px-3 py-2 text-left text-[9px] font-bold text-text-muted uppercase tracking-widest cursor-pointer hover:text-accent transition-colors group"
+                    onClick={() => toggleSort('Expiry Status')}
+                  >
+                    <div className="flex items-center">
+                      Expiry
+                      {sortField === 'Expiry Status' && (
                         <TrendingUp className={`ml-1.5 h-3 w-3 transition-transform ${sortOrder === 'desc' ? 'rotate-180' : ''}`} />
                       )}
                     </div>
@@ -1072,24 +1052,6 @@ export const InventoryList: React.FC<InventoryListProps> = ({
                         </div>
                       </td>
                     )}
-                    {visibleColumns.includes('Stock Quantity') && (
-                      <td className="px-3 py-2 whitespace-nowrap">
-                        <div className="flex flex-col">
-                          <span className="text-xs text-text-navy font-bold">{formatStockQuantity(item)}</span>
-                          {item.minStockLevel !== undefined && item.minStockLevel > 0 && (
-                            <span className="text-[9px] font-bold text-text-muted uppercase tracking-widest mt-0.5">Par: {item.minStockLevel} {item.unit}</span>
-                          )}
-                          {item.dailyUsageRate && item.dailyUsageRate > 0 && item.quantity > 0 && (
-                            <span className="text-[9px] font-bold text-accent uppercase tracking-widest mt-0.5">
-                                Est. {Math.round(item.quantity / item.dailyUsageRate)} days left
-                            </span>
-                          )}
-                          {activeTab === 'Restock' && item.quantity < (item.minStockLevel || 0) && (
-                            <span className="text-[9px] font-black text-cta uppercase tracking-widest mt-0.5">Deficit: {((item.minStockLevel || 0) - item.quantity).toFixed(2)} {item.unit}</span>
-                          )}
-                        </div>
-                      </td>
-                    )}
                     {visibleColumns.includes('Size') && (
                       <td className="px-3 py-2 whitespace-nowrap text-xs text-text-navy font-bold">
                         {formatPackSize(item)}
@@ -1105,9 +1067,69 @@ export const InventoryList: React.FC<InventoryListProps> = ({
                         {formatPricePerPack(item)}
                       </td>
                     )}
+                    {visibleColumns.includes('Stock Quantity') && (
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        <div className="flex flex-col">
+                          <span className="text-xs text-text-navy font-bold">{formatStockQuantity(item)}</span>
+                          {item.minStockLevel !== undefined && item.minStockLevel > 0 && (
+                            <span className="text-[9px] font-bold text-text-muted uppercase tracking-widest mt-0.5">Par: {formatPacksLabel(item.minStockLevel, item)}</span>
+                          )}
+                          {item.dailyUsageRate && item.dailyUsageRate > 0 && item.quantity > 0 && (
+                            <span className="text-[9px] font-bold text-accent uppercase tracking-widest mt-0.5">
+                                Est. {Math.round(item.quantity / item.dailyUsageRate)} days left
+                            </span>
+                          )}
+                          {activeTab === 'Restock' && item.quantity < (item.minStockLevel || 0) && (
+                            <span className="text-[9px] font-black text-cta uppercase tracking-widest mt-0.5">Deficit: {formatPacksLabel((item.minStockLevel || 0) - item.quantity, item)}</span>
+                          )}
+                        </div>
+                      </td>
+                    )}
                     {visibleColumns.includes('Total Cost') && (
                       <td className="px-3 py-2 whitespace-nowrap text-xs font-bold text-accent">
                         £{calculateTotalCost(item).toFixed(2)}
+                      </td>
+                    )}
+                    {visibleColumns.includes('Price/Item') && (
+                      <td className="px-3 py-2 whitespace-nowrap text-xs font-bold text-text-navy">
+                        <span className="inline-flex items-center gap-1.5">
+                          {formatPriceItem(item)}
+                          <ItemSpecsTooltip item={item} />
+                        </span>
+                      </td>
+                    )}
+                    {visibleColumns.includes('Case/Box/Sack') && (
+                      <td className="px-3 py-2 whitespace-nowrap text-xs">
+                        {(() => {
+                          const caseInfo = formatCaseBoxSackLabel(item);
+                          return (
+                            <span className="inline-flex items-center gap-1.5">
+                              {caseInfo.isSet ? (
+                                <span className="font-bold text-text-navy">{caseInfo.label}</span>
+                              ) : (
+                                <span className="text-[9px] font-bold text-text-muted uppercase tracking-widest">{caseInfo.label}</span>
+                              )}
+                              <ItemSpecsTooltip item={item} />
+                            </span>
+                          );
+                        })()}
+                      </td>
+                    )}
+                    {visibleColumns.includes('Retail Price') && (
+                      <td className="px-3 py-2 whitespace-nowrap text-xs font-bold text-text-navy">
+                        {item.retailPrice !== undefined ? `£${item.retailPrice.toFixed(2)}` : '-'}
+                      </td>
+                    )}
+                    {visibleColumns.includes('VAT') && (
+                      <td className="px-3 py-2 whitespace-nowrap text-xs">
+                        {item.vatCode ? (
+                          <div className="flex flex-col">
+                            <span className="font-bold text-text-navy">{item.vatCode.replace('_', ' ')}</span>
+                            <span className="text-[9px] font-bold text-text-muted uppercase tracking-widest mt-0.5">{item.vatRate}%</span>
+                          </div>
+                        ) : (
+                          <span className="text-[9px] font-bold text-cta uppercase tracking-widest">Missing</span>
+                        )}
                       </td>
                     )}
                     {visibleColumns.includes('Supplier') && (
@@ -1130,23 +1152,6 @@ export const InventoryList: React.FC<InventoryListProps> = ({
                           </span>
                         ) : (
                           <span className="text-text-muted text-[9px] font-bold uppercase tracking-widest">-</span>
-                        )}
-                      </td>
-                    )}
-                    {visibleColumns.includes('Retail Price') && (
-                      <td className="px-3 py-2 whitespace-nowrap text-xs font-bold text-text-navy">
-                        {item.retailPrice !== undefined ? `£${item.retailPrice.toFixed(2)}` : '-'}
-                      </td>
-                    )}
-                    {visibleColumns.includes('VAT') && (
-                      <td className="px-3 py-2 whitespace-nowrap text-xs">
-                        {item.vatCode ? (
-                          <div className="flex flex-col">
-                            <span className="font-bold text-text-navy">{item.vatCode.replace('_', ' ')}</span>
-                            <span className="text-[9px] font-bold text-text-muted uppercase tracking-widest mt-0.5">{item.vatRate}%</span>
-                          </div>
-                        ) : (
-                          <span className="text-[9px] font-bold text-cta uppercase tracking-widest">Missing</span>
                         )}
                       </td>
                     )}
@@ -1236,7 +1241,7 @@ export const InventoryList: React.FC<InventoryListProps> = ({
                 <div className="grid grid-cols-2 gap-6 text-[10px] font-bold uppercase tracking-widest">
                     <div>
                       <p className="text-text-muted mb-1.5">Stock Quantity</p>
-                      <p className="text-sm font-bold text-text-navy">{item.quantity}</p>
+                      <p className="text-sm font-bold text-text-navy">{toSafeNumber(item.quantity)}</p>
                     </div>
                     <div>
                       <p className="text-text-muted mb-1.5">Size</p>
@@ -1258,7 +1263,7 @@ export const InventoryList: React.FC<InventoryListProps> = ({
                   </div>
                   <div>
                     <p className="text-text-muted mb-1.5">Total Cost</p>
-                    <p className="text-sm font-bold text-accent">£{((item.quantity || 0) * (item.unitSize || 1) * (item.pricePerUnit || 0)).toFixed(2)}</p>
+                    <p className="text-sm font-bold text-accent">£{(toSafeNumber(item.quantity) * toSafeNumber(item.unitSize, 1) * toSafeNumber(item.pricePerUnit)).toFixed(2)}</p>
                   </div>
                   <div>
                     <p className="text-text-muted mb-1.5">Retail Price</p>

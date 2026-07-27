@@ -21,6 +21,8 @@ interface AddItemModalProps {
     unit: Unit; // display unit
     unitSize: number; // pack size
     packaging?: string;
+    caseSize?: number; // packs per case
+    casePackaging?: string;
     inventoryType: InventoryType;
     baseUnit: Unit;
     minStockLevel: number;
@@ -56,6 +58,8 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, onS
   const [unit, setUnit] = useState<Unit>('kg');
   const [unitSize, setUnitSize] = useState('1');
   const [packaging, setPackaging] = useState<string>('box');
+  const [caseSize, setCaseSize] = useState('');
+  const [casePackaging, setCasePackaging] = useState<string>('case');
   const [price, setPrice] = useState('');
   const [totalCost, setTotalCost] = useState('');
   const [minStock, setMinStock] = useState('');
@@ -77,14 +81,6 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, onS
   const [yieldFactor, setYieldFactor] = useState('1');
   const [storageLocation, setStorageLocation] = useState('');
   const [showRetailCalculator, setShowRetailCalculator] = useState(false);
-  const [showUnitCalculator, setShowUnitCalculator] = useState(false);
-  const [calcData, setCalcData] = useState({
-    bulkQty: '',
-    bulkUnit: 'kg' as Unit,
-    totalCost: '',
-    targetPackSize: '',
-    targetPackUnit: 'g' as Unit,
-  });
   const [availableCameras, setAvailableCameras] = useState<any[]>([]);
   const [selectedCameraId, setSelectedCameraId] = useState<string>('');
   
@@ -131,14 +127,21 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, onS
       setUnit(itemToEdit.unit || 'pcs');
       setUnitSize(itemToEdit.unitSize?.toString() || '1');
       setPackaging(itemToEdit.packaging || 'box');
-      
-      // Price per display unit
+      setCaseSize(itemToEdit.caseSize?.toString() || '');
+      setCasePackaging(itemToEdit.casePackaging || 'case');
+
+      // Price per display unit (per pack) — must reverse both the metric factor AND the
+      // pack size to match how pricePerUnit is now derived on save (see handleSubmit).
       const factor = convertToBaseUnit(1, itemToEdit.unit || 'pcs');
-      const pricePerDisplayUnit = itemToEdit.pricePerUnit * factor;
+      const editSizePerPack = itemToEdit.unitSize || 1;
+      const pricePerDisplayUnit = itemToEdit.pricePerUnit * factor * editSizePerPack;
       setPrice(pricePerDisplayUnit.toFixed(4));
-      
+
       setTotalCost((itemToEdit.quantity * itemToEdit.pricePerUnit).toFixed(2));
-      setMinStock(itemToEdit.minStockLevel.toString());
+      // Min Stock Alert is stored in base units but entered/displayed as a pack count,
+      // same conversion as Stock Qty above.
+      const minStockPacks = (itemToEdit.minStockLevel || 0) / (baseQtyPerPack || 1);
+      setMinStock(roundTo(minStockPacks, 3).toString());
       setSupplier(itemToEdit.supplier || '');
       setSupplierContact(itemToEdit.supplierContact || '');
       setExpiryDate(itemToEdit.expiryDate || '');
@@ -163,6 +166,8 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, onS
       setUnit('kg');
       setUnitSize('1');
       setPackaging('box');
+      setCaseSize('');
+      setCasePackaging('case');
       setPrice('');
       setTotalCost('');
       setMinStock('');
@@ -261,26 +266,6 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, onS
   if (!isOpen) return null;
 
   const isTrackingItem = ['Crockery', 'Utensil', 'Equipment'].includes(category);
-
-  const calculateCalcResults = () => {
-    const bulkQty = parseFloat(calcData.bulkQty) || 0;
-    const bulkFactor = convertToBaseUnit(1, calcData.bulkUnit);
-    const totalBaseQty = bulkQty * bulkFactor;
-    const totalCost = parseFloat(calcData.totalCost) || 0;
-    
-    const targetPackSize = parseFloat(calcData.targetPackSize) || 1;
-    const targetPackFactor = convertToBaseUnit(1, calcData.targetPackUnit);
-    const targetBaseSize = targetPackSize * targetPackFactor;
-    
-    const pricePerBase = totalBaseQty > 0 ? totalCost / totalBaseQty : 0;
-    const pricePerPack = pricePerBase * targetBaseSize;
-    
-    return {
-      pricePerBase,
-      pricePerPack,
-      totalBaseQty
-    };
-  };
 
   const compressImage = (base64Str: string, maxWidth = 800, maxHeight = 800, quality = 0.6): Promise<string> => {
     return new Promise((resolve, reject) => {
@@ -451,16 +436,30 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, onS
     const qtyPacks = parseFloat(quantity) || 0;
     const sizePerPack = parseFloat(unitSize) || 1;
     const pricePerPack = parseFloat(price) || 0;
-    
+
+    // unitSize defaults to '1' for every new item regardless of unit — correct for genuinely
+    // piece-counted items (unit 'pcs'), but for pack-style units (bottles/bags/box/cases/etc)
+    // a size of 1 is almost never the real pack size. Warn rather than silently save a price
+    // that will be wrong by the true pack size, without blocking the save outright.
+    if (unit !== 'pcs' && sizePerPack === 1) {
+      toast.warning(`Pack size is set to 1 ${unit}. If this item is actually sold in a larger pack (e.g. a bottle, box, or case), enter the real pack size first — otherwise the cost per ${unit} will be recorded as the full pack price.`, { duration: 6000 });
+    }
+
     // Calculate base values
     // 1. Total quantity in base units (e.g. total grams)
     const baseQtyPerPack = convertToBaseUnit(sizePerPack, unit);
     const totalBaseQty = qtyPacks * baseQtyPerPack;
     
     // 2. Price per base unit (e.g. price per gram)
-    // The price entered is "Price / {unit}", so we divide by the factor of that unit
+    // The price entered is "Price / {unit}" for a whole pack of size sizePerPack, so we must
+    // divide by BOTH the metric factor of that unit AND the pack size — dividing by the metric
+    // factor alone (the old bug) left pricePerUnit at pack-scale instead of true base-unit scale
+    // for any non-metric pack unit (bottles/bags/box/pcs/cases), inflating every downstream cost
+    // calculation (Total Cost, Holding Value, Stock Taking, Waste, Recipe costing, COGS) by
+    // roughly the pack size.
     const unitFactor = convertToBaseUnit(1, unit);
-    const pPerBaseUnit = unitFactor > 0 ? pricePerPack / unitFactor : 0;
+    const totalConversionFactor = unitFactor * sizePerPack;
+    const pPerBaseUnit = totalConversionFactor > 0 ? pricePerPack / totalConversionFactor : 0;
     
     onSave({
       name,
@@ -474,10 +473,13 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, onS
       unit,
       unitSize: baseQtyPerPack, // Save in base units (e.g. 1000g for 1kg)
       packaging,
+      caseSize: caseSize ? parseFloat(caseSize) : undefined,
+      casePackaging: caseSize ? casePackaging : undefined,
       pricePerUnit: pPerBaseUnit,
       isActive: true,
       retailPrice: retailPrice ? parseFloat(retailPrice) : undefined,
-      minStockLevel: parseFloat(minStock) || 0,
+      // Min Stock Alert is entered as a pack count, stored in base units (same scale as quantity).
+      minStockLevel: (parseFloat(minStock) || 0) * baseQtyPerPack,
       imageUrl: imagePreview || undefined,
       supplier: supplier || undefined,
       supplierContact: supplierContact || undefined,
@@ -689,11 +691,14 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, onS
                           <option value="tray">Tray</option>
                           <option value="bag">Bag</option>
                           <option value="case">Case</option>
+                          <option value="sack">Sack</option>
                           <option value="bottle">Bottle</option>
+                          <option value="vacuum pack">Vacuum Pack</option>
                           <option value="tin">Tin</option>
                           <option value="jar">Jar</option>
                           <option value="tub">Tub</option>
                           <option value="sachet">Sachet</option>
+                          <option value="loose">Loose</option>
                           <option value="pcs">Pcs</option>
                         </select>
                         <div className="absolute inset-y-0 right-0 pr-4 flex items-center pointer-events-none">
@@ -731,6 +736,43 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, onS
                           <option value="L">L</option>
                           <option value="ml">ML</option>
                           <option value="pcs">UNIT / PCS</option>
+                        </select>
+                        <div className="absolute inset-y-0 right-0 pr-4 flex items-center pointer-events-none">
+                          <ChevronDown className="h-4 w-4 text-text-muted" />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-4 gap-4 items-start">
+                    <div className="flex flex-col col-span-2">
+                      <label htmlFor="caseSize" className="text-[10px] font-bold text-text-muted uppercase tracking-widest ml-1 mb-1.5">
+                        Packs Per Case <span className="normal-case font-medium text-text-muted/70">(optional)</span>
+                      </label>
+                      <input
+                        type="number"
+                        id="caseSize"
+                        min="0"
+                        step="any"
+                        className="block w-full bg-secondary-surface border-border-grey rounded-xl shadow-sm py-3 px-4 focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent text-text-navy sm:text-sm transition-all placeholder-text-muted/50 h-[46px]"
+                        value={caseSize}
+                        onChange={(e) => setCaseSize(e.target.value)}
+                        placeholder={`e.g. 10 ${packaging}s per case`}
+                      />
+                    </div>
+                    <div className="flex flex-col col-span-2">
+                      <label htmlFor="casePackaging" className="text-[10px] font-bold text-text-muted uppercase tracking-widest ml-1 mb-1.5">Case Packaging</label>
+                      <div className="relative">
+                        <select
+                          id="casePackaging"
+                          disabled={!caseSize}
+                          className="block w-full bg-secondary-surface border-border-grey rounded-xl shadow-sm py-3 px-4 focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent text-text-navy sm:text-sm transition-all appearance-none h-[46px] disabled:opacity-50"
+                          value={casePackaging}
+                          onChange={(e) => setCasePackaging(e.target.value)}
+                        >
+                          <option value="case">Case</option>
+                          <option value="box">Box</option>
+                          <option value="sack">Sack</option>
                         </select>
                         <div className="absolute inset-y-0 right-0 pr-4 flex items-center pointer-events-none">
                           <ChevronDown className="h-4 w-4 text-text-muted" />
@@ -823,129 +865,6 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, onS
                     </div>
                   </div>
 
-                  {/* Unit/Price Conversion Calculator */}
-                  <div className="bg-secondary-surface rounded-2xl p-6 border border-border-grey">
-                    <div className="flex items-center justify-between mb-4">
-                      <div className="flex items-center">
-                        <div className="p-2 bg-accent/10 rounded-lg mr-3">
-                          <Calculator className="h-5 w-5 text-accent" />
-                        </div>
-                        <div>
-                          <h4 className="text-sm font-bold text-text-navy uppercase tracking-tight">Unit/Price Conversion Calculator</h4>
-                          <p className="text-[10px] font-bold text-text-muted uppercase tracking-widest">Calculate costs from bulk purchases</p>
-                        </div>
-                      </div>
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        className="text-[10px] font-bold uppercase tracking-widest px-3 py-1 bg-card-bg border-border-grey"
-                        onClick={() => setShowUnitCalculator(!showUnitCalculator)}
-                      >
-                        {showUnitCalculator ? 'Hide' : 'Show'}
-                      </Button>
-                    </div>
-
-                    {showUnitCalculator && (
-                      <div className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-200">
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                          <div>
-                            <label className="block text-[10px] font-bold text-text-muted uppercase tracking-widest mb-1.5">Bulk Qty</label>
-                            <input
-                              type="number"
-                              className="bg-card-bg border-border-grey text-text-navy focus:ring-accent focus:border-accent block w-full sm:text-sm rounded-xl p-3 border"
-                              placeholder="e.g. 10"
-                              value={calcData.bulkQty}
-                              onChange={(e) => setCalcData({ ...calcData, bulkQty: e.target.value })}
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-[10px] font-bold text-text-muted uppercase tracking-widest mb-1.5">Bulk Unit</label>
-                            <select
-                              className="bg-card-bg border-border-grey text-text-navy focus:ring-accent focus:border-accent block w-full sm:text-sm rounded-xl p-3 border"
-                              value={calcData.bulkUnit}
-                              onChange={(e) => setCalcData({ ...calcData, bulkUnit: e.target.value as Unit })}
-                            >
-                              <option value="kg">kg</option>
-                              <option value="g">g</option>
-                              <option value="L">L</option>
-                              <option value="ml">ml</option>
-                              <option value="pcs">pcs</option>
-                              <option value="cases">cases</option>
-                              <option value="packs">packs</option>
-                            </select>
-                          </div>
-                          <div>
-                            <label className="block text-[10px] font-bold text-text-muted uppercase tracking-widest mb-1.5">Total Cost (£)</label>
-                            <input
-                              type="number"
-                              className="bg-card-bg border-border-grey text-text-navy focus:ring-accent focus:border-accent block w-full sm:text-sm rounded-xl p-3 border"
-                              placeholder="e.g. 50"
-                              value={calcData.totalCost}
-                              onChange={(e) => setCalcData({ ...calcData, totalCost: e.target.value })}
-                            />
-                          </div>
-                        </div>
-
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                          <div>
-                            <label className="block text-[10px] font-bold text-text-muted uppercase tracking-widest mb-1.5">Target Pack Size</label>
-                            <input
-                              type="number"
-                              className="bg-card-bg border-border-grey text-text-navy focus:ring-accent focus:border-accent block w-full sm:text-sm rounded-xl p-3 border"
-                              placeholder="e.g. 500"
-                              value={calcData.targetPackSize}
-                              onChange={(e) => setCalcData({ ...calcData, targetPackSize: e.target.value })}
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-[10px] font-bold text-text-muted uppercase tracking-widest mb-1.5">Target Pack Unit</label>
-                            <select
-                              className="bg-card-bg border-border-grey text-text-navy focus:ring-accent focus:border-accent block w-full sm:text-sm rounded-xl p-3 border"
-                              value={calcData.targetPackUnit}
-                              onChange={(e) => setCalcData({ ...calcData, targetPackUnit: e.target.value as Unit })}
-                            >
-                              <option value="g">g</option>
-                              <option value="ml">ml</option>
-                              <option value="pcs">pcs</option>
-                            </select>
-                          </div>
-                        </div>
-
-                        {/* Calculator Results */}
-                        <div className="bg-primary-surface rounded-xl p-4 border border-accent/20">
-                          <div className="grid grid-cols-2 gap-4">
-                            <div>
-                              <p className="text-[9px] font-bold text-text-muted uppercase tracking-widest">Price per {calcData.targetPackUnit}</p>
-                              <p className="text-sm font-bold text-text-navy">£{calculateCalcResults().pricePerBase.toFixed(4)}</p>
-                            </div>
-                            <div>
-                              <p className="text-[9px] font-bold text-text-muted uppercase tracking-widest">Price per {calcData.targetPackSize}{calcData.targetPackUnit} Pack</p>
-                              <p className="text-sm font-bold text-text-navy">£{calculateCalcResults().pricePerPack.toFixed(2)}</p>
-                            </div>
-                            <div>
-                              <p className="text-[9px] font-bold text-text-muted uppercase tracking-widest">Total Base Qty</p>
-                              <p className="text-sm font-bold text-text-navy">{calculateCalcResults().totalBaseQty} {calcData.targetPackUnit}</p>
-                            </div>
-                            <div className="flex items-end">
-                              <Button
-                                type="button"
-                                className="w-full bg-accent text-white text-[9px] font-bold uppercase tracking-widest py-2 rounded-lg"
-                                onClick={() => {
-                                  const results = calculateCalcResults();
-                                  setPrice(results.pricePerPack.toFixed(4));
-                                  setUnitSize(calcData.targetPackSize);
-                                  toast.success('Calculator values applied to form');
-                                }}
-                              >
-                                Apply to Form
-                              </Button>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
                   {showRetailCalculator && (
                     <div className="bg-secondary-surface p-6 rounded-2xl border border-border-grey space-y-4 shadow-inner">
                       <div className="flex items-center justify-between">
@@ -995,7 +914,9 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, onS
 
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                     <div>
-                      <label htmlFor="vatCode" className="text-[10px] font-bold text-text-muted uppercase tracking-widest ml-1">VAT Code</label>
+                      <div className="flex justify-between items-center px-1 h-4">
+                        <label htmlFor="vatCode" className="text-[10px] font-bold text-text-muted uppercase tracking-widest whitespace-nowrap">VAT Code</label>
+                      </div>
                       <div className="relative mt-1.5">
                         <select
                           id="vatCode"
@@ -1018,7 +939,12 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, onS
                       </div>
                     </div>
                     <div>
-                      <label htmlFor="minStock" className="text-[10px] font-bold text-text-muted uppercase tracking-widest ml-1">Min Stock Alert</label>
+                      <div className="flex justify-between items-center px-1 h-4">
+                        <label htmlFor="minStock" className="text-[10px] font-bold text-text-muted uppercase tracking-widest whitespace-nowrap">Min Stock Alert</label>
+                        <div title={`Entered in ${packaging}s — e.g. 2 ${packaging}s`}>
+                          <Info className="h-3 w-3 text-text-muted cursor-help flex-shrink-0" />
+                        </div>
+                      </div>
                       <input
                         type="number"
                         id="minStock"
@@ -1028,13 +954,14 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, onS
                         className="mt-1.5 block w-full bg-secondary-surface border-border-grey rounded-xl shadow-sm py-3 px-4 focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent text-text-navy sm:text-sm transition-all placeholder-text-muted/50"
                         value={minStock}
                         onChange={(e) => setMinStock(e.target.value)}
+                        placeholder={`e.g. 2 ${packaging}s`}
                       />
                     </div>
                     <div>
-                      <div className="flex justify-between items-center px-1">
-                        <label htmlFor="yieldFactor" className="text-[10px] font-bold text-text-muted uppercase tracking-widest">Yield Factor</label>
+                      <div className="flex justify-between items-center px-1 h-4">
+                        <label htmlFor="yieldFactor" className="text-[10px] font-bold text-text-muted uppercase tracking-widest whitespace-nowrap">Yield Factor</label>
                         <div title="Percentage of usable product (e.g. 0.8 for 80%)">
-                            <Info className="h-3 w-3 text-text-muted cursor-help" />
+                            <Info className="h-3 w-3 text-text-muted cursor-help flex-shrink-0" />
                         </div>
                       </div>
                       <input
