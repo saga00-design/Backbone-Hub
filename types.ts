@@ -293,6 +293,8 @@ export interface Invoice {
   date: string;
   vendor: string;
   supplierId?: string;
+  orderId?: string; // Explicit link to the Stock Order this invoice is for — set during
+                     // approval review, drives the three-way match against ReceivingRecords.
   items: InvoiceItem[];
   totalAmount: number;
   status: 'Pending' | 'Processed';
@@ -304,6 +306,22 @@ export interface InvoiceItem {
   quantity: number;
   unit: Unit;
   price: number;
+}
+
+// One entry per processed invoice line, keyed by item AND supplier — the same ingredient
+// bought from two different suppliers at different prices is never a "price change," it's
+// two independent price histories. Written on every approval regardless of whether the price
+// matched the prior entry or not, so this grows into a running per-supplier price log.
+export interface SupplierPriceHistoryEntry {
+  id: string;
+  inventoryItemId: string;
+  itemName: string;
+  supplier: string;
+  price: number; // per base unit, same convention as InventoryItem.pricePerUnit
+  invoiceId: string;
+  locationId: string;
+  date: string; // invoice date
+  createdAt: string;
 }
 
 export interface AiInsight {
@@ -343,8 +361,33 @@ export interface Order {
   supplier: string;
   items: OrderItem[];
   totalAmount: number;
-  status: 'Draft' | 'Sent' | 'Received' | 'Cancelled';
+  status: 'Draft' | 'Sent' | 'Partially Received' | 'Received' | 'Cancelled';
   ccEmails?: string[];
+}
+
+// Phase 1 — Receive Goods. One record per receiving session against a Sent Order: what was
+// actually ticked off as arrived, in base units, per line — the sole source of truth for
+// adding purchased stock (Invoice Processing no longer writes stock; it only reconciles
+// against this record via orderId once an invoice is explicitly linked to its Order).
+export interface ReceivingRecordItem {
+  inventoryItemId: string;
+  name: string;
+  unit: Unit;
+  unitSize?: number;
+  orderedQuantity: number;  // base units, from the Order at time of receiving
+  receivedQuantity: number; // base units, as ticked off on arrival
+}
+
+export interface ReceivingRecord {
+  id: string;
+  orderId: string;
+  supplier: string;
+  locationId: string;
+  date: string; // business day, YYYY-MM-DD
+  items: ReceivingRecordItem[];
+  receivedBy: string;
+  receivedByName: string;
+  createdAt: string;
 }
 
 export type TableStatus = 'Available' | 'Seated' | 'Ordered' | 'Served' | 'Paid';

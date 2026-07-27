@@ -1,14 +1,16 @@
 import React, { useState } from 'react';
-import { Order, OrderItem, Supplier, InventoryItem, Recipe, POSOrder } from '../types';
-import { ShoppingCart, Package, Search, Filter, Plus, Minus, Check, Clock, ChevronDown, ChevronUp, Users, PoundSterling, Zap } from 'lucide-react';
+import { Order, OrderItem, Supplier, InventoryItem, Recipe, POSOrder, ReceivingRecordItem, ReceivingRecord } from '../types';
+import { ShoppingCart, Package, Search, Filter, Plus, Minus, Check, Clock, ChevronDown, ChevronUp, Users, PoundSterling, Zap, AlertTriangle } from 'lucide-react';
 import { Button } from './Button';
 import { SearchInput } from './SearchInput';
 import { formatPacksLabel, formatCaseBoxSackLabel } from '../utils/unitConversions';
 import { ItemSpecsTooltip } from './ItemSpecsTooltip';
+import { ReceiveGoodsModal } from './ReceiveGoodsModal';
 
 interface OrdersProps {
   cart: OrderItem[];
   orders: Order[];
+  receivingRecords: ReceivingRecord[];
   posOrders: POSOrder[];
   suppliers: Supplier[];
   inventoryItems: InventoryItem[];
@@ -16,21 +18,27 @@ interface OrdersProps {
   onPlaceOrder: (supplier: string, items: OrderItem[], ccEmails: string[]) => void;
   onUpdateCart: (item: InventoryItem, quantity: number) => void;
   onUpdateOrderStatus: (id: string, status: 'Draft' | 'Sent' | 'Received') => void;
+  onReceiveDelivery: (orderId: string, items: ReceivingRecordItem[]) => void;
+  onCloseOrder: (orderId: string) => void;
   checkPermission: (module: string, action: string) => boolean;
 }
 
-export const Orders: React.FC<OrdersProps> = ({ 
-  cart, 
-  orders, 
+export const Orders: React.FC<OrdersProps> = ({
+  cart,
+  orders,
+  receivingRecords,
   posOrders = [],
-  suppliers, 
-  inventoryItems, 
+  suppliers,
+  inventoryItems,
   recipes = [],
-  onPlaceOrder, 
+  onPlaceOrder,
   onUpdateCart,
   onUpdateOrderStatus,
+  onReceiveDelivery,
+  onCloseOrder,
   checkPermission
 }) => {
+  const [receivingOrder, setReceivingOrder] = useState<Order | null>(null);
   const [activeTab, setActiveTab] = useState<'create' | 'cart' | 'history' | 'pos'>('create');
   const [expandedOrder, setExpandedOrder] = useState<string | null>(null);
 
@@ -767,10 +775,13 @@ export const Orders: React.FC<OrdersProps> = ({
                     <div className="flex items-center space-x-4">
                       <div className={`p-2 rounded-full ${
                         order.status === 'Received' ? 'bg-green-100 text-green-600' :
+                        order.status === 'Partially Received' ? 'bg-amber-100 text-amber-600' :
                         order.status === 'Sent' ? 'bg-accent/10 text-accent' :
                         'bg-gray-100 text-gray-600'
                       }`}>
-                        {order.status === 'Received' ? <Check className="w-5 h-5" /> : <Clock className="w-5 h-5" />}
+                        {order.status === 'Received' ? <Check className="w-5 h-5" /> :
+                         order.status === 'Partially Received' ? <AlertTriangle className="w-5 h-5" /> :
+                         <Clock className="w-5 h-5" />}
                       </div>
                       <div>
                         <h4 className="text-lg font-medium text-gray-900">{order.supplier}</h4>
@@ -826,9 +837,21 @@ export const Orders: React.FC<OrdersProps> = ({
                             Mark as Sent
                           </Button>
                         )}
-                        {order.status === 'Sent' && (
-                          <Button onClick={() => onUpdateOrderStatus(order.id, 'Received')} variant="primary">
-                            Mark as Received
+                        {(order.status === 'Sent' || order.status === 'Partially Received') && (
+                          <Button onClick={() => setReceivingOrder(order)} variant="primary">
+                            {order.status === 'Partially Received' ? 'Receive Remaining' : 'Receive Delivery'}
+                          </Button>
+                        )}
+                        {order.status === 'Partially Received' && (
+                          <Button
+                            onClick={() => {
+                              if (window.confirm(`Close this order from ${order.supplier} as complete? The remaining outstanding quantity will NOT be added to stock — only use this if the rest is confirmed cancelled or backordered separately.`)) {
+                                onCloseOrder(order.id);
+                              }
+                            }}
+                            variant="secondary"
+                          >
+                            Close Order (Rest Not Coming)
                           </Button>
                         )}
                         {suppliers.find(s => s.name === order.supplier)?.email && (
@@ -854,6 +877,14 @@ export const Orders: React.FC<OrdersProps> = ({
           )}
         </div>
       )}
+
+      <ReceiveGoodsModal
+        order={receivingOrder}
+        inventoryItems={inventoryItems}
+        receivingRecords={receivingRecords}
+        onClose={() => setReceivingOrder(null)}
+        onConfirm={onReceiveDelivery}
+      />
     </div>
   );
 };

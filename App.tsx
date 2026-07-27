@@ -17,7 +17,7 @@ import { SupplierManager } from './components/SupplierManager';
 import { TableManager } from './components/TableManager';
 import { Settings } from './components/Settings';
 import { Orders } from './components/Orders';
-import { InventoryItem, InventoryCategory, Unit, StockCountRecord, Recipe, SalesImportRecord, Supplier, Order, OrderItem, Invoice, MenuCategory, POSOrder, POSPayment, WasteRecord, ExpenseRecord, MovementType, StockMovement, InventoryType, Table, DailyClosure, ClosureType, Forecast, StaffPerformanceRecord, AppPermissions, StaffCertification, AuditLog, StaffMember, MonthlyTarget, SideAddonItem } from './types';
+import { InventoryItem, InventoryCategory, Unit, StockCountRecord, Recipe, SalesImportRecord, Supplier, Order, OrderItem, Invoice, MenuCategory, POSOrder, POSPayment, WasteRecord, ExpenseRecord, MovementType, StockMovement, InventoryType, Table, DailyClosure, ClosureType, Forecast, StaffPerformanceRecord, AppPermissions, StaffCertification, AuditLog, StaffMember, MonthlyTarget, SideAddonItem, ReceivingRecord, ReceivingRecordItem, SupplierPriceHistoryEntry } from './types';
 import { logAuditAction } from './services/auditService';
 import { getBusinessDay } from './utils/businessDay';
 import { LayoutDashboard, Package, ClipboardCheck, FileInput, Menu, X, ChefHat, TrendingUp, Truck, Settings as SettingsIcon, BookOpen, Sun, Moon, ShoppingCart, AlertCircle, LogIn, LogOut, Trash2, ReceiptPoundSterling, Megaphone, LayoutList, PoundSterling } from 'lucide-react';
@@ -25,7 +25,7 @@ import { Toaster, toast } from 'sonner';
 import { auth, db, googleProvider, signInWithPopup, onAuthStateChanged, collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, onSnapshot, handleFirestoreError, OperationType, User, cleanObject, signOut, increment, query, where, orderBy, limit, testConnection, LOCATION_ID, writeBatch } from './firebase';
 import { DEFAULT_PERMISSIONS } from './constants';
 import { calculateTotalCost, mapCategoryId } from './utils/recipeUtils';
-import { convertToBaseUnit, CONVERSION_FACTORS, PACKAGING_TO_UNIT, toSafeNumber } from './utils/unitConversions';
+import { CONVERSION_FACTORS, toSafeNumber, resolveInvoiceLine } from './utils/unitConversions';
 import { normalizeCurrency, normalizeTimestamp, normalizeStatus } from './utils/currencyUtils';
 import { OfflineBanner } from './components/OfflineBanner';
 import { WasteManager } from './components/WasteManager';
@@ -396,6 +396,8 @@ const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [wasteRecords, setWasteRecords] = useState<WasteRecord[]>([]);
   const [expenseRecords, setExpenseRecords] = useState<ExpenseRecord[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
+  const [receivingRecords, setReceivingRecords] = useState<ReceivingRecord[]>([]);
+  const [supplierPriceHistory, setSupplierPriceHistory] = useState<SupplierPriceHistoryEntry[]>([]);
   const [tables, setTables] = useState<Table[]>([]);
   const [posOrders, setPosOrders] = useState<POSOrder[]>([]);
   const [posTransactions, setPosTransactions] = useState<any[]>([]);
@@ -810,6 +812,32 @@ const today = londonHour < 6
       setStockHistory(data);
     }, (err: any) => handleFirestoreError(err, OperationType.LIST, 'stockCounts'));
 
+    // Stock Orders were previously never read back from Firestore — only ever added to local
+    // state when placed this session, so a Sent order became unreceivable after a reload.
+    const unsubOrders = onSnapshot(query(collection(db, 'orders'), where('locationId', '==', LOCATION_ID)), (snapshot: any) => {
+      const data = snapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() } as Order));
+      setOrders(data);
+    }, (err: any) => handleFirestoreError(err, OperationType.LIST, 'orders'));
+
+    const unsubReceivingRecords = onSnapshot(query(collection(db, 'receivingRecords'), where('locationId', '==', LOCATION_ID)), (snapshot: any) => {
+      const data = snapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() } as ReceivingRecord));
+      setReceivingRecords(data);
+    }, (err: any) => handleFirestoreError(err, OperationType.LIST, 'receivingRecords'));
+
+    // Invoices, like Stock Orders before this, were never actually read back from Firestore —
+    // only ever added to local state when processed this session. Needed now for real: the
+    // three-way match depends on being able to review and approve a Pending invoice from an
+    // earlier session, not just the one just uploaded.
+    const unsubInvoices = onSnapshot(query(collection(db, 'invoices'), where('locationId', '==', LOCATION_ID)), (snapshot: any) => {
+      const data = snapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() } as Invoice));
+      setInvoices(data);
+    }, (err: any) => handleFirestoreError(err, OperationType.LIST, 'invoices'));
+
+    const unsubSupplierPriceHistory = onSnapshot(query(collection(db, 'supplierPriceHistory'), where('locationId', '==', LOCATION_ID)), (snapshot: any) => {
+      const data = snapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() } as SupplierPriceHistoryEntry));
+      setSupplierPriceHistory(data);
+    }, (err: any) => handleFirestoreError(err, OperationType.LIST, 'supplierPriceHistory'));
+
     const unsubSalesHistory = onSnapshot(query(collection(db, 'salesImports'), where('locationId', '==', LOCATION_ID)), (snapshot: any) => {
       const data = snapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() } as SalesImportRecord));
       setSalesHistory(data);
@@ -987,6 +1015,10 @@ const today = londonHour < 6
       unsubRecipes();
       unsubSuppliers();
       unsubStockHistory();
+      unsubOrders();
+      unsubReceivingRecords();
+      unsubInvoices();
+      unsubSupplierPriceHistory();
       unsubSalesHistory();
       unsubPosOrders();
       unsubPosPayments();
@@ -1522,6 +1554,15 @@ const today = londonHour < 6
     setCurrentView('invoices');
   };
 
+  // Was previously an inline lambda duplicated at both InvoiceProcessor and SupplierManager
+  // call sites that only ever updated local state — payment-status toggles, rejects, deletes,
+  // and (now) order-linking never actually reached Firestore, so they were lost on reload.
+  const handleUpdateInvoice = (id: string, updates: Partial<Invoice>) => {
+    setInvoices(prev => prev.map(inv => inv.id === id ? { ...inv, ...updates } : inv));
+    setDoc(doc(db, 'invoices', id), cleanObject({ ...updates, locationId: LOCATION_ID }), { merge: true })
+      .catch(err => handleFirestoreError(err, OperationType.UPDATE, `invoices/${id}`));
+  };
+
   const handleSaveItem = async (itemData: any) => {
     const timestamp = new Date().toISOString().split('T')[0];
     
@@ -1946,6 +1987,12 @@ const today = londonHour < 6
     return { success, failed };
   };
 
+  // Invoice Processing is now purely financial reconciliation — three-way matching (quantity
+  // vs the linked ReceivingRecord, price vs supplierPriceHistory for this exact item+supplier)
+  // happens in InvoiceApprovalModal BEFORE this is ever called, gated behind explicit
+  // acknowledgment of any flagged line. By the time this runs, that review is done; it only
+  // updates price (never quantity — that's owned exclusively by Receive Goods/Phase 1) and
+  // logs this invoice's prices into the supplier price history for next time.
   const handleApproveInvoice = (invoice: Invoice) => {
     if (invoice.status === 'Processed') return; // Already processed
 
@@ -1954,94 +2001,84 @@ const today = londonHour < 6
     }
 
     const timestamp = Date.now();
-    const updates: { id: string; quantity: number; pricePerUnit: number }[] = [];
+    const priceUpdates: { id: string; pricePerUnit: number }[] = [];
     const newItems: InventoryItem[] = [];
+    const priceHistoryEntries: SupplierPriceHistoryEntry[] = [];
+    const lastUpdated = new Date().toISOString().split('T')[0];
 
     invoice.items.forEach((item, idx) => {
-      const unit = item.unit || 'pcs';
-      const inventoryType = (unit === 'L' || unit === 'ml' || unit === 'cl') ? 'LIQUID' : (unit === 'kg' || unit === 'g') ? 'SOLID' : 'UNIT';
-      const baseUnit = inventoryType === 'LIQUID' ? 'ml' : inventoryType === 'SOLID' ? 'g' : 'pcs';
-      
-      const existingItem = items.find(i => i.name.toLowerCase() === item.name.toLowerCase());
-      const itemUnit = (unit || 'pcs') as Unit;
+      const unit = (item.unit || 'pcs') as Unit;
+      const { invItem, quantityInBase, pricePerBase, unitMismatch } = resolveInvoiceLine(item.name, item.quantity, unit, item.price, items);
 
-      // Case-tier: this line was received by the case/box/sack (e.g. "2 cases"), not by the
-      // pack — detected when the line's unit matches the item's own case-packaging label.
-      // A case's base-unit size is the pack size times how many packs make up one case.
-      const caseUnit = existingItem ? (PACKAGING_TO_UNIT[existingItem.casePackaging || 'case'] || 'cases') : undefined;
-      const isCaseTier = !!(existingItem && existingItem.caseSize && itemUnit === caseUnit);
-      const tierBaseSize = isCaseTier
-        ? (existingItem!.unitSize || 1) * (existingItem!.caseSize || 1)
-        : (existingItem?.unitSize || 1);
-
-      // Safety Check: Mandatory Unit Size for complex conversions
-      if (existingItem && !isCaseTier && itemUnit !== existingItem.baseUnit && tierBaseSize === 1) {
-        toast.error(`Unit Mismatch: ${item.name} is received in ${itemUnit} but stored in ${existingItem.baseUnit}. Please update its Unit Size in Inventory first.`, { duration: 6000 });
+      if (unitMismatch) {
+        toast.error(`Unit Mismatch: ${item.name} is invoiced in ${unit} but stored in ${invItem!.baseUnit}. Please update its Unit Size in Inventory first.`, { duration: 6000 });
         return;
       }
 
-      const quantityInBase = convertToBaseUnit(item.quantity, itemUnit, tierBaseSize);
-      const pricePerBase = item.price ? (item.price / quantityInBase) : 0;
-      
-      if (existingItem) {
-        // Price variation warning (>50%)
-        if (existingItem.pricePerUnit > 0) {
-          const variation = Math.abs(pricePerBase - existingItem.pricePerUnit) / existingItem.pricePerUnit;
-          if (variation > 0.5) {
-            toast.warning(`Abnormal price variation for ${item.name}: £${pricePerBase.toFixed(4)}/unit (Previously £${existingItem.pricePerUnit.toFixed(4)})`, { duration: 8000 });
-          }
-        }
-
-        updates.push({
-          id: existingItem.id,
-          quantity: existingItem.quantity + quantityInBase,
-          pricePerUnit: pricePerBase
-        });
+      let inventoryItemId: string;
+      if (invItem) {
+        inventoryItemId = invItem.id;
+        priceUpdates.push({ id: invItem.id, pricePerUnit: pricePerBase });
       } else {
-        newItems.push({
+        const inventoryType = (unit === 'L' || unit === 'ml' || unit === 'cl') ? 'LIQUID' : (unit === 'kg' || unit === 'g') ? 'SOLID' : 'UNIT';
+        const baseUnit = inventoryType === 'LIQUID' ? 'ml' : inventoryType === 'SOLID' ? 'g' : 'pcs';
+        const newItem: InventoryItem = {
           id: `inv-${timestamp}-${idx}`,
           name: item.name,
           category: 'Ingredient',
           department: 'Food',
           inventoryType,
           baseUnit,
-          quantity: quantityInBase,
-          unit: unit,
+          // Catalogued, not stocked — the physical delivery still has to go through Receive
+          // Goods (against a Stock Order) before this item shows any real quantity on hand.
+          quantity: 0,
+          unit,
           unitSize: 1,
           pricePerUnit: pricePerBase,
           minStockLevel: 5,
-          lastUpdated: new Date().toISOString().split('T')[0],
+          lastUpdated,
           supplier: invoice.vendor || 'Unknown',
           isActive: true
-        });
+        };
+        newItems.push(newItem);
+        inventoryItemId = newItem.id;
       }
+
+      priceHistoryEntries.push({
+        id: `sph-${timestamp}-${idx}`,
+        inventoryItemId,
+        itemName: item.name,
+        supplier: invoice.vendor,
+        price: pricePerBase,
+        invoiceId: invoice.id,
+        locationId: LOCATION_ID,
+        date: invoice.date,
+        createdAt: new Date().toISOString(),
+      });
     });
 
-    // Apply updates
     if (inventorySettings.autoUpdateFromInvoices) {
-      if (updates.length > 0) {
-        handleUpdateStock(updates, 'RECEIPT', invoice.id);
-      }
-      
+      // Price only — a targeted merge, never the full-overwrite safeFirestoreSet, so nothing
+      // else on the inventory document (quantity included) gets touched.
+      priceUpdates.forEach(u => {
+        updateDoc(doc(db, 'inventory', u.id), { pricePerUnit: u.pricePerUnit, lastUpdated })
+          .catch(err => handleFirestoreError(err, OperationType.UPDATE, `inventory/${u.id}`));
+        setItems(prev => prev.map(i => i.id === u.id ? { ...i, pricePerUnit: u.pricePerUnit, lastUpdated } : i));
+        import('./services/inventoryService').then(({ syncRecipePrices }) => {
+          syncRecipePrices(u.id, u.pricePerUnit, recipes, items);
+        });
+      });
+
       if (newItems.length > 0) {
         setItems(prev => [...prev, ...newItems]);
-        newItems.forEach(item => {
-          safeFirestoreSet('inventory', item.id, item);
-          logStockMovement({
-            productId: item.id,
-            type: 'RECEIPT',
-            quantityChange: item.quantity,
-            stockBefore: 0,
-            stockAfter: item.quantity,
-            referenceId: invoice.id,
-            referenceType: 'RECEIPT'
-          });
-        });
+        newItems.forEach(item => safeFirestoreSet('inventory', item.id, item));
       }
+
+      priceHistoryEntries.forEach(entry => safeFirestoreSet('supplierPriceHistory', entry.id, entry));
     }
 
     const updatedInvoice: Invoice = { ...invoice, status: 'Processed' };
-    
+
     // Audit Log
     if (user) {
       logAuditAction(
@@ -2058,8 +2095,8 @@ const today = londonHour < 6
 
     setInvoices(prev => prev.map(inv => inv.id === invoice.id ? updatedInvoice : inv));
     safeFirestoreSet('invoices', updatedInvoice.id, updatedInvoice);
-    
-    toast.success(`Approved invoice: ${updates.length} updated, ${newItems.length} new items.`);
+
+    toast.success(`Approved invoice: ${priceUpdates.length} price${priceUpdates.length !== 1 ? 's' : ''} updated, ${newItems.length} new item${newItems.length !== 1 ? 's' : ''} catalogued. Stock is unaffected — receive the delivery separately if that hasn't been done yet.`);
   };
 
   const handleDeleteRecipe = (id: string) => {
@@ -2261,6 +2298,101 @@ const today = londonHour < 6
     }
     
     toast.success(`Order placed with ${supplier}. Total: £${newOrder.totalAmount.toFixed(2)}`);
+  };
+
+  // Phase 1 — Receive Goods. The ONLY place stock gets added from a purchase. `items` already
+  // carries ordered/received quantities in base units (the receiving screen owns that
+  // conversion itself, the same way Stock Take's checklist does) — this handler just records
+  // the receipt and applies it, reusing handleUpdateStock's existing delta/negative-stock/
+  // audit-log machinery rather than writing a second, parallel stock-update path.
+  const handleReceiveDelivery = (orderId: string, items: ReceivingRecordItem[]) => {
+    if (!user) return;
+    const order = orders.find(o => o.id === orderId);
+    if (!order) return;
+
+    const record: ReceivingRecord = {
+      id: `recv-${Date.now()}`,
+      orderId,
+      supplier: order.supplier,
+      locationId: LOCATION_ID,
+      date: getBusinessDay(),
+      items,
+      receivedBy: user.uid,
+      receivedByName: user.displayName || user.email || 'Unknown',
+      createdAt: new Date().toISOString(),
+    };
+
+    safeFirestoreSet('receivingRecords', record.id, record);
+
+    // Stock update — delta per line; handleUpdateStock already no-ops a zero delta, so a line
+    // that never arrived (receivedQuantity 0) is logged on the record above but writes nothing.
+    handleUpdateStock(
+      items.map(i => ({ id: i.inventoryItemId, delta: i.receivedQuantity })),
+      'RECEIPT',
+      record.id
+    );
+
+    // An order can now span multiple receiving sessions (split/partial deliveries), so closure
+    // is decided from the CUMULATIVE received total per line across every session against this
+    // order — including this one — never from a single session in isolation. Only flips to
+    // Received once every line has met or exceeded what was originally ordered; otherwise the
+    // order stays open as Partially Received so a later drop-off has somewhere to go.
+    const priorRecords = receivingRecords.filter(r => r.orderId === orderId);
+    const cumulativeByItem: Record<string, number> = {};
+    for (const rec of [...priorRecords, record]) {
+      for (const line of rec.items) {
+        cumulativeByItem[line.inventoryItemId] = (cumulativeByItem[line.inventoryItemId] || 0) + line.receivedQuantity;
+      }
+    }
+    const isFullyReceived = order.items.every(oi => (cumulativeByItem[oi.inventoryItemId] || 0) >= oi.quantity);
+
+    const updatedOrder = { ...order, status: (isFullyReceived ? 'Received' : 'Partially Received') as Order['status'] };
+    setOrders(prev => prev.map(o => o.id === orderId ? updatedOrder : o));
+    safeFirestoreSet('orders', orderId, updatedOrder);
+
+    logAuditAction(
+      user.uid,
+      user.displayName || user.email || 'Unknown',
+      'UPDATE',
+      'Order',
+      orderId,
+      `Received delivery from ${order.supplier}${isFullyReceived ? ' (order complete)' : ' (partial — order still open)'}`,
+      order,
+      updatedOrder
+    );
+
+    const shortLines = items.filter(i => i.receivedQuantity < i.orderedQuantity);
+    toast.success(
+      isFullyReceived
+        ? `Delivery received from ${order.supplier} — order complete.`
+        : `Delivery received from ${order.supplier} — order still partially outstanding (${shortLines.length} line${shortLines.length !== 1 ? 's' : ''} not fully received yet).`
+    );
+  };
+
+  // Explicit manual close-out for a Partially Received order — e.g. the supplier confirms the
+  // remaining balance is cancelled/backordered separately. Only changes the order's status;
+  // never touches stock (that only ever happens via a real receiving session above).
+  const handleCloseOrder = (orderId: string) => {
+    if (!user) return;
+    const order = orders.find(o => o.id === orderId);
+    if (!order) return;
+
+    const updatedOrder = { ...order, status: 'Received' as Order['status'] };
+    setOrders(prev => prev.map(o => o.id === orderId ? updatedOrder : o));
+    safeFirestoreSet('orders', orderId, updatedOrder);
+
+    logAuditAction(
+      user.uid,
+      user.displayName || user.email || 'Unknown',
+      'UPDATE',
+      'Order',
+      orderId,
+      `Manually closed order from ${order.supplier} — outstanding balance not received`,
+      order,
+      updatedOrder
+    );
+
+    toast.success(`Order from ${order.supplier} closed out.`);
   };
 
   const handleBulkDelete = async (ids: string[]) => {
@@ -2856,9 +2988,10 @@ const today = londonHour < 6
             )}
 
             {currentView === 'orders' && (
-              <Orders 
+              <Orders
                 cart={cart}
                 orders={orders}
+                receivingRecords={receivingRecords}
                 posOrders={posOrders}
                 suppliers={suppliers}
                 inventoryItems={combinedItems}
@@ -2872,6 +3005,8 @@ const today = londonHour < 6
                     safeFirestoreSet('orders', id, { ...order, status });
                   }
                 }}
+                onReceiveDelivery={handleReceiveDelivery}
+                onCloseOrder={handleCloseOrder}
                 checkPermission={checkPermission}
               />
             )}
@@ -2944,8 +3079,11 @@ const today = londonHour < 6
                 onApproveInvoice={handleApproveInvoice}
                 suppliers={suppliers}
                 invoices={invoices}
+                orders={orders}
+                receivingRecords={receivingRecords}
+                supplierPriceHistory={supplierPriceHistory}
                 inventoryItems={combinedItems}
-                onUpdateInvoice={(id, updates) => setInvoices(prev => prev.map(inv => inv.id === id ? { ...inv, ...updates } : inv))}
+                onUpdateInvoice={handleUpdateInvoice}
                 onAddSupplier={handleAddSupplier}
               />
             )}
@@ -2966,7 +3104,7 @@ const today = londonHour < 6
                 invoices={invoices}
                 onSaveSupplier={handleSaveSupplier}
                 onDeleteSupplier={handleDeleteSupplier}
-                onUpdateInvoice={(id, updates) => setInvoices(prev => prev.map(inv => inv.id === id ? { ...inv, ...updates } : inv))}
+                onUpdateInvoice={handleUpdateInvoice}
               />
             )}
 

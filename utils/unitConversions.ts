@@ -124,6 +124,39 @@ export function convertFromBaseUnit(baseQuantity: number, targetUnit: Unit, unit
   return totalFactor > 0 ? roundTo(baseQuantity / totalFactor) : 0;
 }
 
+export interface InvoiceLineResolution {
+  invItem?: InventoryItem;
+  quantityInBase: number;
+  pricePerBase: number;
+  unitMismatch: boolean;
+}
+
+/**
+ * Resolves an invoice line (name-matched against the inventory catalog, same as everywhere
+ * else in Invoice Processing) into a base-unit quantity and a price-per-base-unit — including
+ * the case-tier detection (invoiced "by the case" vs "by the pack"). Extracted so the
+ * pre-approval three-way-match preview and the actual approval write use identical math and
+ * can never drift apart, the same reasoning behind PACKAGING_TO_UNIT above.
+ */
+export function resolveInvoiceLine(
+  itemName: string,
+  quantity: number,
+  unit: Unit,
+  price: number,
+  inventoryItems: InventoryItem[]
+): InvoiceLineResolution {
+  const invItem = inventoryItems.find(i => i.name.toLowerCase() === itemName.toLowerCase());
+  const caseUnit = invItem ? (PACKAGING_TO_UNIT[invItem.casePackaging || 'case'] || 'cases') : undefined;
+  const isCaseTier = !!(invItem && invItem.caseSize && unit === caseUnit);
+  const tierBaseSize = isCaseTier
+    ? (invItem!.unitSize || 1) * (invItem!.caseSize || 1)
+    : (invItem?.unitSize || 1);
+  const unitMismatch = !!(invItem && !isCaseTier && unit !== invItem.baseUnit && tierBaseSize === 1);
+  const quantityInBase = convertToBaseUnit(toSafeNumber(quantity), unit, tierBaseSize);
+  const pricePerBase = price && quantityInBase > 0 ? toSafeNumber(price) / quantityInBase : 0;
+  return { invItem, quantityInBase, pricePerBase, unitMismatch };
+}
+
 /**
  * Calculates the total base quantity from a purchase entry.
  * Example: 3 bottles of 700ml -> 2100ml

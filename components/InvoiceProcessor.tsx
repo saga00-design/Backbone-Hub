@@ -4,14 +4,18 @@ import { toast } from 'sonner';
 import { Button } from './Button';
 import { Upload, FileText, Check, AlertCircle, History, Clock, CheckCircle, Search, Filter, Plus, X, AlertTriangle, Trash2 } from 'lucide-react';
 import { parseInvoiceImage, handleAiError } from '../services/geminiService';
-import { InventoryItem, Supplier, Invoice, Unit } from '../types';
+import { InventoryItem, Supplier, Invoice, Unit, Order, ReceivingRecord, SupplierPriceHistoryEntry } from '../types';
 import { PACKAGING_TO_UNIT } from '../utils/unitConversions';
+import { InvoiceApprovalModal } from './InvoiceApprovalModal';
 
 interface InvoiceProcessorProps {
   onProcessInvoice: (invoice: Invoice) => void;
   onApproveInvoice: (invoice: Invoice) => void;
   suppliers: Supplier[];
   invoices: Invoice[];
+  orders: Order[];
+  receivingRecords: ReceivingRecord[];
+  supplierPriceHistory: SupplierPriceHistoryEntry[];
   inventoryItems: InventoryItem[];
   onUpdateInvoice: (id: string, updates: Partial<Invoice>) => void;
   onAddSupplier: (supplier: Supplier) => void;
@@ -26,11 +30,18 @@ export const InvoiceProcessor: React.FC<InvoiceProcessorProps> = ({
   onApproveInvoice,
   suppliers,
   invoices,
+  orders,
+  receivingRecords,
+  supplierPriceHistory,
   inventoryItems,
   onUpdateInvoice,
   onAddSupplier
 }) => {
   const [activeTab, setActiveTab] = useState<'process' | 'history'>('process');
+  // Held by id, not the object itself, so the modal always sees fresh data (e.g. right after
+  // linking an order) instead of a stale snapshot captured at the moment it was opened.
+  const [reviewingInvoiceId, setReviewingInvoiceId] = useState<string | null>(null);
+  const reviewingInvoice = invoices.find(inv => inv.id === reviewingInvoiceId) || null;
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -710,9 +721,9 @@ export const InvoiceProcessor: React.FC<InvoiceProcessorProps> = ({
                           {inv.status === 'Pending' && (
                             <>
                               <button
-                                onClick={() => onApproveInvoice(inv)}
+                                onClick={() => setReviewingInvoiceId(inv.id)}
                                 className="text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-300 transition-colors"
-                                title="Approve"
+                                title="Review & Approve"
                               >
                                 <CheckCircle className="h-5 w-5" />
                               </button>
@@ -806,9 +817,9 @@ export const InvoiceProcessor: React.FC<InvoiceProcessorProps> = ({
                       </span>
                       {inv.status === 'Pending' && (
                         <button
-                          onClick={() => onApproveInvoice(inv)}
+                          onClick={() => setReviewingInvoiceId(inv.id)}
                           className="p-1.5 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 border border-emerald-100 dark:border-emerald-900/30 rounded-lg transition-colors"
-                          title="Approve"
+                          title="Review & Approve"
                         >
                           <CheckCircle className="h-4 w-4" />
                         </button>
@@ -837,6 +848,17 @@ export const InvoiceProcessor: React.FC<InvoiceProcessorProps> = ({
           )}
         </div>
       )}
+
+      <InvoiceApprovalModal
+        invoice={reviewingInvoice}
+        orders={orders}
+        receivingRecords={receivingRecords}
+        inventoryItems={inventoryItems}
+        supplierPriceHistory={supplierPriceHistory}
+        onClose={() => setReviewingInvoiceId(null)}
+        onUpdateInvoice={onUpdateInvoice}
+        onApprove={onApproveInvoice}
+      />
     </div>
   );
 };

@@ -1221,7 +1221,7 @@ export const Settings: React.FC<SettingsProps> = ({ auditLogs = [] }) => {
             <div className="flex items-center justify-between p-6 bg-main-bg rounded-2xl border border-border-grey">
               <div>
                 <h3 className="font-bold text-text-navy">Auto-update from Invoices</h3>
-                <p className="text-[10px] font-bold text-text-muted uppercase tracking-widest mt-1">Automatically update stock levels when an invoice is approved.</p>
+                <p className="text-[10px] font-bold text-text-muted uppercase tracking-widest mt-1">Automatically update prices and catalogue new items when an invoice is approved. Stock levels are never touched here — only Receive Goods updates stock.</p>
               </div>
               <button 
                 onClick={() => toggleInventorySetting('autoUpdateFromInvoices')}
