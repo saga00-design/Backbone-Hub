@@ -989,7 +989,12 @@ const today = londonHour < 6
       }
     }, (err: any) => handleFirestoreError(err, OperationType.GET, `users/${userId}`));
 
-    const unsubStaff = onSnapshot(query(collection(db, 'staff'), where('locationId', '==', LOCATION_ID)), (snapshot: any) => {
+    // Was pointed at an orphaned 'staff' collection — nothing in the app writes to it (staff
+    // are added/edited in Settings.tsx against 'staffProfiles', which is also what
+    // firestore.rules' isManager() check reads). That mismatch meant newly added/edited staff
+    // never appeared in Training, Labour Intelligence, or Financial Command Center, and the
+    // bootstrap-admin auto-promotion below was silently promoting a document that never existed.
+    const unsubStaff = onSnapshot(query(collection(db, 'staffProfiles'), where('locationId', '==', LOCATION_ID)), (snapshot: any) => {
       const data = snapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() } as StaffMember));
       setStaffMembers(data);
 
@@ -997,11 +1002,11 @@ const today = londonHour < 6
         const staffData = d.data();
         if (staffData.email && (staffData.email.toLowerCase() === 'saga00@gmail.com' || staffData.email.toLowerCase() === 'saga00@live.com' || staffData.email.toLowerCase() === 'famrokha@gmail.com')) {
           if (staffData.role !== 'Admin') {
-            updateDoc(doc(db, 'staff', d.id), { role: 'Admin' }).catch(console.error);
+            updateDoc(doc(db, 'staffProfiles', d.id), { role: 'Admin' }).catch(console.error);
           }
         }
       });
-    }, (err: any) => handleFirestoreError(err, OperationType.LIST, 'staff'));
+    }, (err: any) => handleFirestoreError(err, OperationType.LIST, 'staffProfiles'));
 
     const unsubMonthlyTargets = onSnapshot(query(collection(db, 'monthlyTargets'), where('locationId', '==', LOCATION_ID)), (snapshot: any) => {
       const data = snapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() } as MonthlyTarget));
