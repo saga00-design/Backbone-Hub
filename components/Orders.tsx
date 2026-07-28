@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
 import { Order, OrderItem, Supplier, InventoryItem, Recipe, POSOrder, ReceivingRecordItem, ReceivingRecord } from '../types';
-import { ShoppingCart, Package, Search, Filter, Plus, Minus, Check, Clock, ChevronDown, ChevronUp, Users, PoundSterling, Zap, AlertTriangle } from 'lucide-react';
+import { ShoppingCart, Package, Search, Filter, Plus, Minus, Check, Clock, ChevronDown, ChevronUp, Users, PoundSterling, Zap, AlertTriangle, Mail } from 'lucide-react';
 import { Button } from './Button';
 import { SearchInput } from './SearchInput';
 import { formatPacksLabel, formatCaseBoxSackLabel } from '../utils/unitConversions';
+import { getOrderShortfalls, buildShortageEmailUrl } from '../utils/shortageEmail';
 import { ItemSpecsTooltip } from './ItemSpecsTooltip';
 import { ReceiveGoodsModal } from './ReceiveGoodsModal';
 
@@ -82,6 +83,22 @@ export const Orders: React.FC<OrdersProps> = ({
 
   const getCasesCount = (invItem: InventoryItem, baseQty: number) =>
     invItem.caseSize && invItem.unitSize ? baseQty / (invItem.unitSize * invItem.caseSize) : 0;
+
+  // Opens a mailto: draft for review in the user's own email client — never sends anything itself.
+  const openShortageEmail = (order: Order) => {
+    const supplierEmail = suppliers.find(s => s.name === order.supplier)?.email;
+    if (!supplierEmail) {
+      alert('No email address on file for this supplier. Add one in Supplier Management first.');
+      return;
+    }
+    const shortfalls = getOrderShortfalls(order, receivingRecords);
+    if (shortfalls.length === 0) return;
+    const mailtoUrl = buildShortageEmailUrl(order, shortfalls, supplierEmail, inventoryItems);
+    const link = document.createElement('a');
+    link.href = mailtoUrl;
+    link.target = '_blank';
+    link.click();
+  };
 
   // Group cart items by supplier
   const cartBySupplier = cart.reduce((acc, item) => {
@@ -516,55 +533,75 @@ export const Orders: React.FC<OrdersProps> = ({
                         </td>
                       )}
                       <td className="px-6 py-4 whitespace-nowrap text-center">
-                        {/* Fixed-width, centered wrapper so the +/- controls sit at the same
-                            horizontal position on every row regardless of the packaging label's
-                            length ("PACKS" vs "BOTTLES" vs "VACUUM PACKS"). */}
-                        <div className="flex flex-col items-center gap-1 w-32 mx-auto">
-                          <div className="flex items-center justify-center space-x-2">
-                            <button
-                              onClick={() => onUpdateCart(item, -unitSize)}
-                              className="p-1 rounded-full text-gray-500 hover:bg-gray-100"
-                              disabled={orderQuantity === 0}
-                              title={`Remove 1 ${item.packaging || item.unit}`}
-                            >
-                              <Minus className="h-4 w-4" />
-                            </button>
-                            <input
-                              type="number"
-                              min="0"
-                              step="any"
-                              className="w-16 text-center font-medium border border-gray-200 rounded-md py-1 text-sm focus:outline-none focus:ring-1 focus:ring-accent"
-                              value={packsValue}
-                              onChange={(e) => setPacks(e.target.value)}
-                              title={`Quantity in ${item.packaging || item.unit}s`}
-                            />
-                            <button
-                              onClick={() => onUpdateCart(item, unitSize)}
-                              className="p-1 rounded-full text-accent hover:bg-accent/10"
-                              title={`Add 1 ${item.packaging || item.unit}`}
-                            >
-                              <Plus className="h-4 w-4" />
-                            </button>
-                          </div>
-                          <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wide text-center">
-                            {item.packaging || item.unit}{packsValue !== 1 ? 's' : ''}
-                          </span>
-                          {item.caseSize && (
-                            <div className="flex items-center justify-center gap-1 mt-0.5">
+                        {/* Two fixed-width blocks side by side, each individually centered, so
+                            both the pack and case inputs sit at the same horizontal position on
+                            every row regardless of label length ("PACKS" vs "VACUUM PACKS" vs
+                            "Not set"). */}
+                        <div className="flex items-start justify-center gap-3 mx-auto">
+                          <div className="flex flex-col items-center gap-1 w-28">
+                            <div className="flex items-center justify-center space-x-1.5">
+                              <button
+                                onClick={() => onUpdateCart(item, -unitSize)}
+                                className="p-1 rounded-full text-gray-500 hover:bg-gray-100"
+                                disabled={orderQuantity === 0}
+                                title={`Remove 1 ${item.packaging || item.unit}`}
+                              >
+                                <Minus className="h-4 w-4" />
+                              </button>
                               <input
                                 type="number"
                                 min="0"
                                 step="any"
-                                className="w-14 text-center text-xs border border-gray-200 rounded-md py-0.5 focus:outline-none focus:ring-1 focus:ring-accent"
-                                value={Number(casesValue.toFixed(2))}
-                                onChange={(e) => setCases(e.target.value)}
-                                title={`Quantity in ${item.casePackaging || 'case'}s`}
+                                className="w-16 text-center font-medium border border-gray-200 rounded-md py-1 text-sm focus:outline-none focus:ring-1 focus:ring-accent"
+                                value={packsValue}
+                                onChange={(e) => setPacks(e.target.value)}
+                                title={`Quantity in ${item.packaging || item.unit}s`}
                               />
-                              <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wide">
-                                {item.casePackaging || 'case'}{casesValue !== 1 ? 's' : ''}
-                              </span>
+                              <button
+                                onClick={() => onUpdateCart(item, unitSize)}
+                                className="p-1 rounded-full text-accent hover:bg-accent/10"
+                                title={`Add 1 ${item.packaging || item.unit}`}
+                              >
+                                <Plus className="h-4 w-4" />
+                              </button>
                             </div>
-                          )}
+                            <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wide text-center truncate max-w-full">
+                              {item.packaging || item.unit}{packsValue !== 1 ? 's' : ''}
+                            </span>
+                          </div>
+
+                          <div className="flex flex-col items-center gap-1 w-20">
+                            {item.caseSize ? (
+                              <>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="any"
+                                  className="w-16 text-center font-medium border border-gray-200 rounded-md py-1 text-sm focus:outline-none focus:ring-1 focus:ring-accent"
+                                  value={Number(casesValue.toFixed(2))}
+                                  onChange={(e) => setCases(e.target.value)}
+                                  title={`Quantity in ${item.casePackaging || 'case'}s`}
+                                />
+                                <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wide text-center truncate max-w-full">
+                                  {item.casePackaging || 'case'}{casesValue !== 1 ? 's' : ''}
+                                </span>
+                              </>
+                            ) : (
+                              <>
+                                <input
+                                  type="text"
+                                  value="—"
+                                  disabled
+                                  readOnly
+                                  className="w-16 text-center font-medium border border-gray-100 rounded-md py-1 text-sm bg-gray-50 text-gray-300 cursor-not-allowed"
+                                  title="No Case/Box/Sack size configured for this item"
+                                />
+                                <span className="text-[9px] font-medium text-gray-300 uppercase tracking-wide text-center">
+                                  Not set
+                                </span>
+                              </>
+                            )}
+                          </div>
                         </div>
                       </td>
                     </tr>
@@ -819,7 +856,54 @@ export const Orders: React.FC<OrdersProps> = ({
                           ))}
                         </tbody>
                       </table>
-                      
+
+                      {(() => {
+                        const shortfalls = getOrderShortfalls(order, receivingRecords);
+                        if (shortfalls.length === 0) return null;
+                        return (
+                          <div className="mt-4 bg-amber-50 border border-amber-200 rounded-lg p-4">
+                            <div className="flex items-center gap-2 mb-3">
+                              <AlertTriangle className="w-4 h-4 text-amber-600" />
+                              <span className="text-[10px] font-black text-amber-700 uppercase tracking-widest">Shortage — {shortfalls.length} item{shortfalls.length !== 1 ? 's' : ''} short</span>
+                            </div>
+                            <table className="min-w-full">
+                              <thead>
+                                <tr>
+                                  <th className="text-left text-[10px] font-medium text-amber-700 uppercase pb-1">Item</th>
+                                  <th className="text-right text-[10px] font-medium text-amber-700 uppercase pb-1">Ordered</th>
+                                  <th className="text-right text-[10px] font-medium text-amber-700 uppercase pb-1">Received</th>
+                                  <th className="text-right text-[10px] font-medium text-amber-700 uppercase pb-1">Missing</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-amber-200/60">
+                                {shortfalls.map(s => {
+                                  const invItem = getInvItem(s.inventoryItemId);
+                                  const fmt = (qty: number) => invItem ? formatPacksLabel(qty, invItem) : `${qty}`;
+                                  return (
+                                    <tr key={s.inventoryItemId}>
+                                      <td className="py-1.5 text-sm text-amber-900">{s.name}</td>
+                                      <td className="py-1.5 text-sm text-amber-900 text-right">{fmt(s.orderedQuantity)}</td>
+                                      <td className="py-1.5 text-sm text-amber-900 text-right">{fmt(s.receivedQuantity)}</td>
+                                      <td className="py-1.5 text-sm font-bold text-amber-900 text-right">{fmt(s.shortfallQuantity)}</td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                            <div className="mt-3 flex justify-end">
+                              <Button
+                                onClick={() => openShortageEmail(order)}
+                                variant="secondary"
+                                className="text-xs flex items-center gap-2 border-amber-300 bg-white hover:bg-amber-100"
+                              >
+                                <Mail className="w-4 h-4" />
+                                Draft Shortage Email
+                              </Button>
+                            </div>
+                          </div>
+                        );
+                      })()}
+
                       {order.ccEmails && order.ccEmails.length > 0 && (
                         <div className="mt-4 flex items-center gap-2">
                            <span className="text-[10px] font-black text-text-muted uppercase tracking-widest">Notified:</span>
@@ -847,6 +931,10 @@ export const Orders: React.FC<OrdersProps> = ({
                             onClick={() => {
                               if (window.confirm(`Close this order from ${order.supplier} as complete? The remaining outstanding quantity will NOT be added to stock — only use this if the rest is confirmed cancelled or backordered separately.`)) {
                                 onCloseOrder(order.id);
+                                const shortfalls = getOrderShortfalls(order, receivingRecords);
+                                if (shortfalls.length > 0 && window.confirm(`This order is closing with ${shortfalls.length} item${shortfalls.length !== 1 ? 's' : ''} still short. Draft a shortage email to ${order.supplier} now?`)) {
+                                  openShortageEmail(order);
+                                }
                               }
                             }}
                             variant="secondary"

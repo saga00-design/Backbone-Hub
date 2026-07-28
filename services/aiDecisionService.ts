@@ -1,6 +1,6 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import {
-  DailyClosure, POSOrder, InventoryItem, MonthlyTarget,
+  DailyClosure, POSOrder, InventoryItem,
   Liability, Forecast, LabourShift
 } from "../types";
 import { db, LOCATION_ID } from "../firebase";
@@ -35,7 +35,6 @@ export const generateFinancialInsights = async (
   closures: DailyClosure[],
   orders: POSOrder[],
   inventory: InventoryItem[],
-  targets: MonthlyTarget[],
   liabilities: Liability[],
   forecasts: Forecast[],
   labourShifts: LabourShift[] = [],
@@ -46,7 +45,6 @@ export const generateFinancialInsights = async (
     const context = {
       date,
       pnl, // the real, correctly-scoped figures currently on screen
-      currentMonthTargets: targets.find(t => t.month === new Date().getMonth() && t.year === new Date().getFullYear()),
       pendingLiabilities: liabilities.filter(l => l.status === 'Pending'),
       activeForecast: forecasts.find(f => f.periodStart.startsWith(date) || f.periodEnd.startsWith(date)),
       inventoryHealth: inventory.filter(i => i.quantity <= i.minStockLevel).map(i => ({ name: i.name, stock: i.quantity, min: i.minStockLevel }))
@@ -60,7 +58,7 @@ export const generateFinancialInsights = async (
         Your goal is to optimize profitability, cashflow, and operational efficiency.
 
         Focus areas:
-        1. Profitability: Compare Net Revenue vs Monthly Targets, and Net Profit trend.
+        1. Profitability: Net Revenue and Net Profit trend.
         2. Cashflow: Verify if Safe Cash can cover upcoming liabilities.
         3. Labour & COGS: Flag if percentages are above industry standards (Labour > 30%, COGS > 35%).
         4. Inventory: Identify items below minimum stock levels.

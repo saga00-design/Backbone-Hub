@@ -14,7 +14,7 @@ import {
 import { Button } from './Button';
 import {
   DailyClosure, POSOrder, StaffMember,
-  MonthlyTarget, Liability, AIAction,
+  Liability, AIAction,
   InventoryItem, Recipe, LabourShift, ExpenseRecord, WasteRecord, StockCountRecord
 } from '../types';
 import { db, LOCATION_ID } from '../firebase';
@@ -30,7 +30,6 @@ interface FinancialCommandCenterProps {
   orders: POSOrder[]; // Hub's own order log — used as the independent side of the Consistency Audit
   liveSalesData: { history: any[]; aggregate: any }; // primary sales source, matches Reports.tsx's Sales tab
   staff: StaffMember[];
-  monthlyTargets: MonthlyTarget[];
   inventory: InventoryItem[];
   recipes: Recipe[];
   forecasts: any[];
@@ -75,7 +74,6 @@ export const FinancialCommandCenter: React.FC<FinancialCommandCenterProps> = ({
   orders,
   liveSalesData,
   staff,
-  monthlyTargets,
   inventory,
   recipes,
   forecasts,
@@ -292,7 +290,6 @@ export const FinancialCommandCenter: React.FC<FinancialCommandCenterProps> = ({
         closures,
         orders,
         inventory,
-        monthlyTargets,
         liabilities,
         forecasts,
         labourShifts,

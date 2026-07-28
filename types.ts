@@ -1239,21 +1239,6 @@ export interface StaffEarnings {
   timestamp: string;
 }
 
-export interface MonthlyTarget {
-  id: string; // month-year
-  locationId: string;
-  revenue: number;
-  cogs: number;
-  labour: number;
-  expenses: number;
-  expectedVat: number;
-  expectedServiceCharge: number;
-  targetProfit: number;
-  month: number; // 0-11
-  year: number;
-  updatedAt: string;
-}
-
 export interface VATReturn {
   id: string;
   locationId: string;

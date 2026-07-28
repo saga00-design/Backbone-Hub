@@ -46,10 +46,14 @@ export const TrainingCenter: React.FC<TrainingCenterProps> = ({ recipes, invento
 
   // Resolve a display name from a quiz submission — uses saved staffName first,
   // then tries staffMembers lookup by id, then falls back to a short ID fragment.
+  // A matched staffProfiles record isn't guaranteed to have firstName/lastName set (seen in
+  // practice on test/placeholder accounts) — guard against that rather than rendering the
+  // literal string "undefined undefined" when both are blank.
   const resolveStaffName = (q: any): string => {
     if (q.staffName && q.staffName !== 'Unknown') return q.staffName;
     const member = staffMembers.find(m => m.id === q.staffId);
-    if (member) return `${member.firstName} ${member.lastName}`.trim();
+    const memberName = member ? `${member.firstName || ''} ${member.lastName || ''}`.trim() : '';
+    if (memberName) return memberName;
     return q.staffId ? `Staff ${q.staffId.slice(-4)}` : 'Unknown';
   };
   const [quizItem, setQuizItem] = useState<Recipe | null>(null);

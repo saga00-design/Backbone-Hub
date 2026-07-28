@@ -18,7 +18,6 @@ export const initializeSystem = async () => {
     'stockCounts',
     'salesImports',
     'waste',
-    'monthlyTargets',
     'liabilities',
     'cashflow'
   ];
@@ -162,27 +161,6 @@ const seedData = async (collectionName: string) => {
           });
         }
       }
-      break;
-    case 'monthlyTargets':
-      const now = new Date();
-      const currentMonth = now.getMonth();
-      const currentYear = now.getFullYear();
-      
-      const targetId = `${currentMonth}-${currentYear}`;
-      await setDoc(doc(db, 'monthlyTargets', targetId), {
-        id: targetId,
-        locationId: LOCATION_ID,
-        revenue: 120000,
-        cogs: 36000,
-        labour: 30000,
-        expenses: 15000,
-        expectedVat: 20000,
-        expectedServiceCharge: 12000,
-        targetProfit: 27000,
-        month: currentMonth,
-        year: currentYear,
-        updatedAt: now.toISOString()
-      });
       break;
     case 'liabilities':
       const sampleLiabilities = [

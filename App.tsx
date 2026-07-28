@@ -17,7 +17,7 @@ import { SupplierManager } from './components/SupplierManager';
 import { TableManager } from './components/TableManager';
 import { Settings } from './components/Settings';
 import { Orders } from './components/Orders';
-import { InventoryItem, InventoryCategory, Unit, StockCountRecord, Recipe, SalesImportRecord, Supplier, Order, OrderItem, Invoice, MenuCategory, POSOrder, POSPayment, WasteRecord, ExpenseRecord, MovementType, StockMovement, InventoryType, Table, DailyClosure, ClosureType, Forecast, StaffPerformanceRecord, AppPermissions, StaffCertification, AuditLog, StaffMember, MonthlyTarget, SideAddonItem, ReceivingRecord, ReceivingRecordItem, SupplierPriceHistoryEntry } from './types';
+import { InventoryItem, InventoryCategory, Unit, StockCountRecord, Recipe, SalesImportRecord, Supplier, Order, OrderItem, Invoice, MenuCategory, POSOrder, POSPayment, WasteRecord, ExpenseRecord, MovementType, StockMovement, InventoryType, Table, DailyClosure, ClosureType, Forecast, StaffPerformanceRecord, AppPermissions, StaffCertification, AuditLog, StaffMember, SideAddonItem, ReceivingRecord, ReceivingRecordItem, SupplierPriceHistoryEntry } from './types';
 import { logAuditAction } from './services/auditService';
 import { getBusinessDay } from './utils/businessDay';
 import { LayoutDashboard, Package, ClipboardCheck, FileInput, Menu, X, ChefHat, TrendingUp, Truck, Settings as SettingsIcon, BookOpen, Sun, Moon, ShoppingCart, AlertCircle, LogIn, LogOut, Trash2, ReceiptPoundSterling, Megaphone, LayoutList, PoundSterling } from 'lucide-react';
@@ -427,7 +427,6 @@ const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [staffCertifications, setStaffCertifications] = useState<StaffCertification[]>([]);
   const [quizSubmissions, setQuizSubmissions] = useState<any[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
-  const [monthlyTargets, setMonthlyTargets] = useState<MonthlyTarget[]>([]);
   const [staffMembers, setStaffMembers] = useState<StaffMember[]>([]);
   const [livePosSalesSummary, setLivePosSalesSummary] = useState({
     totalPaid: 0,
@@ -1008,11 +1007,6 @@ const today = londonHour < 6
       });
     }, (err: any) => handleFirestoreError(err, OperationType.LIST, 'staffProfiles'));
 
-    const unsubMonthlyTargets = onSnapshot(query(collection(db, 'monthlyTargets'), where('locationId', '==', LOCATION_ID)), (snapshot: any) => {
-      const data = snapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() } as MonthlyTarget));
-      setMonthlyTargets(data);
-    }, (err: any) => handleFirestoreError(err, OperationType.LIST, 'monthlyTargets'));
-
     return () => {
       unsubPosTransactions();
       unsubInventory();
@@ -1040,7 +1034,6 @@ const today = londonHour < 6
       unsubCertifications();
       unsubQuizSubmissions();
       unsubAuditLogs();
-      unsubMonthlyTargets();
       unsubPermissions();
       unsubClosures();
     };
@@ -2966,7 +2959,6 @@ const today = londonHour < 6
                 orders={posOrders}
                 liveSalesData={liveSalesData}
                 staff={staffMembers}
-                monthlyTargets={monthlyTargets}
                 inventory={items}
                 recipes={recipes}
                 forecasts={forecasts}
