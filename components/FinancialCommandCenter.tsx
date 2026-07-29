@@ -4,7 +4,7 @@ import {
   PoundSterling, Calculator, Clock, Receipt,
   ArrowUpRight, ArrowDownRight, AlertTriangle, CheckCircle2,
   Lock, PieChart, BarChart3, HelpCircle, FileText, Download,
-  ChevronRight, Play, Eye, Users, Plus, Calendar,
+  ChevronLeft, ChevronRight, Play, Eye, Users, Plus, Calendar,
   Package, LayoutDashboard, X, Tag, History
 } from 'lucide-react';
 import {
@@ -12,6 +12,7 @@ import {
   LineChart, Line, AreaChart, Area, Cell, PieChart as RePieChart, Pie
 } from 'recharts';
 import { Button } from './Button';
+import { TimePeriodLegend } from './TimePeriodLegend';
 import {
   DailyClosure, POSOrder, StaffMember,
   Liability, AIAction,
@@ -23,7 +24,11 @@ import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'motion/react';
 import { generateFinancialPackPDF } from '../services/pdfService';
 import { computePnl, PnlEngineResult } from '../services/pnlEngine';
-import { DateRange, getCurrentPeriod, getWeekRange, listPeriods, toDateKey } from '../utils/fiscalCalendar';
+import {
+  DateRange, getCurrentPeriod, getWeekStart, getWeekRange, getFiscalWeek,
+  getPeriodWeekStarts, getWeeksStartingInMonth, getQuarterWeekStarts,
+  listPeriods, toDateKey, parseDateKey
+} from '../utils/fiscalCalendar';
 
 interface FinancialCommandCenterProps {
   closures: DailyClosure[];
@@ -39,7 +44,12 @@ interface FinancialCommandCenterProps {
   onOpenView: (view: any) => void;
 }
 
-type PeriodMode = 'Weekly' | 'Period' | 'Monthly' | 'Quarterly';
+// Same rollup pattern as Operation Costs' P&L Cost Entry and Labour Import: bucket into
+// Monday-Sunday weeks, then resolve a Period/Month/Quarter to the span from its first week's
+// start to its last week's end. Reused a third time here rather than re-invented — see
+// components/WeeklyCostEntry.tsx and components/LabourIntelligence.tsx for the sibling copies.
+type ViewMode = 'Week' | 'Period' | 'Monthly' | 'Quarterly' | 'Custom Range';
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
 interface LiveAlert {
   id: string;
@@ -48,23 +58,12 @@ interface LiveAlert {
   description: string;
 }
 
-function resolveSelectedRange(mode: PeriodMode, quarter: 1 | 2 | 3 | 4): DateRange {
-  const now = new Date();
-  if (mode === 'Weekly') return getWeekRange(now);
-  if (mode === 'Period') {
-    const p = getCurrentPeriod(now);
-    return { start: p.start, end: p.end };
-  }
-  if (mode === 'Quarterly') {
-    const qStartMonth = (quarter - 1) * 3;
-    const start = new Date(now.getFullYear(), qStartMonth, 1);
-    const end = new Date(now.getFullYear(), qStartMonth + 3, 0, 23, 59, 59, 999);
-    return { start, end };
-  }
-  // Monthly (default)
-  const start = new Date(now.getFullYear(), now.getMonth(), 1);
-  const end = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
-  return { start, end };
+/** Collapses an ordered list of Monday week-starts into one contiguous DateRange spanning the
+ * first week's Monday to the last week's Sunday. */
+function weekStartsToRange(weekStarts: Date[]): DateRange {
+  const first = getWeekRange(weekStarts[0]);
+  const last = getWeekRange(weekStarts[weekStarts.length - 1]);
+  return { start: first.start, end: last.end };
 }
 
 const money = (v: number) => `£${(v || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -86,8 +85,21 @@ export const FinancialCommandCenter: React.FC<FinancialCommandCenterProps> = ({
   const [aiActions, setAiActions] = useState<AIAction[]>([]);
   const [investorMode, setInvestorMode] = useState(false);
   const [activeTab, setActiveTab] = useState<'overview' | 'pnl' | 'cashflow' | 'vat' | 'ai'>('overview');
-  const [periodMode, setPeriodMode] = useState<PeriodMode>('Monthly');
-  const [selectedQuarter, setSelectedQuarter] = useState<1 | 2 | 3 | 4>(Math.floor(new Date().getMonth() / 3 + 1) as any);
+
+  // --- Global time-period selector — drives every tab (Overview, P&L, Cashflow, VAT, AI
+  // Actions), not just P&L as before. Same Week/Period/Monthly/Quarterly/Custom Range pattern
+  // as Operation Costs' P&L Cost Entry and Labour Import. ---
+  const currentFiscalPeriod = getCurrentPeriod();
+  const [viewMode, setViewMode] = useState<ViewMode>('Monthly');
+  const [selectedWeekStart, setSelectedWeekStart] = useState(() => getWeekStart(new Date()));
+  const [rollupFiscalYear, setRollupFiscalYear] = useState(currentFiscalPeriod.fiscalYear);
+  const [rollupPeriod, setRollupPeriod] = useState(currentFiscalPeriod.periodNumber);
+  const [rollupMonth, setRollupMonth] = useState(new Date().getMonth());
+  const [rollupMonthYear, setRollupMonthYear] = useState(new Date().getFullYear());
+  const [rollupQuarter, setRollupQuarter] = useState<1 | 2 | 3 | 4>((Math.floor(new Date().getMonth() / 3) + 1) as 1 | 2 | 3 | 4);
+  const [customStart, setCustomStart] = useState(() => toDateKey(getWeekStart(new Date())));
+  const [customEnd, setCustomEnd] = useState(() => toDateKey(new Date()));
+
   const [showHistoricalReturns, setShowHistoricalReturns] = useState(false);
   const [marginTargetPercent, setMarginTargetPercent] = useState(65);
   const [liabilityAlertDays, setLiabilityAlertDays] = useState(7);
@@ -125,34 +137,52 @@ export const FinancialCommandCenter: React.FC<FinancialCommandCenterProps> = ({
     return () => unsubLabour();
   }, []);
 
-  // --- Single source of truth: pnlEngine, computed for two ranges ---
-  // Overview always shows the CURRENT fiscal period-to-date. The P&L/Cashflow/VAT tabs share
-  // a user-adjustable range (Week/Period/Month/Quarter).
-  const overviewRange = useMemo(() => {
-    const p = getCurrentPeriod();
-    return { start: p.start, end: p.end };
-  }, []);
+  // --- Single source of truth: pnlEngine, computed ONCE for the globally selected range ---
+  const selectedRange: DateRange = useMemo(() => {
+    if (viewMode === 'Week') return getWeekRange(selectedWeekStart);
+    if (viewMode === 'Custom Range') {
+      return { start: parseDateKey(customStart), end: parseDateKey(customEnd) };
+    }
+    if (viewMode === 'Period') return weekStartsToRange(getPeriodWeekStarts(rollupPeriod, rollupFiscalYear));
+    if (viewMode === 'Quarterly') return weekStartsToRange(getQuarterWeekStarts(rollupQuarter, rollupFiscalYear));
+    return weekStartsToRange(getWeeksStartingInMonth(rollupMonthYear, rollupMonth)); // Monthly
+  }, [viewMode, selectedWeekStart, rollupPeriod, rollupFiscalYear, rollupMonth, rollupMonthYear, rollupQuarter, customStart, customEnd]);
 
-  const selectedRange = useMemo(
-    () => resolveSelectedRange(periodMode, selectedQuarter),
-    [periodMode, selectedQuarter]
-  );
+  // Real transactional data has no "missing entry" concept the way manually-keyed Operation
+  // Costs or imported Labour shifts do — a period with zero orders is a genuine £0, not a data
+  // gap. The meaningful signal here instead is whether the selected period has actually
+  // finished yet: a still-in-progress period's totals are real but partial-to-date, which is
+  // worth flagging with the same visual badge pattern used for "weeks with data" elsewhere.
+  // Compared as date keys (not raw Date/time-of-day) so a Custom Range ending exactly today
+  // isn't misjudged "complete" just because midnight-of-today is earlier than the current
+  // moment — Week/Period/Monthly/Quarterly ranges already end at 23:59:59.999 so this is
+  // equivalent for them, but Custom Range's end is parsed at midnight.
+  const isSelectedPeriodComplete = toDateKey(selectedRange.end) < toDateKey(new Date());
+
+  const changeWeek = (deltaDays: number) => {
+    setSelectedWeekStart(prev => {
+      const d = new Date(prev);
+      d.setDate(d.getDate() + deltaDays);
+      return getWeekStart(d);
+    });
+  };
 
   const pnlInputs = { closures, labourShifts, expenseRecords, wasteRecords, stockCountRecords };
 
-  const overviewPnl: PnlEngineResult = useMemo(() => computePnl({
-    range: overviewRange,
-    posOrders: liveSalesData.history,
-    rawOrdersForAudit: orders,
-    ...pnlInputs
-  }), [overviewRange, liveSalesData, orders, closures, labourShifts, expenseRecords, wasteRecords, stockCountRecords]);
-
-  const selectedPnl: PnlEngineResult = useMemo(() => computePnl({
+  // Overview tab, the KPI bar, P&L, Cashflow's pie, VAT, and AI Actions all now read from this
+  // ONE figure set for the currently selected Week/Period/Month/Quarter/Custom Range.
+  // `overviewPnl`/`selectedPnl` are kept as aliases to the same value (rather than rewriting
+  // every downstream reference) since they used to point at genuinely different ranges —
+  // overview was always "current period", selected was the P&L tab's own adjustable range —
+  // and now there's a single page-level selector driving both.
+  const pnl: PnlEngineResult = useMemo(() => computePnl({
     range: selectedRange,
     posOrders: liveSalesData.history,
     rawOrdersForAudit: orders,
     ...pnlInputs
   }), [selectedRange, liveSalesData, orders, closures, labourShifts, expenseRecords, wasteRecords, stockCountRecords]);
+  const overviewPnl = pnl;
+  const selectedPnl = pnl;
 
   // Fixed-cost break-even threshold: the period's actual approved Rent/Rates/Insurance spend
   // (same "fixed cost" classification already used elsewhere in the app), not a hardcoded £0.
@@ -172,22 +202,26 @@ export const FinancialCommandCenter: React.FC<FinancialCommandCenterProps> = ({
   );
   const safeCash = overviewPnl.netProfit - pendingLiabilitiesTotal;
 
-  // --- Cashflow tab: real weekly Cash In / Cash Out, computed via pnlEngine, not the fake seed collection ---
+  // --- Cashflow tab: real weekly Cash In / Cash Out, computed via pnlEngine, not the fake seed
+  // collection. The 8-week trend window is anchored to end at the week containing the globally
+  // selected range's end, so picking an older period shows the trend leading up to it instead
+  // of always showing weeks relative to today. ---
   const cashflowSeries = useMemo(() => {
+    const anchorWeekStart = getWeekStart(selectedRange.end);
     const weeks: DateRange[] = Array.from({ length: 8 }, (_, i) => {
-      const d = new Date();
+      const d = new Date(anchorWeekStart);
       d.setDate(d.getDate() - (7 - i) * 7);
       return getWeekRange(d);
     });
     return weeks.map(range => {
-      const pnl = computePnl({ range, posOrders: liveSalesData.history, rawOrdersForAudit: orders, ...pnlInputs });
+      const weekPnl = computePnl({ range, posOrders: liveSalesData.history, rawOrdersForAudit: orders, ...pnlInputs });
       return {
         week: `${range.start.getDate()}/${range.start.getMonth() + 1}`,
-        cashIn: Math.round(pnl.grossSales * 100) / 100,
-        cashOut: Math.round((pnl.cogs + pnl.labour + pnl.operatingExpenses + pnl.waste) * 100) / 100
+        cashIn: Math.round(weekPnl.grossSales * 100) / 100,
+        cashOut: Math.round((weekPnl.cogs + weekPnl.labour + weekPnl.operatingExpenses + weekPnl.waste) * 100) / 100
       };
     });
-  }, [liveSalesData, orders, closures, labourShifts, expenseRecords, wasteRecords, stockCountRecords]);
+  }, [selectedRange, liveSalesData, orders, closures, labourShifts, expenseRecords, wasteRecords, stockCountRecords]);
 
   // --- VAT tab: only claim reconciliation when the Consistency Audit for this range is actually clean ---
   const isReconciled = Math.abs(selectedPnl.consistencyVariance) < 1;
@@ -196,16 +230,18 @@ export const FinancialCommandCenter: React.FC<FinancialCommandCenterProps> = ({
 
   const historicalPeriods = useMemo(() => {
     if (!showHistoricalReturns) return [];
-    const current = getCurrentPeriod();
-    return listPeriods(current.fiscalYear)
-      .filter(p => p.periodNumber <= current.periodNumber)
+    // Anchored to the selected range's end (not always "now"), so viewing an older period's
+    // VAT return also shows the 6 Periods leading up to IT, not up to today.
+    const anchor = getFiscalWeek(selectedRange.end);
+    return listPeriods(anchor.fiscalYear)
+      .filter(p => p.periodNumber <= anchor.periodNumber)
       .slice(-6)
       .reverse()
       .map(p => {
-        const pnl = computePnl({ range: { start: p.start, end: p.end }, posOrders: liveSalesData.history, rawOrdersForAudit: orders, ...pnlInputs });
-        return { periodNumber: p.periodNumber, start: toDateKey(p.start), end: toDateKey(p.end), vat: pnl.vat };
+        const periodPnl = computePnl({ range: { start: p.start, end: p.end }, posOrders: liveSalesData.history, rawOrdersForAudit: orders, ...pnlInputs });
+        return { periodNumber: p.periodNumber, start: toDateKey(p.start), end: toDateKey(p.end), vat: periodPnl.vat };
       });
-  }, [showHistoricalReturns, liveSalesData, orders, closures, labourShifts, expenseRecords, wasteRecords, stockCountRecords]);
+  }, [showHistoricalReturns, selectedRange, liveSalesData, orders, closures, labourShifts, expenseRecords, wasteRecords, stockCountRecords]);
 
   // --- Live Alerts: deterministic, zero AI/LLM cost, recomputed on every render from real data ---
   const liveAlerts: LiveAlert[] = useMemo(() => {
@@ -283,10 +319,14 @@ export const FinancialCommandCenter: React.FC<FinancialCommandCenterProps> = ({
   const handleRunAIAnalysis = async () => {
     setIsGeneratingAI(true);
     try {
-      const today = new Date().toISOString().split('T')[0];
+      // The date passed here drives both the model's prompt context and its forecast lookup —
+      // it must match the period `pnl` was actually computed for (selectedRange's end), not
+      // always "today", or the diagnostic would narrate the selected period's numbers as if
+      // they were today's.
+      const periodEndDate = pnl.rangeEnd;
       const { generateFinancialInsights } = await import('../services/aiDecisionService');
       await generateFinancialInsights(
-        today,
+        periodEndDate,
         closures,
         orders,
         inventory,
@@ -341,7 +381,7 @@ export const FinancialCommandCenter: React.FC<FinancialCommandCenterProps> = ({
           <Button
             onClick={handleRunAIAnalysis}
             disabled={isGeneratingAI}
-            className="gap-2 bg-text-navy hover:bg-slate-800 text-white border-none"
+            className="gap-2"
           >
             {isGeneratingAI ? (
               <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
@@ -372,7 +412,141 @@ export const FinancialCommandCenter: React.FC<FinancialCommandCenterProps> = ({
         </div>
       </div>
 
-      {/* KPI TOP BAR — Overview period-to-date, all from pnlEngine */}
+      {/* GLOBAL TIME PERIOD SELECTOR — drives every tab (Overview, P&L, Cashflow, VAT, AI
+          Actions) and the KPI bar below, via the single `pnl` computed above. Same
+          Week/Period/Monthly/Quarterly/Custom Range pattern as Operation Costs and Labour
+          Import. */}
+      <div className="bg-card-bg p-4 rounded-2xl border border-border-grey shadow-sm space-y-4">
+        <div className="flex items-center justify-between flex-wrap gap-4">
+          <div className="flex items-center gap-2">
+            <div className="flex gap-2 flex-wrap">
+              {(['Week', 'Period', 'Monthly', 'Quarterly', 'Custom Range'] as ViewMode[]).map(mode => (
+                <Button
+                  key={mode}
+                  variant={viewMode === mode ? 'secondary' : 'ghost'}
+                  size="sm"
+                  onClick={() => setViewMode(mode)}
+                >
+                  {mode}
+                </Button>
+              ))}
+            </div>
+            <TimePeriodLegend />
+          </div>
+
+          <div className="flex items-center gap-3">
+            <span className="text-[10px] font-bold text-text-muted uppercase tracking-widest whitespace-nowrap">
+              {pnl.rangeStart} to {pnl.rangeEnd}
+            </span>
+            {isSelectedPeriodComplete ? (
+              <span className="flex items-center gap-1.5 text-[10px] font-black px-3 py-1.5 rounded-full uppercase tracking-widest bg-success/10 text-success">
+                <CheckCircle2 className="w-3.5 h-3.5" /> Period complete
+              </span>
+            ) : (
+              <span className="flex items-center gap-1.5 text-[10px] font-black px-3 py-1.5 rounded-full uppercase tracking-widest bg-amber-100 text-amber-700">
+                <AlertTriangle className="w-3.5 h-3.5" /> In progress — figures to date
+              </span>
+            )}
+          </div>
+        </div>
+
+        {viewMode === 'Week' && (
+          <div className="flex flex-wrap items-center gap-3">
+            <button onClick={() => changeWeek(-7)} className="p-2 rounded-xl border border-border-grey hover:bg-secondary-surface transition-colors" title="Previous week">
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+            <div className="flex items-center gap-2">
+              <label className="text-xs font-bold text-text-muted uppercase tracking-wider">Week starting</label>
+              <input
+                type="date"
+                value={toDateKey(selectedWeekStart)}
+                onChange={(e) => e.target.value && setSelectedWeekStart(getWeekStart(new Date(e.target.value + 'T00:00:00')))}
+                className="px-3 py-2 bg-secondary-surface border border-border-grey rounded-xl text-sm font-bold focus:ring-2 focus:ring-accent"
+              />
+            </div>
+            <button onClick={() => changeWeek(7)} className="p-2 rounded-xl border border-border-grey hover:bg-secondary-surface transition-colors" title="Next week">
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+
+        {viewMode === 'Period' && (
+          <div className="flex flex-wrap items-center gap-4">
+            <div className="flex items-center gap-2">
+              <label className="text-xs font-bold text-text-muted uppercase tracking-wider">Period</label>
+              <select value={rollupPeriod} onChange={(e) => setRollupPeriod(Number(e.target.value))} className="px-3 py-2 bg-secondary-surface border border-border-grey rounded-xl text-sm font-bold focus:ring-2 focus:ring-accent">
+                {Array.from({ length: 13 }, (_, i) => i + 1).map(p => <option key={p} value={p}>Period {p}</option>)}
+              </select>
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="text-xs font-bold text-text-muted uppercase tracking-wider">Fiscal Year</label>
+              <select value={rollupFiscalYear} onChange={(e) => setRollupFiscalYear(Number(e.target.value))} className="px-3 py-2 bg-secondary-surface border border-border-grey rounded-xl text-sm font-bold focus:ring-2 focus:ring-accent">
+                {[currentFiscalPeriod.fiscalYear - 1, currentFiscalPeriod.fiscalYear, currentFiscalPeriod.fiscalYear + 1].map(y => <option key={y} value={y}>FY{y}</option>)}
+              </select>
+            </div>
+          </div>
+        )}
+
+        {viewMode === 'Monthly' && (
+          <div className="flex flex-wrap items-center gap-4">
+            <div className="flex items-center gap-2">
+              <label className="text-xs font-bold text-text-muted uppercase tracking-wider">Month</label>
+              <select value={rollupMonth} onChange={(e) => setRollupMonth(Number(e.target.value))} className="px-3 py-2 bg-secondary-surface border border-border-grey rounded-xl text-sm font-bold focus:ring-2 focus:ring-accent">
+                {MONTH_NAMES.map((m, i) => <option key={m} value={i}>{m}</option>)}
+              </select>
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="text-xs font-bold text-text-muted uppercase tracking-wider">Year</label>
+              <select value={rollupMonthYear} onChange={(e) => setRollupMonthYear(Number(e.target.value))} className="px-3 py-2 bg-secondary-surface border border-border-grey rounded-xl text-sm font-bold focus:ring-2 focus:ring-accent">
+                {[rollupMonthYear - 1, rollupMonthYear, rollupMonthYear + 1].filter((v, i, a) => a.indexOf(v) === i).map(y => <option key={y} value={y}>{y}</option>)}
+              </select>
+            </div>
+          </div>
+        )}
+
+        {viewMode === 'Quarterly' && (
+          <div className="flex flex-wrap items-center gap-4">
+            <div className="flex gap-2 p-1 bg-secondary-surface rounded-xl">
+              {[1, 2, 3, 4].map(q => (
+                <Button key={q} variant={rollupQuarter === q ? 'primary' : 'ghost'} size="sm" onClick={() => setRollupQuarter(q as 1 | 2 | 3 | 4)}>
+                  Q{q}
+                </Button>
+              ))}
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="text-xs font-bold text-text-muted uppercase tracking-wider">Fiscal Year</label>
+              <select value={rollupFiscalYear} onChange={(e) => setRollupFiscalYear(Number(e.target.value))} className="px-3 py-2 bg-secondary-surface border border-border-grey rounded-xl text-sm font-bold focus:ring-2 focus:ring-accent">
+                {[currentFiscalPeriod.fiscalYear - 1, currentFiscalPeriod.fiscalYear, currentFiscalPeriod.fiscalYear + 1].map(y => <option key={y} value={y}>FY{y}</option>)}
+              </select>
+            </div>
+          </div>
+        )}
+
+        {viewMode === 'Custom Range' && (
+          <div className="flex flex-wrap items-center gap-4">
+            <div className="flex items-center gap-2">
+              <label className="text-xs font-bold text-text-muted uppercase tracking-wider">From</label>
+              <input
+                type="date"
+                value={customStart}
+                onChange={(e) => e.target.value && setCustomStart(e.target.value)}
+                className="px-3 py-2 bg-secondary-surface border border-border-grey rounded-xl text-sm font-bold focus:ring-2 focus:ring-accent"
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="text-xs font-bold text-text-muted uppercase tracking-wider">To</label>
+              <input
+                type="date"
+                value={customEnd}
+                onChange={(e) => e.target.value && setCustomEnd(e.target.value)}
+                className="px-3 py-2 bg-secondary-surface border border-border-grey rounded-xl text-sm font-bold focus:ring-2 focus:ring-accent"
+              />
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* KPI TOP BAR — selected period, all from pnlEngine */}
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4">
         {[
           { label: 'Gross Sales', value: overviewPnl.grossSales, icon: BarChart3, color: 'text-text-navy' },
@@ -440,7 +614,7 @@ export const FinancialCommandCenter: React.FC<FinancialCommandCenterProps> = ({
                   <div className="flex items-start justify-between relative z-10 mb-8">
                     <div>
                       <h3 className="text-xl font-black text-text-navy uppercase tracking-tight">Break-Even Analysis</h3>
-                      <p className="text-xs font-bold text-text-muted uppercase tracking-widest">Current period · Fixed costs (Rent, Rates, Insurance)</p>
+                      <p className="text-xs font-bold text-text-muted uppercase tracking-widest">Selected period · Fixed costs (Rent, Rates, Insurance)</p>
                     </div>
                   </div>
 
@@ -582,37 +756,9 @@ export const FinancialCommandCenter: React.FC<FinancialCommandCenterProps> = ({
                 className="space-y-8"
               >
                 <div className="bg-card-bg p-8 rounded-3xl border border-border-grey shadow-sm">
-                  <div className="flex items-center justify-between mb-8 flex-wrap gap-4">
+                  <div className="flex items-center justify-between mb-2 flex-wrap gap-4">
                     <h3 className="text-xl font-black text-text-navy uppercase tracking-tight">Statement of Profit & Loss</h3>
-                    <div className="flex gap-2 flex-wrap">
-                      {(['Weekly', 'Period', 'Monthly', 'Quarterly'] as PeriodMode[]).map(mode => (
-                        <Button
-                          key={mode}
-                          variant={periodMode === mode ? 'secondary' : 'ghost'}
-                          size="sm"
-                          onClick={() => setPeriodMode(mode)}
-                        >
-                          {mode}
-                        </Button>
-                      ))}
-                    </div>
                   </div>
-
-                  {periodMode === 'Quarterly' && (
-                    <div className="flex gap-2 mb-6 p-2 bg-secondary-surface rounded-xl">
-                      {[1, 2, 3, 4].map(q => (
-                        <Button
-                          key={q}
-                          variant={selectedQuarter === q ? 'primary' : 'ghost'}
-                          size="sm"
-                          className="flex-1"
-                          onClick={() => setSelectedQuarter(q as any)}
-                        >
-                          Q{q}
-                        </Button>
-                      ))}
-                    </div>
-                  )}
 
                   <p className="text-[10px] font-bold text-text-muted uppercase tracking-widest mb-6">{selectedPnl.rangeStart} to {selectedPnl.rangeEnd}</p>
 
@@ -697,7 +843,7 @@ export const FinancialCommandCenter: React.FC<FinancialCommandCenterProps> = ({
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                   <div className="bg-card-bg p-8 rounded-3xl border border-border-grey shadow-sm">
                     <h3 className="text-xl font-black text-text-navy uppercase tracking-tight mb-1">Cash In vs Out</h3>
-                    <p className="text-[10px] font-bold text-text-muted uppercase tracking-widest mb-6">Last 8 weeks · Gross Sales vs COGS+Labour+OpEx+Waste</p>
+                    <p className="text-[10px] font-bold text-text-muted uppercase tracking-widest mb-6">8 weeks to selected period · Gross Sales vs COGS+Labour+OpEx+Waste</p>
                     <div className="h-[300px]">
                       <ResponsiveContainer width="100%" height="100%">
                         <AreaChart data={cashflowSeries}>
