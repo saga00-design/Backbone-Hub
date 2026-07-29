@@ -3,16 +3,17 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, 
   LineChart, Line 
 } from 'recharts';
-import { 
-  TrendingUp, PoundSterling, FileText, Package, ArrowUpRight, ArrowDownRight, 
+import {
+  TrendingUp, PoundSterling, FileText, Package, ArrowUpRight, ArrowDownRight,
   Database, Filter, Calendar, Download, Building, Tag, Truck, Calculator,
   ChevronDown, Search, Info, Trash2, Lock, Clock, History as HistoryIcon, AlertCircle, CheckCircle2,
-  RefreshCw, X, Lightbulb, AlertTriangle, Zap, Award, Trophy, Settings, ChefHat, Eye, Star
+  RefreshCw, X, Lightbulb, AlertTriangle, Zap, Award, Trophy, Settings, ChefHat, Eye, Star,
+  ChevronLeft, ChevronRight, Scale
 } from 'lucide-react';
-import { 
-  POSOrder, POSPayment, InventoryItem, Supplier, Invoice, Order, VatCode, Recipe, WasteRecord, 
+import {
+  POSOrder, POSPayment, InventoryItem, Supplier, Invoice, Order, VatCode, Recipe, WasteRecord,
   ClockInRecord, ExpenseRecord, DailyClosure, ClosureType, Forecast, ForecastType, StaffPerformanceRecord, StaffIncentiveConfig,
-  MenuEngineeringRecord, AutomationSettings, AutomationLog
+  MenuEngineeringRecord, AutomationSettings, AutomationLog, StockCountRecord, ReceivingRecord, StockMovement, SupplierPriceHistoryEntry
 } from '../types';
 import { VATReturnExport } from './VATReturnExport';
 import { VATTracker, VATReturn } from '../types';
@@ -25,6 +26,7 @@ import { normalizeCurrency } from '../utils/currencyUtils';
 import { toast } from 'sonner';
 import { collection, query, where, onSnapshot, orderBy, limit, doc, setDoc, getDoc, updateDoc } from 'firebase/firestore';
 import { generateClosurePDF, generateClosureCSV } from '../utils/exportUtils';
+import { getWeekStart, getWeekRange, toDateKey } from '../utils/fiscalCalendar';
 
 interface ReportsProps {
   posOrders: POSOrder[];
@@ -80,7 +82,7 @@ export const Reports: React.FC<ReportsProps> = ({
     return () => unsub();
   }, []);
 
-  const [activeTab, setActiveTab] = useState<'sales' | 'inventory' | 'waste' | 'tax' | 'vat_return' | 'suppliers' | 'closures' | 'pnl' | 'forecast' | 'staff_performance' | 'menu_engineering'>('sales');
+  const [activeTab, setActiveTab] = useState<'sales' | 'inventory' | 'waste' | 'tax' | 'vat_return' | 'suppliers' | 'closures' | 'pnl' | 'forecast' | 'staff_performance' | 'menu_engineering' | 'weekly_reconciliation'>('sales');
   const [showReconDebug, setShowReconDebug] = useState(false);
   const [vatTrackers, setVatTrackers] = useState<VATTracker[]>([]);
   const [vatReturns, setVatReturns] = useState<VATReturn[]>([]);
@@ -101,6 +103,193 @@ export const Reports: React.FC<ReportsProps> = ({
       unsubReturns();
     };
   }, [user]);
+
+  // Weekly Reconciliation Report — reads existing stock-take, receiving, sale-movement,
+  // waste and supplier-price-history data. Read-only: this tab writes nothing.
+  const [selectedReconWeekStart, setSelectedReconWeekStart] = useState(() => getWeekStart(new Date()));
+  const [stockCounts, setStockCounts] = useState<StockCountRecord[]>([]);
+  const [receivingRecordsForRecon, setReceivingRecordsForRecon] = useState<ReceivingRecord[]>([]);
+  const [saleStockMovements, setSaleStockMovements] = useState<StockMovement[]>([]);
+  const [supplierPriceHistory, setSupplierPriceHistory] = useState<SupplierPriceHistoryEntry[]>([]);
+
+  useEffect(() => {
+    if (!user) return;
+    const unsubStockCounts = onSnapshot(
+      query(collection(db, 'stockCounts'), where('locationId', '==', LOCATION_ID)),
+      (snap) => setStockCounts(snap.docs.map(d => ({ id: d.id, ...d.data() } as StockCountRecord))),
+      (err) => handleFirestoreError(err, OperationType.LIST, 'stockCounts')
+    );
+    const unsubReceiving = onSnapshot(
+      query(collection(db, 'receivingRecords'), where('locationId', '==', LOCATION_ID)),
+      (snap) => setReceivingRecordsForRecon(snap.docs.map(d => ({ id: d.id, ...d.data() } as ReceivingRecord))),
+      (err) => handleFirestoreError(err, OperationType.LIST, 'receivingRecords')
+    );
+    const unsubMovements = onSnapshot(
+      query(collection(db, 'stockMovements'), where('locationId', '==', LOCATION_ID), where('type', '==', 'SALE')),
+      (snap) => setSaleStockMovements(snap.docs.map(d => ({ id: d.id, ...d.data() } as StockMovement))),
+      (err) => handleFirestoreError(err, OperationType.LIST, 'stockMovements')
+    );
+    const unsubPriceHistory = onSnapshot(
+      query(collection(db, 'supplierPriceHistory'), where('locationId', '==', LOCATION_ID)),
+      (snap) => setSupplierPriceHistory(snap.docs.map(d => ({ id: d.id, ...d.data() } as SupplierPriceHistoryEntry))),
+      (err) => handleFirestoreError(err, OperationType.LIST, 'supplierPriceHistory')
+    );
+    return () => {
+      unsubStockCounts();
+      unsubReceiving();
+      unsubMovements();
+      unsubPriceHistory();
+    };
+  }, [user]);
+
+  const reconWeekRange = useMemo(() => getWeekRange(selectedReconWeekStart), [selectedReconWeekStart]);
+  const reconWeekStartKey = useMemo(() => toDateKey(reconWeekRange.start), [reconWeekRange]);
+  const reconWeekEndKey = useMemo(() => toDateKey(reconWeekRange.end), [reconWeekRange]);
+
+  const changeReconWeek = (deltaDays: number) => {
+    setSelectedReconWeekStart(prev => {
+      const d = new Date(prev);
+      d.setDate(d.getDate() + deltaDays);
+      return getWeekStart(d);
+    });
+  };
+
+  // Most recent completed Stock Take's Actual quantity per item, as of before the selected
+  // week starts. Different items can resolve to different stock-take sessions if a session
+  // didn't cover every item — deliberately per-item rather than per-session.
+  const openingStockByItem = useMemo(() => {
+    const cutoff = reconWeekRange.start.getTime();
+    const map = new Map<string, { quantity: number; asOfDate: string }>();
+    const priorCounts = stockCounts
+      .filter(record => {
+        const t = new Date(record.date).getTime();
+        return !isNaN(t) && t < cutoff;
+      })
+      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    priorCounts.forEach(record => {
+      (record.items || []).forEach(entry => {
+        if (!entry.itemId) return;
+        map.set(entry.itemId, { quantity: entry.actual, asOfDate: record.date });
+      });
+    });
+    return map;
+  }, [stockCounts, reconWeekRange]);
+
+  const weeklyReceivingRecords = useMemo(
+    () => receivingRecordsForRecon.filter(r => r.date >= reconWeekStartKey && r.date <= reconWeekEndKey),
+    [receivingRecordsForRecon, reconWeekStartKey, reconWeekEndKey]
+  );
+
+  const weeklySaleMovements = useMemo(() => {
+    const startMs = reconWeekRange.start.getTime();
+    const endMs = reconWeekRange.end.getTime();
+    return saleStockMovements.filter(m => {
+      const t = new Date(m.createdAt).getTime();
+      return !isNaN(t) && t >= startMs && t <= endMs;
+    });
+  }, [saleStockMovements, reconWeekRange]);
+
+  const weeklyWasteForRecon = useMemo(
+    () => wasteRecords.filter(w => {
+      const key = safeDateSplit(w.date);
+      return key >= reconWeekStartKey && key <= reconWeekEndKey;
+    }),
+    [wasteRecords, reconWeekStartKey, reconWeekEndKey]
+  );
+
+  // Purchases cost defaults to current pricePerUnit, but prefers a real logged price from
+  // supplierPriceHistory when one exists for that item/supplier within the selected week.
+  const resolvePurchaseUnitCost = (itemId: string, record: ReceivingRecord, fallbackCost: number): number => {
+    const matches = supplierPriceHistory.filter(e =>
+      e.inventoryItemId === itemId &&
+      e.supplier.trim().toLowerCase() === record.supplier.trim().toLowerCase() &&
+      e.date >= reconWeekStartKey && e.date <= reconWeekEndKey
+    );
+    if (matches.length === 0) return fallbackCost;
+    const closest = matches.reduce((best, entry) => {
+      const entryDiff = Math.abs(new Date(entry.date).getTime() - new Date(record.date).getTime());
+      const bestDiff = Math.abs(new Date(best.date).getTime() - new Date(record.date).getTime());
+      return entryDiff < bestDiff ? entry : best;
+    });
+    return closest.price;
+  };
+
+  const VARIANCE_QTY_EPSILON = 0.01; // base units — filters out floating-point rounding dust
+
+  const reconciliationRows = useMemo(() => {
+    return [...inventoryItems]
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map(item => {
+        const unitCost = item.pricePerUnit || 0;
+        const opening = openingStockByItem.get(item.id) || null;
+
+        let purchaseQty = 0;
+        let purchaseCost = 0;
+        weeklyReceivingRecords.forEach(record => {
+          record.items.forEach(line => {
+            if (line.inventoryItemId !== item.id || !line.receivedQuantity) return;
+            purchaseQty += line.receivedQuantity;
+            purchaseCost += line.receivedQuantity * resolvePurchaseUnitCost(item.id, record, unitCost);
+          });
+        });
+
+        const salesQty = weeklySaleMovements
+          .filter(m => m.productId === item.id)
+          .reduce((sum, m) => sum + Math.max(0, -m.quantityChange), 0);
+        const salesCost = salesQty * unitCost;
+
+        const wasteQty = weeklyWasteForRecon
+          .filter(w => w.inventoryItemId === item.id)
+          .reduce((sum, w) => sum + (w.baseQuantity || 0), 0);
+        const wasteCost = wasteQty * unitCost;
+
+        const theoreticalQty = opening ? opening.quantity + purchaseQty - salesQty - wasteQty : null;
+        const theoreticalCost = opening ? (opening.quantity * unitCost) + purchaseCost - salesCost - wasteCost : null;
+
+        const actualQty = item.quantity;
+        const actualCost = actualQty * unitCost;
+
+        const varianceQty = theoreticalQty !== null ? actualQty - theoreticalQty : null;
+        const varianceCost = theoreticalCost !== null ? actualCost - theoreticalCost : null;
+
+        return {
+          itemId: item.id,
+          itemName: item.name,
+          unit: item.baseUnit,
+          openingQty: opening ? opening.quantity : null,
+          openingCost: opening ? opening.quantity * unitCost : null,
+          openingAsOfDate: opening ? opening.asOfDate : null,
+          purchaseQty,
+          purchaseCost,
+          salesQty,
+          salesCost,
+          wasteQty,
+          wasteCost,
+          theoreticalQty,
+          theoreticalCost,
+          actualQty,
+          actualCost,
+          varianceQty,
+          varianceCost,
+          isSignificantVariance: varianceQty !== null && Math.abs(varianceQty) > VARIANCE_QTY_EPSILON,
+        };
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inventoryItems, openingStockByItem, weeklyReceivingRecords, weeklySaleMovements, weeklyWasteForRecon, supplierPriceHistory, reconWeekStartKey, reconWeekEndKey]);
+
+  const reconSummary = useMemo(() => {
+    return reconciliationRows.reduce((acc, row) => {
+      acc.purchaseCost += row.purchaseCost;
+      acc.salesCost += row.salesCost;
+      acc.wasteCost += row.wasteCost;
+      if (row.isSignificantVariance) {
+        acc.flaggedCount += 1;
+        acc.flaggedVarianceCost += row.varianceCost || 0;
+      }
+      if (row.openingQty === null) acc.missingOpeningCount += 1;
+      return acc;
+    }, { purchaseCost: 0, salesCost: 0, wasteCost: 0, flaggedCount: 0, flaggedVarianceCost: 0, missingOpeningCount: 0 });
+  }, [reconciliationRows]);
 
   // Helper to safely get date portion from various formats (string, Date, Firestore Timestamp)
   // Consistently uses Europe/London as the Source of Truth for reporting
@@ -228,9 +417,14 @@ export const Reports: React.FC<ReportsProps> = ({
   }, [user]);
 
   useEffect(() => {
+    // 'settings' (not 'systemSettings') is the collection firestore.rules actually declares —
+    // every other settings doc in this app (inventory_/permissions_/stats_/mappings_/incentive_,
+    // see App.tsx and this file's incentive-settings effect below) lives there, keyed by a
+    // `${type}_${LOCATION_ID}` doc id. 'systemSettings' was never declared in the rules, so this
+    // read/write was always denied by the default-deny catch-all at the bottom of the ruleset.
     const fetchSettings = async () => {
       try {
-        const docRef = doc(db, 'systemSettings', 'global');
+        const docRef = doc(db, 'settings', `automation_${LOCATION_ID}`);
         const snap = await getDoc(docRef);
         if (snap.exists()) {
           setAutomationSettings(snap.data() as AutomationSettings);
@@ -239,7 +433,15 @@ export const Reports: React.FC<ReportsProps> = ({
           await setDoc(docRef, automationSettings);
         }
       } catch (error) {
-        handleFirestoreError(error, OperationType.GET, 'systemSettings/global');
+        // handleFirestoreError() throws by design (for other callers) — that's fine for a
+        // one-off write/read, but here it's called from an unawaited async effect with no
+        // caller to catch it, so an uncaught throw becomes an unhandled promise rejection.
+        // Swallow it and degrade to the default automationSettings state already set above.
+        try {
+          handleFirestoreError(error, OperationType.GET, `settings/automation_${LOCATION_ID}`);
+        } catch (thrown) {
+          console.warn('[Reports] automation settings fetch failed, using defaults:', thrown);
+        }
       }
     };
     if (user) fetchSettings();
@@ -249,9 +451,13 @@ export const Reports: React.FC<ReportsProps> = ({
     const next = { ...automationSettings, automationMode: mode, lastUpdated: new Date().toISOString() };
     setAutomationSettings(next);
     try {
-      await setDoc(doc(db, 'systemSettings', 'global'), next);
+      await setDoc(doc(db, 'settings', `automation_${LOCATION_ID}`), next);
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, 'systemSettings/global');
+      try {
+        handleFirestoreError(error, OperationType.WRITE, `settings/automation_${LOCATION_ID}`);
+      } catch (thrown) {
+        console.warn('[Reports] automation settings save failed:', thrown);
+      }
     }
   };
 
@@ -1057,6 +1263,7 @@ export const Reports: React.FC<ReportsProps> = ({
           { id: 'forecast', label: 'Forecast', icon: Lightbulb },
           { id: 'staff_performance', label: 'Staff Rewards', icon: Award },
           { id: 'menu_engineering', label: 'Menu Performance', icon: ChefHat },
+          { id: 'weekly_reconciliation', label: 'Weekly Reconciliation', icon: Scale },
         ].map(tab => (
           <button
             key={tab.id}
@@ -1488,6 +1695,152 @@ export const Reports: React.FC<ReportsProps> = ({
             </div>
           </div>
         </div>
+      ) : activeTab === 'weekly_reconciliation' ? (
+        <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+          <div className="bg-card-bg p-6 rounded-2xl border border-border-grey shadow-sm flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <h2 className="text-lg font-bold text-text-navy flex items-center gap-2">
+                <Scale className="w-5 h-5 text-accent" />
+                Weekly Reconciliation
+              </h2>
+              <p className="text-[10px] font-bold text-text-muted uppercase tracking-widest mt-1">
+                Opening + Purchases − Sales − Waste = Theoretical, vs Actual
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button onClick={() => changeReconWeek(-7)} className="p-2 rounded-lg border border-border-grey hover:bg-secondary-surface transition-colors">
+                <ChevronLeft className="w-4 h-4 text-text-navy" />
+              </button>
+              <div className="text-sm font-bold text-text-navy px-3 py-2 bg-secondary-surface rounded-lg border border-border-grey whitespace-nowrap">
+                {reconWeekStartKey} &rarr; {reconWeekEndKey}
+              </div>
+              <button onClick={() => changeReconWeek(7)} className="p-2 rounded-lg border border-border-grey hover:bg-secondary-surface transition-colors">
+                <ChevronRight className="w-4 h-4 text-text-navy" />
+              </button>
+              <input
+                type="date"
+                value={reconWeekStartKey}
+                onChange={(e) => setSelectedReconWeekStart(getWeekStart(new Date(e.target.value + 'T00:00:00')))}
+                className="text-xs font-bold text-text-navy px-3 py-2 bg-card-bg rounded-lg border border-border-grey"
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+            <div className="p-6 bg-card-bg border border-border-grey rounded-2xl shadow-sm">
+              <p className="text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2">Purchases (Week)</p>
+              <p className="text-2xl font-serif font-bold text-text-navy">£{reconSummary.purchaseCost.toFixed(2)}</p>
+            </div>
+            <div className="p-6 bg-card-bg border border-border-grey rounded-2xl shadow-sm">
+              <p className="text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2">Sales Consumption (Week)</p>
+              <p className="text-2xl font-serif font-bold text-text-navy">£{reconSummary.salesCost.toFixed(2)}</p>
+            </div>
+            <div className="p-6 bg-card-bg border border-border-grey rounded-2xl shadow-sm">
+              <p className="text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2">Waste (Week)</p>
+              <p className="text-2xl font-serif font-bold text-cta">£{reconSummary.wasteCost.toFixed(2)}</p>
+            </div>
+            <div className="p-6 bg-card-bg border border-border-grey rounded-2xl shadow-sm">
+              <p className="text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2">Flagged Variances</p>
+              <p className="text-2xl font-serif font-bold text-cta">{reconSummary.flaggedCount}</p>
+              <div className="mt-4 pt-4 border-t border-border-grey flex justify-between text-[10px] font-bold uppercase tracking-widest">
+                <span className="text-text-muted">Net Variance Value</span>
+                <span className={reconSummary.flaggedVarianceCost >= 0 ? 'text-emerald-600' : 'text-cta'}>£{reconSummary.flaggedVarianceCost.toFixed(2)}</span>
+              </div>
+            </div>
+          </div>
+
+          {reconSummary.missingOpeningCount > 0 && (
+            <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl flex items-center gap-3">
+              <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0" />
+              <p className="text-xs font-bold text-amber-800">
+                {reconSummary.missingOpeningCount} item{reconSummary.missingOpeningCount === 1 ? '' : 's'} have no prior Stock Take before this week — Theoretical Stock and Variance can't be calculated for them until a count is completed.
+              </p>
+            </div>
+          )}
+
+          <div className="bg-card-bg rounded-2xl border border-border-grey shadow-sm flex flex-col">
+            <div className="p-6 border-b border-border-grey flex items-center justify-between">
+              <h3 className="text-sm font-bold text-text-navy uppercase tracking-widest">Item-Level Reconciliation</h3>
+              <span className="text-[10px] font-bold text-text-muted uppercase tracking-widest">{reconciliationRows.length} items</span>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead className="bg-secondary-surface text-[10px] font-bold text-text-muted uppercase tracking-widest">
+                  <tr>
+                    <th rowSpan={2} className="px-4 py-3 align-bottom border-r border-border-grey">Item</th>
+                    <th colSpan={2} className="px-4 py-2 text-center border-r border-border-grey">Opening Stock</th>
+                    <th colSpan={2} className="px-4 py-2 text-center border-r border-border-grey">+ Purchases</th>
+                    <th colSpan={2} className="px-4 py-2 text-center border-r border-border-grey">- Sales</th>
+                    <th colSpan={2} className="px-4 py-2 text-center border-r border-border-grey">- Waste</th>
+                    <th colSpan={2} className="px-4 py-2 text-center border-r border-border-grey">Theoretical Stock</th>
+                    <th colSpan={2} className="px-4 py-2 text-center border-r border-border-grey">Actual Stock</th>
+                    <th colSpan={2} className="px-4 py-2 text-center">Stock Variance</th>
+                  </tr>
+                  <tr>
+                    <th className="px-4 py-2 text-right">Qty</th>
+                    <th className="px-4 py-2 text-right border-r border-border-grey">Cost</th>
+                    <th className="px-4 py-2 text-right">Qty</th>
+                    <th className="px-4 py-2 text-right border-r border-border-grey">Cost</th>
+                    <th className="px-4 py-2 text-right">Qty</th>
+                    <th className="px-4 py-2 text-right border-r border-border-grey">Cost</th>
+                    <th className="px-4 py-2 text-right">Qty</th>
+                    <th className="px-4 py-2 text-right border-r border-border-grey">Cost</th>
+                    <th className="px-4 py-2 text-right">Qty</th>
+                    <th className="px-4 py-2 text-right border-r border-border-grey">Cost</th>
+                    <th className="px-4 py-2 text-right">Qty</th>
+                    <th className="px-4 py-2 text-right border-r border-border-grey">Cost</th>
+                    <th className="px-4 py-2 text-right">Qty</th>
+                    <th className="px-4 py-2 text-right">Cost</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border-grey">
+                  {reconciliationRows.length === 0 ? (
+                    <tr>
+                      <td colSpan={15} className="px-6 py-12 text-center text-xs text-text-muted italic">No inventory items found.</td>
+                    </tr>
+                  ) : (
+                    reconciliationRows.map(row => (
+                      <tr key={row.itemId} className={`hover:bg-secondary-surface transition-colors ${row.isSignificantVariance ? 'bg-amber-50/60' : ''}`}>
+                        <td className="px-4 py-3 text-xs font-bold text-text-navy border-r border-border-grey whitespace-nowrap">{row.itemName}</td>
+                        <td className="px-4 py-3 text-xs text-right text-text-navy whitespace-nowrap">
+                          {row.openingQty === null ? <span className="italic text-text-muted">No prior count</span> : `${row.openingQty.toFixed(2)} ${row.unit}`}
+                        </td>
+                        <td className="px-4 py-3 text-xs text-right text-text-navy border-r border-border-grey">
+                          {row.openingCost === null ? '—' : `£${row.openingCost.toFixed(2)}`}
+                        </td>
+                        <td className="px-4 py-3 text-xs text-right text-text-navy whitespace-nowrap">{row.purchaseQty.toFixed(2)} {row.unit}</td>
+                        <td className="px-4 py-3 text-xs text-right text-text-navy border-r border-border-grey">£{row.purchaseCost.toFixed(2)}</td>
+                        <td className="px-4 py-3 text-xs text-right text-text-navy whitespace-nowrap">{row.salesQty.toFixed(2)} {row.unit}</td>
+                        <td className="px-4 py-3 text-xs text-right text-text-navy border-r border-border-grey">£{row.salesCost.toFixed(2)}</td>
+                        <td className="px-4 py-3 text-xs text-right text-text-navy whitespace-nowrap">{row.wasteQty.toFixed(2)} {row.unit}</td>
+                        <td className="px-4 py-3 text-xs text-right text-text-navy border-r border-border-grey">£{row.wasteCost.toFixed(2)}</td>
+                        <td className="px-4 py-3 text-xs text-right text-text-navy whitespace-nowrap">
+                          {row.theoreticalQty === null ? <span className="italic text-text-muted">No prior count</span> : `${row.theoreticalQty.toFixed(2)} ${row.unit}`}
+                        </td>
+                        <td className="px-4 py-3 text-xs text-right text-text-navy border-r border-border-grey">
+                          {row.theoreticalCost === null ? '—' : `£${row.theoreticalCost.toFixed(2)}`}
+                        </td>
+                        <td className="px-4 py-3 text-xs text-right text-text-navy whitespace-nowrap">{row.actualQty.toFixed(2)} {row.unit}</td>
+                        <td className="px-4 py-3 text-xs text-right text-text-navy border-r border-border-grey">£{row.actualCost.toFixed(2)}</td>
+                        <td className={`px-4 py-3 text-xs text-right font-bold whitespace-nowrap ${row.isSignificantVariance ? 'text-cta' : 'text-text-navy'}`}>
+                          {row.varianceQty === null ? <span className="italic font-normal text-text-muted">No prior count</span> : (
+                            <span className="inline-flex items-center gap-1 justify-end">
+                              {row.isSignificantVariance && <AlertTriangle className="w-3 h-3" />}
+                              {row.varianceQty > 0 ? '+' : ''}{row.varianceQty.toFixed(2)} {row.unit}
+                            </span>
+                          )}
+                        </td>
+                        <td className={`px-4 py-3 text-xs text-right font-bold ${row.isSignificantVariance ? 'text-cta' : 'text-text-navy'}`}>
+                          {row.varianceCost === null ? '—' : `${row.varianceCost > 0 ? '+' : ''}£${row.varianceCost.toFixed(2)}`}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
       ) : activeTab === 'pnl' ? (
         <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
           <div className="bg-card-bg p-8 rounded-2xl border border-border-grey shadow-sm space-y-10">
@@ -1835,10 +2188,9 @@ export const Reports: React.FC<ReportsProps> = ({
 
                   <div className="p-6 bg-secondary-surface flex justify-end gap-3 border-t border-border-grey">
                     <Button onClick={() => setShowIncentiveSettings(false)} variant="secondary">Cancel</Button>
-                    <Button 
+                    <Button
                       onClick={() => handleSaveIncentiveConfig(incentiveConfig)}
                       disabled={isSavingIncentiveConfig}
-                      className="bg-text-navy text-white"
                     >
                       {isSavingIncentiveConfig ? 'Saving...' : 'Save Configuration'}
                     </Button>
@@ -2016,7 +2368,7 @@ export const Reports: React.FC<ReportsProps> = ({
               <Button 
                 onClick={handleRunEngineering}
                 disabled={isRunningEngineering}
-                className="bg-text-navy text-white text-xs font-black uppercase tracking-widest px-8"
+                className="text-xs font-black uppercase tracking-widest px-8"
               >
                 {isRunningEngineering ? 'Analyzing...' : 'Run Analysis (Last 30 Days)'}
               </Button>
