@@ -5,7 +5,9 @@ import {
   Clock,
   ArrowUpDown,
   HardHat,
-  X
+  X,
+  CheckCircle2,
+  AlertTriangle
 } from 'lucide-react';
 import {
   LabourShift,
@@ -13,9 +15,19 @@ import {
   POSOrder
 } from '../types';
 import { Button } from './Button';
+import { TimePeriodLegend } from './TimePeriodLegend';
 import { LabourImportPanel } from './LabourImportPanel';
 import { collection, onSnapshot, query, where, orderBy } from 'firebase/firestore';
 import { db, LOCATION_ID, auth, handleFirestoreError, OperationType } from '../firebase';
+import {
+  getWeekStart,
+  toDateKey,
+  parseDateKey,
+  getCurrentPeriod,
+  getPeriodWeekStarts,
+  getWeeksStartingInMonth,
+  getQuarterWeekStarts
+} from '../utils/fiscalCalendar';
 
 interface LabourIntelligenceProps {
   staff: StaffMember[];
@@ -23,6 +35,11 @@ interface LabourIntelligenceProps {
 }
 
 const money = (v: number) => `£${(v || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+// Same rollup pattern as Operation Costs' P&L Cost Entry (components/WeeklyCostEntry.tsx):
+// bucket into Monday-Sunday weeks, then sum expected week-starts for a Period/Month/Quarter.
+type ViewMode = 'All Shifts' | 'Weekly' | 'Period' | 'Monthly' | 'Quarterly' | 'Custom Range';
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
 // Kept available (not wired to any UI) per the redesign brief: don't delete the underlying
 // productivity calculation just because the leaderboard tab that displayed it is gone.
@@ -144,6 +161,79 @@ export const LabourIntelligence: React.FC<LabourIntelligenceProps> = ({ staff, o
     setFilterDateTo('');
   };
 
+  const [viewMode, setViewMode] = useState<ViewMode>('All Shifts');
+
+  // --- Weekly breakdown (Step 1): buckets the already-safe, additive-per-shift storage into
+  // Monday-Sunday weeks for viewing only — importing more shifts never touches prior weeks'
+  // documents, so this is just a client-side grouping of what's already there.
+  const weeklyBuckets = useMemo(() => {
+    const map = new Map<string, { weekStartDate: string; weekEndDate: string; totalCostPence: number; shiftCount: number }>();
+    shifts.forEach(s => {
+      if (!s.date) return;
+      const weekStart = getWeekStart(parseDateKey(s.date));
+      const weekStartKey = toDateKey(weekStart);
+      const weekEnd = new Date(weekStart);
+      weekEnd.setDate(weekEnd.getDate() + 6);
+      const pence = Math.round((s.totalCost || 0) * 100);
+      const existing = map.get(weekStartKey);
+      if (existing) {
+        existing.totalCostPence += pence;
+        existing.shiftCount += 1;
+      } else {
+        map.set(weekStartKey, { weekStartDate: weekStartKey, weekEndDate: toDateKey(weekEnd), totalCostPence: pence, shiftCount: 1 });
+      }
+    });
+    return map;
+  }, [shifts]);
+
+  const weeklyBucketsSorted = useMemo(
+    () => Array.from(weeklyBuckets.values()).sort((a, b) => b.weekStartDate.localeCompare(a.weekStartDate)),
+    [weeklyBuckets]
+  );
+
+  // --- Period / Monthly / Quarterly rollups (Step 2) — same expected-week-starts + sum
+  // pattern as Operation Costs' P&L Cost Entry, reused rather than rebuilt. ---
+  const current = getCurrentPeriod();
+  const [rollupFiscalYear, setRollupFiscalYear] = useState(current.fiscalYear);
+  const [rollupPeriod, setRollupPeriod] = useState(current.periodNumber);
+  const [rollupMonth, setRollupMonth] = useState(new Date().getMonth());
+  const [rollupMonthYear, setRollupMonthYear] = useState(new Date().getFullYear());
+  const [rollupQuarter, setRollupQuarter] = useState<1 | 2 | 3 | 4>(1);
+
+  const expectedWeekStarts: Date[] = useMemo(() => {
+    if (viewMode === 'Period') return getPeriodWeekStarts(rollupPeriod, rollupFiscalYear);
+    if (viewMode === 'Monthly') return getWeeksStartingInMonth(rollupMonthYear, rollupMonth);
+    if (viewMode === 'Quarterly') return getQuarterWeekStarts(rollupQuarter, rollupFiscalYear);
+    return [];
+  }, [viewMode, rollupPeriod, rollupFiscalYear, rollupMonth, rollupMonthYear, rollupQuarter]);
+
+  const rollup = useMemo(() => {
+    const expectedKeys = expectedWeekStarts.map(toDateKey);
+    let pence = 0;
+    let weeksWithData = 0;
+    expectedKeys.forEach(k => {
+      const bucket = weeklyBuckets.get(k);
+      if (bucket) {
+        pence += bucket.totalCostPence;
+        weeksWithData += 1;
+      }
+    });
+    return { totalCost: pence / 100, weeksWithData, expectedCount: expectedKeys.length };
+  }, [expectedWeekStarts, weeklyBuckets]);
+
+  // --- Custom date range (Step 3) — sums whatever falls within the exact selected dates,
+  // independent of week boundaries. Deliberately filters the flat shift list directly rather
+  // than going through weeklyBuckets, so a range that splits a week only counts the days
+  // actually inside it instead of snapping to full weeks. ---
+  const [customStart, setCustomStart] = useState(() => toDateKey(getWeekStart(new Date())));
+  const [customEnd, setCustomEnd] = useState(() => toDateKey(new Date()));
+
+  const customRangeTotal = useMemo(() => {
+    const rows = shifts.filter(s => s.date && s.date >= customStart && s.date <= customEnd);
+    const pence = rows.reduce((acc, s) => acc + Math.round((s.totalCost || 0) * 100), 0);
+    return { totalCost: pence / 100, shiftCount: rows.length };
+  }, [shifts, customStart, customEnd]);
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -208,6 +298,186 @@ export const LabourIntelligence: React.FC<LabourIntelligenceProps> = ({ staff, o
               </div>
             </div>
 
+            {/* View mode toggle — same visual pattern as Operation Costs' P&L Cost Entry */}
+            <div className="flex items-center gap-2 flex-wrap mb-6">
+              <div className="flex gap-2 flex-wrap">
+                {(['All Shifts', 'Weekly', 'Period', 'Monthly', 'Quarterly', 'Custom Range'] as ViewMode[]).map(mode => (
+                  <Button
+                    key={mode}
+                    variant={viewMode === mode ? 'secondary' : 'ghost'}
+                    size="sm"
+                    onClick={() => setViewMode(mode)}
+                  >
+                    {mode}
+                  </Button>
+                ))}
+              </div>
+              <TimePeriodLegend />
+            </div>
+
+            {viewMode === 'Weekly' && (
+              <>
+                <div className="border border-border-grey rounded-2xl overflow-hidden">
+                  <div className="overflow-x-auto max-h-[560px] overflow-y-auto">
+                    <table className="w-full text-left text-xs">
+                      <thead className="sticky top-0 bg-secondary-surface z-10">
+                        <tr className="text-[9px] font-black text-text-muted uppercase tracking-widest">
+                          <th className="px-4 py-3">Week</th>
+                          <th className="px-4 py-3">Shifts</th>
+                          <th className="px-4 py-3">Total Labour Cost</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-border-grey">
+                        {weeklyBucketsSorted.map(w => (
+                          <tr key={w.weekStartDate} className="hover:bg-secondary-surface/50 transition-colors">
+                            <td className="px-4 py-2.5 font-bold text-text-navy whitespace-nowrap">{w.weekStartDate} to {w.weekEndDate}</td>
+                            <td className="px-4 py-2.5 text-text-muted whitespace-nowrap">{w.shiftCount}</td>
+                            <td className="px-4 py-2.5 font-bold text-text-navy whitespace-nowrap">{money(w.totalCostPence / 100)}</td>
+                          </tr>
+                        ))}
+                        {weeklyBucketsSorted.length === 0 && (
+                          <tr>
+                            <td colSpan={3} className="px-4 py-12 text-center text-text-muted font-bold text-xs">
+                              No weeks with imported shifts yet.
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <div className="mt-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-6 bg-text-navy rounded-2xl">
+                  <div className="flex items-center gap-3">
+                    <div className="bg-white/10 p-2.5 rounded-xl">
+                      <Clock className="w-5 h-5 text-accent" />
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-black text-white/50 uppercase tracking-widest">
+                        Total Labour Cost — All Weeks ({weeklyBucketsSorted.length} week{weeklyBucketsSorted.length !== 1 ? 's' : ''})
+                      </p>
+                      <p className="text-2xl font-black text-white">
+                        {money(weeklyBucketsSorted.reduce((acc, w) => acc + w.totalCostPence, 0) / 100)}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {(viewMode === 'Period' || viewMode === 'Monthly' || viewMode === 'Quarterly') && (
+              <>
+                <div className="p-4 bg-secondary-surface rounded-2xl border border-border-grey mb-6 flex flex-wrap items-center gap-4">
+                  {viewMode === 'Period' && (
+                    <>
+                      <div className="flex items-center gap-2">
+                        <label className="text-xs font-bold text-text-muted uppercase tracking-wider">Period</label>
+                        <select value={rollupPeriod} onChange={(e) => setRollupPeriod(Number(e.target.value))} className="px-3 py-2 bg-white border border-border-grey rounded-xl text-sm font-bold focus:ring-2 focus:ring-accent">
+                          {Array.from({ length: 13 }, (_, i) => i + 1).map(p => <option key={p} value={p}>Period {p}</option>)}
+                        </select>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <label className="text-xs font-bold text-text-muted uppercase tracking-wider">Fiscal Year</label>
+                        <select value={rollupFiscalYear} onChange={(e) => setRollupFiscalYear(Number(e.target.value))} className="px-3 py-2 bg-white border border-border-grey rounded-xl text-sm font-bold focus:ring-2 focus:ring-accent">
+                          {[current.fiscalYear - 1, current.fiscalYear, current.fiscalYear + 1].map(y => <option key={y} value={y}>FY{y}</option>)}
+                        </select>
+                      </div>
+                    </>
+                  )}
+                  {viewMode === 'Monthly' && (
+                    <>
+                      <div className="flex items-center gap-2">
+                        <label className="text-xs font-bold text-text-muted uppercase tracking-wider">Month</label>
+                        <select value={rollupMonth} onChange={(e) => setRollupMonth(Number(e.target.value))} className="px-3 py-2 bg-white border border-border-grey rounded-xl text-sm font-bold focus:ring-2 focus:ring-accent">
+                          {MONTH_NAMES.map((m, i) => <option key={m} value={i}>{m}</option>)}
+                        </select>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <label className="text-xs font-bold text-text-muted uppercase tracking-wider">Year</label>
+                        <select value={rollupMonthYear} onChange={(e) => setRollupMonthYear(Number(e.target.value))} className="px-3 py-2 bg-white border border-border-grey rounded-xl text-sm font-bold focus:ring-2 focus:ring-accent">
+                          {[rollupMonthYear - 1, rollupMonthYear, rollupMonthYear + 1].filter((v, i, a) => a.indexOf(v) === i).map(y => <option key={y} value={y}>{y}</option>)}
+                        </select>
+                      </div>
+                    </>
+                  )}
+                  {viewMode === 'Quarterly' && (
+                    <>
+                      <div className="flex gap-2 p-1 bg-white rounded-xl">
+                        {[1, 2, 3, 4].map(q => (
+                          <Button key={q} variant={rollupQuarter === q ? 'primary' : 'ghost'} size="sm" onClick={() => setRollupQuarter(q as 1 | 2 | 3 | 4)}>
+                            Q{q}
+                          </Button>
+                        ))}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <label className="text-xs font-bold text-text-muted uppercase tracking-wider">Fiscal Year</label>
+                        <select value={rollupFiscalYear} onChange={(e) => setRollupFiscalYear(Number(e.target.value))} className="px-3 py-2 bg-white border border-border-grey rounded-xl text-sm font-bold focus:ring-2 focus:ring-accent">
+                          {[current.fiscalYear - 1, current.fiscalYear, current.fiscalYear + 1].map(y => <option key={y} value={y}>FY{y}</option>)}
+                        </select>
+                      </div>
+                    </>
+                  )}
+
+                  <div className="ml-auto flex items-center gap-2">
+                    {rollup.expectedCount > 0 && rollup.weeksWithData === rollup.expectedCount ? (
+                      <span className="flex items-center gap-1.5 text-[10px] font-black px-3 py-1.5 rounded-full uppercase tracking-widest bg-success/10 text-success">
+                        <CheckCircle2 className="w-3.5 h-3.5" /> {rollup.weeksWithData} of {rollup.expectedCount} weeks have data
+                      </span>
+                    ) : (
+                      <span className="flex items-center gap-1.5 text-[10px] font-black px-3 py-1.5 rounded-full uppercase tracking-widest bg-amber-100 text-amber-700">
+                        <AlertTriangle className="w-3.5 h-3.5" /> {rollup.weeksWithData} of {rollup.expectedCount} weeks have data
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="p-6 bg-text-navy rounded-2xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 shadow-lg">
+                  <div>
+                    <p className="text-[10px] font-black text-white/50 uppercase tracking-widest">
+                      Total Labour Cost — {viewMode} {viewMode === 'Period' ? `${rollupPeriod}, FY${rollupFiscalYear}` : viewMode === 'Monthly' ? `${MONTH_NAMES[rollupMonth]} ${rollupMonthYear}` : `Q${rollupQuarter}, FY${rollupFiscalYear}`}
+                    </p>
+                    <p className="text-3xl font-black text-white">{money(rollup.totalCost)}</p>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {viewMode === 'Custom Range' && (
+              <>
+                <div className="p-4 bg-secondary-surface rounded-2xl border border-border-grey mb-6 flex flex-wrap items-center gap-4">
+                  <div className="flex items-center gap-2">
+                    <label className="text-xs font-bold text-text-muted uppercase tracking-wider">From</label>
+                    <input
+                      type="date"
+                      value={customStart}
+                      onChange={(e) => e.target.value && setCustomStart(e.target.value)}
+                      className="px-3 py-2 bg-white border border-border-grey rounded-xl text-sm font-bold focus:ring-2 focus:ring-accent"
+                    />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <label className="text-xs font-bold text-text-muted uppercase tracking-wider">To</label>
+                    <input
+                      type="date"
+                      value={customEnd}
+                      onChange={(e) => e.target.value && setCustomEnd(e.target.value)}
+                      className="px-3 py-2 bg-white border border-border-grey rounded-xl text-sm font-bold focus:ring-2 focus:ring-accent"
+                    />
+                  </div>
+                </div>
+
+                <div className="p-6 bg-text-navy rounded-2xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 shadow-lg">
+                  <div>
+                    <p className="text-[10px] font-black text-white/50 uppercase tracking-widest">
+                      Total Labour Cost — {customStart} to {customEnd} ({customRangeTotal.shiftCount} shift{customRangeTotal.shiftCount !== 1 ? 's' : ''})
+                    </p>
+                    <p className="text-3xl font-black text-white">{money(customRangeTotal.totalCost)}</p>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {viewMode === 'All Shifts' && (
+            <>
             {/* Filters */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6 p-4 bg-secondary-surface rounded-2xl border border-border-grey">
               <div>
@@ -317,6 +587,8 @@ export const LabourIntelligence: React.FC<LabourIntelligenceProps> = ({ staff, o
                 Enter this figure manually into Financial Command's P&amp;L labour line.
               </p>
             </div>
+            </>
+            )}
           </div>
         )
       )}

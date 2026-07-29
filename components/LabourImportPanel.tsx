@@ -27,6 +27,7 @@ export const LabourImportPanel: React.FC<LabourImportPanelProps> = ({ staff, imp
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [step, setStep] = useState<'upload' | 'preview'>('upload');
   const [headerError, setHeaderError] = useState<string[] | null>(null);
+  const [parseError, setParseError] = useState<string | null>(null);
   const [previewRows, setPreviewRows] = useState<ParsedShiftRow[]>([]);
   const [selectedRowIndexes, setSelectedRowIndexes] = useState<Set<number>>(new Set());
   const [staffOverrides, setStaffOverrides] = useState<Map<number, string | null>>(new Map());
@@ -35,35 +36,58 @@ export const LabourImportPanel: React.FC<LabourImportPanelProps> = ({ staff, imp
   const resetToUpload = () => {
     setStep('upload');
     setHeaderError(null);
+    setParseError(null);
     setPreviewRows([]);
     setSelectedRowIndexes(new Set());
     setStaffOverrides(new Map());
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
+  // A bad/empty/malformed CSV must never throw uncaught to the app-wide error boundary — every
+  // stage (starting the parse, the parse callback, and the row-building step it drives) is
+  // wrapped so any failure degrades to a friendly inline message instead. Same defensive
+  // pattern as the fetchSettings/onSnapshot crash fixes elsewhere this session.
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    setHeaderError(null);
+    setParseError(null);
 
-    Papa.parse<RotaCsvRow>(file, {
-      header: true,
-      skipEmptyLines: true,
-      complete: (results) => {
-        const { valid, missing } = validateRotaCsvHeaders(results.meta.fields || []);
-        if (!valid) {
-          setHeaderError(missing);
-          return;
+    try {
+      Papa.parse<RotaCsvRow>(file, {
+        header: true,
+        skipEmptyLines: true,
+        complete: (results) => {
+          try {
+            const { valid, missing } = validateRotaCsvHeaders(results.meta.fields || []);
+            if (!valid) {
+              setHeaderError(missing);
+              return;
+            }
+            if (!results.data || results.data.length === 0) {
+              setParseError('No valid rows found in this file.');
+              return;
+            }
+            const rows = buildRotaImportPreview(results.data, staff);
+            setPreviewRows(rows);
+            setSelectedRowIndexes(new Set(rows.filter(r => r.includeByDefault).map(r => r.rowIndex)));
+            setStep('preview');
+          } catch (err) {
+            console.error('[LabourImportPanel] Failed to process parsed CSV rows:', err);
+            setParseError("This file doesn't match the expected format.");
+          }
+        },
+        error: (err) => {
+          console.error('[LabourImportPanel] CSV parse error:', err);
+          setParseError('Could not read this file. Please check it is a valid CSV.');
         }
-        setHeaderError(null);
-        const rows = buildRotaImportPreview(results.data, staff);
-        setPreviewRows(rows);
-        setSelectedRowIndexes(new Set(rows.filter(r => r.includeByDefault).map(r => r.rowIndex)));
-        setStep('preview');
-      },
-      error: () => {
-        toast.error('Could not read this file. Please check it is a valid CSV.');
-      }
-    });
+      });
+    } catch (err) {
+      console.error('[LabourImportPanel] Unexpected error starting CSV parse:', err);
+      setParseError("This file doesn't match the expected format.");
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
   };
 
   const toggleRow = (idx: number) => {
@@ -135,6 +159,15 @@ export const LabourImportPanel: React.FC<LabourImportPanelProps> = ({ staff, imp
             <p className="text-xs text-text-muted font-bold">
               This file is missing expected column{headerError.length !== 1 ? 's' : ''}: {headerError.join(', ')}
             </p>
+          </div>
+        )}
+
+        {parseError && (
+          <div className="mt-8 p-4 bg-cta/5 border border-cta/20 rounded-2xl w-full max-w-xl">
+            <p className="text-[10px] font-black text-cta uppercase tracking-widest mb-2 flex items-center gap-2">
+              <AlertCircle className="w-3.5 h-3.5" /> Couldn't import this file
+            </p>
+            <p className="text-xs text-text-muted font-bold">{parseError}</p>
           </div>
         )}
 
