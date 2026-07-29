@@ -596,7 +596,7 @@ const today = londonHour < 6
     const isAdminEmail = user?.email === 'saga00@gmail.com' || user?.email === 'saga00@live.com' || user?.email === 'famrokha@gmail.com';
     if (isAdminEmail) return 'Admin';
 
-    const staffMember = staffMembers.find(s => s.email.toLowerCase() === user?.email?.toLowerCase());
+    const staffMember = staffMembers.find(s => s.email?.toLowerCase() === user?.email?.toLowerCase());
     if (staffMember?.role) {
       const raw = staffMember.role.toLowerCase();
       if (raw === 'supervisor') return 'Manager';
