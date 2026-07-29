@@ -1,7 +1,7 @@
 
 import React, { useMemo, useState } from 'react';
 import { InventoryItem, DailyClosure } from '../types';
-import { TrendingUp, AlertTriangle, PoundSterling, Brain, RefreshCw, ArrowRight, Banknote, ShoppingCart, Clock, Bot, Wifi, WifiOff, ChevronDown, ChevronUp } from 'lucide-react';
+import { TrendingUp, AlertTriangle, PoundSterling, Brain, RefreshCw, ArrowRight, Banknote, ShoppingCart, Clock, Bot, Wifi, WifiOff, ChevronDown, ChevronUp, HardHat } from 'lucide-react';
 import { Button } from './Button';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts';
 
@@ -16,6 +16,13 @@ interface LivePosSalesSummary {
   salesByPaymentMethod: Record<string, number>;
 }
 
+interface LabourCostPeriodToDate {
+  totalCost: number;
+  weeksWithData: number;
+  expectedCount: number;
+  periodNumber: number;
+}
+
 interface DashboardProps {
   items: InventoryItem[];
   totalRevenue: number;
@@ -26,6 +33,7 @@ interface DashboardProps {
   livePosSalesSummary: LivePosSalesSummary;
   todayCovers: number;
   todaysClosure: DailyClosure | null;
+  labourCostPeriodToDate: LabourCostPeriodToDate;
   setCurrentView?: (view: any) => void;
   onAddToCart?: (item: InventoryItem, quantity: number) => void;
 }
@@ -52,6 +60,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
   livePosSalesSummary,
   todayCovers,
   todaysClosure,
+  labourCostPeriodToDate,
   setCurrentView,
   onAddToCart
 }) => {
@@ -243,6 +252,158 @@ export const Dashboard: React.FC<DashboardProps> = ({
         </div>
       </div>
 
+      {/* Stats Cards */}
+      <div className="grid grid-cols-2 gap-4 sm:gap-6 md:grid-cols-3 xl:grid-cols-5">
+        <div
+          className="relative bg-card-bg overflow-visible shadow-sm rounded-2xl border border-border-grey hover:border-accent/30 hover:shadow-md transition-all duration-300"
+          onMouseEnter={() => setGrossDetailOpen(true)}
+          onMouseLeave={() => setGrossDetailOpen(false)}
+        >
+          <button
+            type="button"
+            onClick={() => setGrossDetailOpen(o => !o)}
+            className="w-full text-left p-4 sm:p-6"
+          >
+            <div className="flex items-center">
+              <div className="flex-shrink-0 p-2 bg-success/10 rounded-xl">
+                <Banknote className="h-4 w-4 sm:h-5 sm:w-5 text-success" />
+              </div>
+              <div className="ml-3 w-0 flex-1">
+                <dl>
+                  <dt className="text-[10px] sm:text-xs font-black text-text-muted uppercase tracking-widest truncate">Gross Sales (Today)</dt>
+                  <dd className="text-base sm:text-xl font-black text-text-navy mt-1">{money(totalRevenue)}</dd>
+                </dl>
+              </div>
+            </div>
+          </button>
+
+          {grossDetailOpen && (
+            <div className="absolute left-0 sm:left-auto sm:right-0 top-full mt-1 w-72 bg-card-bg border border-border-grey rounded-xl shadow-xl p-4 z-30">
+              <p className="text-[10px] font-black text-text-navy uppercase tracking-widest mb-3">Today's Breakdown</p>
+              <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-[11px]">
+                <div className="flex justify-between col-span-2">
+                  <span className="text-text-muted font-bold uppercase">VAT</span>
+                  <span className="font-bold text-text-navy">{money(livePosSalesSummary.vatTotal)}</span>
+                </div>
+                <div className="flex justify-between col-span-2">
+                  <span className="text-text-muted font-bold uppercase">Service Charge</span>
+                  <span className="font-bold text-text-navy">{money(livePosSalesSummary.serviceChargeTotal)}</span>
+                </div>
+                <div className="flex justify-between col-span-2">
+                  <span className="text-text-muted font-bold uppercase">Discounts</span>
+                  <span className="font-bold text-text-navy">{money(livePosSalesSummary.discountTotal)}</span>
+                </div>
+                <div className="flex justify-between col-span-2 pt-2 border-t border-border-grey">
+                  <span className="text-text-muted font-bold uppercase">Net Sales</span>
+                  <span className="font-bold text-text-navy">{money(livePosSalesSummary.netSales)}</span>
+                </div>
+                <div className="flex justify-between col-span-2">
+                  <span className="text-text-muted font-bold uppercase">Covers</span>
+                  <span className="font-bold text-text-navy">{todayCovers || '—'}</span>
+                </div>
+                <div className="flex justify-between col-span-2">
+                  <span className="text-text-muted font-bold uppercase">Spend Per Head</span>
+                  <span className="font-bold text-text-navy">{todayCovers > 0 ? money(sph) : '—'}</span>
+                </div>
+                <div className="col-span-2 pt-2 border-t border-border-grey text-[9px] text-text-muted italic">
+                  Food % / Beverage % split isn't tracked live yet — only available after tonight's closure report.
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div
+          className="bg-card-bg overflow-hidden shadow-sm rounded-2xl border border-border-grey hover:border-accent/30 hover:shadow-md transition-all duration-300"
+          title={`${labourCostPeriodToDate.weeksWithData} of ${labourCostPeriodToDate.expectedCount} weeks imported this Period`}
+        >
+          <div className="p-4 sm:p-6">
+            <div className="flex items-center">
+              <div className="flex-shrink-0 p-2 bg-warning/10 rounded-xl">
+                <HardHat className="h-4 w-4 sm:h-5 sm:w-5 text-warning" />
+              </div>
+              <div className="ml-3 w-0 flex-1">
+                <dl>
+                  <dt className="text-[10px] sm:text-xs font-black text-text-muted uppercase tracking-widest truncate">P{labourCostPeriodToDate.periodNumber} Labour Cost</dt>
+                  <dd className="text-base sm:text-xl font-black text-text-navy mt-1">{money(labourCostPeriodToDate.totalCost)}</dd>
+                </dl>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-card-bg overflow-hidden shadow-sm rounded-2xl border border-border-grey hover:border-accent/30 hover:shadow-md transition-all duration-300">
+          <div className="p-4 sm:p-6">
+            <div className="flex items-center">
+              <div className="flex-shrink-0 p-2 bg-text-muted/10 rounded-xl">
+                <PoundSterling className="h-4 w-4 sm:h-5 sm:w-5 text-text-muted" />
+              </div>
+              <div className="ml-3 w-0 flex-1">
+                <dl>
+                  <dt className="text-[10px] sm:text-xs font-black text-text-muted uppercase tracking-widest truncate">Holding Value</dt>
+                  <dd className="text-base sm:text-xl font-black text-text-navy mt-1">{money(totalValue)}</dd>
+                </dl>
+                <button
+                  onClick={() => triggerAIChat("tell me how can we improve this")}
+                  className="mt-4 px-3 py-1.5 bg-accent/5 text-accent text-[9px] font-black uppercase tracking-widest rounded-xl border border-accent/20 hover:bg-accent hover:text-white transition-all shadow-sm inline-flex items-center group/btn"
+                >
+                  <Brain className="h-3 w-3 mr-2 group-hover/btn:scale-110 transition-transform" />
+                  Improve
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-card-bg overflow-hidden shadow-sm rounded-2xl border border-border-grey hover:border-accent/30 hover:shadow-md transition-all duration-300">
+          <div className="p-4 sm:p-6">
+            <div className="flex items-center">
+              <div className="flex-shrink-0 p-2 bg-cta/10 rounded-xl">
+                <AlertTriangle className="h-4 w-4 sm:h-5 sm:w-5 text-cta" />
+              </div>
+              <div className="ml-3 w-0 flex-1">
+                <dl>
+                  <dt className="text-[10px] sm:text-xs font-black text-text-muted uppercase tracking-widest truncate">Low Stock</dt>
+                  <dd className="text-base sm:text-xl font-black text-text-navy mt-1">{lowStockItems.length}</dd>
+                </dl>
+                <button
+                  onClick={() => triggerAIChat("tell me which items are low in stock")}
+                  className="mt-4 px-3 py-1.5 bg-cta/5 text-cta text-[9px] font-black uppercase tracking-widest rounded-xl border border-cta/20 hover:bg-cta hover:text-white transition-all shadow-sm inline-flex items-center group/btn"
+                >
+                  <AlertTriangle className="h-3 w-3 mr-2 group-hover/btn:scale-110 transition-transform" />
+                  Check
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-card-bg overflow-hidden shadow-sm rounded-2xl border border-border-grey hover:border-accent/30 hover:shadow-md transition-all duration-300">
+          <div className="p-4 sm:p-6">
+            <div className="flex items-center">
+              <div className="flex-shrink-0 p-2 bg-accent/10 rounded-xl">
+                <TrendingUp className="h-4 w-4 sm:h-5 sm:w-5 text-accent" />
+              </div>
+              <div className="ml-3 w-0 flex-1">
+                <dl>
+                  <dt className="text-[10px] sm:text-xs font-black text-text-muted uppercase tracking-widest truncate">Health</dt>
+                  <dd className="text-base sm:text-xl font-black text-text-navy mt-1">
+                    {totalItems > 0 ? Math.round(((totalItems - lowStockItems.length) / totalItems) * 100) : 0}%
+                  </dd>
+                </dl>
+                <button
+                  onClick={() => triggerAIChat("tell me how can we improve")}
+                  className="mt-4 px-3 py-1.5 bg-accent/5 text-accent text-[9px] font-black uppercase tracking-widest rounded-xl border border-accent/20 hover:bg-accent hover:text-white transition-all shadow-sm inline-flex items-center group/btn"
+                >
+                  <TrendingUp className="h-3 w-3 mr-2 group-hover/btn:scale-110 transition-transform" />
+                  Details
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* Smart Alerts Section — AI Inventory Intelligence (rule-based, no live AI call) */}
       <div className="bg-primary-surface border border-border-grey rounded-2xl p-4 sm:p-6 shadow-sm">
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-4">
@@ -363,139 +524,6 @@ export const Dashboard: React.FC<DashboardProps> = ({
             )}
           </>
         )}
-      </div>
-
-      {/* Stats Cards */}
-      <div className="grid grid-cols-2 gap-4 sm:gap-6 lg:grid-cols-4">
-        <div
-          className="relative bg-card-bg overflow-visible shadow-sm rounded-2xl border border-border-grey hover:border-accent/30 hover:shadow-md transition-all duration-300"
-          onMouseEnter={() => setGrossDetailOpen(true)}
-          onMouseLeave={() => setGrossDetailOpen(false)}
-        >
-          <button
-            type="button"
-            onClick={() => setGrossDetailOpen(o => !o)}
-            className="w-full text-left p-4 sm:p-6"
-          >
-            <div className="flex items-center">
-              <div className="flex-shrink-0 p-3 bg-success/10 rounded-xl">
-                <Banknote className="h-5 w-5 sm:h-6 sm:w-6 text-success" />
-              </div>
-              <div className="ml-4 w-0 flex-1">
-                <dl>
-                  <dt className="text-[10px] sm:text-xs font-black text-text-muted uppercase tracking-widest truncate">Gross Sales (Today)</dt>
-                  <dd className="text-base sm:text-xl font-black text-text-navy mt-1">{money(totalRevenue)}</dd>
-                </dl>
-              </div>
-            </div>
-          </button>
-
-          {grossDetailOpen && (
-            <div className="absolute left-0 sm:left-auto sm:right-0 top-full mt-1 w-72 bg-card-bg border border-border-grey rounded-xl shadow-xl p-4 z-30">
-              <p className="text-[10px] font-black text-text-navy uppercase tracking-widest mb-3">Today's Breakdown</p>
-              <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-[11px]">
-                <div className="flex justify-between col-span-2">
-                  <span className="text-text-muted font-bold uppercase">VAT</span>
-                  <span className="font-bold text-text-navy">{money(livePosSalesSummary.vatTotal)}</span>
-                </div>
-                <div className="flex justify-between col-span-2">
-                  <span className="text-text-muted font-bold uppercase">Service Charge</span>
-                  <span className="font-bold text-text-navy">{money(livePosSalesSummary.serviceChargeTotal)}</span>
-                </div>
-                <div className="flex justify-between col-span-2">
-                  <span className="text-text-muted font-bold uppercase">Discounts</span>
-                  <span className="font-bold text-text-navy">{money(livePosSalesSummary.discountTotal)}</span>
-                </div>
-                <div className="flex justify-between col-span-2 pt-2 border-t border-border-grey">
-                  <span className="text-text-muted font-bold uppercase">Net Sales</span>
-                  <span className="font-bold text-text-navy">{money(livePosSalesSummary.netSales)}</span>
-                </div>
-                <div className="flex justify-between col-span-2">
-                  <span className="text-text-muted font-bold uppercase">Covers</span>
-                  <span className="font-bold text-text-navy">{todayCovers || '—'}</span>
-                </div>
-                <div className="flex justify-between col-span-2">
-                  <span className="text-text-muted font-bold uppercase">Spend Per Head</span>
-                  <span className="font-bold text-text-navy">{todayCovers > 0 ? money(sph) : '—'}</span>
-                </div>
-                <div className="col-span-2 pt-2 border-t border-border-grey text-[9px] text-text-muted italic">
-                  Food % / Beverage % split isn't tracked live yet — only available after tonight's closure report.
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-
-        <div className="bg-card-bg overflow-hidden shadow-sm rounded-2xl border border-border-grey hover:border-accent/30 hover:shadow-md transition-all duration-300">
-          <div className="p-4 sm:p-6">
-            <div className="flex items-center">
-              <div className="flex-shrink-0 p-3 bg-text-muted/10 rounded-xl">
-                <PoundSterling className="h-5 w-5 sm:h-6 sm:w-6 text-text-muted" />
-              </div>
-              <div className="ml-4 w-0 flex-1">
-                <dl>
-                  <dt className="text-[10px] sm:text-xs font-black text-text-muted uppercase tracking-widest truncate">Holding Value</dt>
-                  <dd className="text-base sm:text-xl font-black text-text-navy mt-1">{money(totalValue)}</dd>
-                </dl>
-                <button
-                  onClick={() => triggerAIChat("tell me how can we improve this")}
-                  className="mt-4 px-3 py-1.5 bg-accent/5 text-accent text-[9px] font-black uppercase tracking-widest rounded-xl border border-accent/20 hover:bg-accent hover:text-white transition-all shadow-sm inline-flex items-center group/btn"
-                >
-                  <Brain className="h-3 w-3 mr-2 group-hover/btn:scale-110 transition-transform" />
-                  Improve
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-card-bg overflow-hidden shadow-sm rounded-2xl border border-border-grey hover:border-accent/30 hover:shadow-md transition-all duration-300">
-          <div className="p-4 sm:p-6">
-            <div className="flex items-center">
-              <div className="flex-shrink-0 p-3 bg-cta/10 rounded-xl">
-                <AlertTriangle className="h-5 w-5 sm:h-6 sm:w-6 text-cta" />
-              </div>
-              <div className="ml-4 w-0 flex-1">
-                <dl>
-                  <dt className="text-[10px] sm:text-xs font-black text-text-muted uppercase tracking-widest truncate">Low Stock</dt>
-                  <dd className="text-base sm:text-xl font-black text-text-navy mt-1">{lowStockItems.length}</dd>
-                </dl>
-                <button
-                  onClick={() => triggerAIChat("tell me which items are low in stock")}
-                  className="mt-4 px-3 py-1.5 bg-cta/5 text-cta text-[9px] font-black uppercase tracking-widest rounded-xl border border-cta/20 hover:bg-cta hover:text-white transition-all shadow-sm inline-flex items-center group/btn"
-                >
-                  <AlertTriangle className="h-3 w-3 mr-2 group-hover/btn:scale-110 transition-transform" />
-                  Check
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-card-bg overflow-hidden shadow-sm rounded-2xl border border-border-grey hover:border-accent/30 hover:shadow-md transition-all duration-300">
-          <div className="p-4 sm:p-6">
-            <div className="flex items-center">
-              <div className="flex-shrink-0 p-3 bg-accent/10 rounded-xl">
-                <TrendingUp className="h-5 w-5 sm:h-6 sm:w-6 text-accent" />
-              </div>
-              <div className="ml-4 w-0 flex-1">
-                <dl>
-                  <dt className="text-[10px] sm:text-xs font-black text-text-muted uppercase tracking-widest truncate">Health</dt>
-                  <dd className="text-base sm:text-xl font-black text-text-navy mt-1">
-                    {totalItems > 0 ? Math.round(((totalItems - lowStockItems.length) / totalItems) * 100) : 0}%
-                  </dd>
-                </dl>
-                <button
-                  onClick={() => triggerAIChat("tell me how can we improve")}
-                  className="mt-4 px-3 py-1.5 bg-accent/5 text-accent text-[9px] font-black uppercase tracking-widest rounded-xl border border-accent/20 hover:bg-accent hover:text-white transition-all shadow-sm inline-flex items-center group/btn"
-                >
-                  <TrendingUp className="h-3 w-3 mr-2 group-hover/btn:scale-110 transition-transform" />
-                  Details
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
       </div>
 
       {/* Sub Categories Breakdown */}

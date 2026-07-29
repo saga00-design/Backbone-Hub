@@ -17,9 +17,11 @@ import { SupplierManager } from './components/SupplierManager';
 import { TableManager } from './components/TableManager';
 import { Settings } from './components/Settings';
 import { Orders } from './components/Orders';
-import { InventoryItem, InventoryCategory, Unit, StockCountRecord, Recipe, SalesImportRecord, Supplier, Order, OrderItem, Invoice, MenuCategory, POSOrder, POSPayment, WasteRecord, ExpenseRecord, MovementType, StockMovement, InventoryType, Table, DailyClosure, ClosureType, Forecast, StaffPerformanceRecord, AppPermissions, StaffCertification, AuditLog, StaffMember, SideAddonItem, ReceivingRecord, ReceivingRecordItem, SupplierPriceHistoryEntry } from './types';
+import { InventoryItem, InventoryCategory, Unit, StockCountRecord, Recipe, SalesImportRecord, Supplier, Order, OrderItem, Invoice, MenuCategory, POSOrder, POSPayment, WasteRecord, ExpenseRecord, MovementType, StockMovement, InventoryType, Table, DailyClosure, ClosureType, Forecast, StaffPerformanceRecord, AppPermissions, StaffCertification, AuditLog, StaffMember, SideAddonItem, ReceivingRecord, ReceivingRecordItem, SupplierPriceHistoryEntry, LabourShift } from './types';
 import { logAuditAction } from './services/auditService';
 import { getBusinessDay } from './utils/businessDay';
+import { getCurrentPeriod, getPeriodWeekStarts } from './utils/fiscalCalendar';
+import { buildWeeklyLabourCostPenceMap, sumLabourCostForWeeks } from './services/labourImportService';
 import { LayoutDashboard, Package, ClipboardCheck, FileInput, Menu, X, ChefHat, TrendingUp, Truck, Settings as SettingsIcon, BookOpen, Sun, Moon, ShoppingCart, AlertCircle, LogIn, LogOut, Trash2, ReceiptPoundSterling, Megaphone, LayoutList, PoundSterling } from 'lucide-react';
 import { Toaster, toast } from 'sonner';
 import { auth, db, googleProvider, signInWithPopup, onAuthStateChanged, collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, onSnapshot, handleFirestoreError, OperationType, User, cleanObject, signOut, increment, query, where, orderBy, limit, testConnection, LOCATION_ID, writeBatch } from './firebase';
@@ -453,6 +455,7 @@ const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [quizSubmissions, setQuizSubmissions] = useState<any[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [staffMembers, setStaffMembers] = useState<StaffMember[]>([]);
+  const [labourShifts, setLabourShifts] = useState<LabourShift[]>([]);
   const [livePosSalesSummary, setLivePosSalesSummary] = useState({
     totalPaid: 0,
     grossSales: 0,
@@ -590,6 +593,16 @@ const today = londonHour < 6
     // Return TODAY'S sales specifically for high-visibility dashboard cards to match POS Shift Total
     return liveSalesData.aggregate.todayPaid;
   }, [liveSalesData.aggregate.todayPaid]);
+
+  // Dashboard's Period-to-date Labour Cost card — reuses Labour Intelligence's own
+  // weekly-bucket + Period rollup (services/labourImportService.ts) rather than
+  // recomputing labour cost separately, so the two screens always agree.
+  const labourCostPeriodToDate = useMemo(() => {
+    const currentPeriod = getCurrentPeriod();
+    const weeklyPenceMap = buildWeeklyLabourCostPenceMap(labourShifts);
+    const weekStarts = getPeriodWeekStarts(currentPeriod.periodNumber, currentPeriod.fiscalYear);
+    return { ...sumLabourCostForWeeks(weeklyPenceMap, weekStarts), periodNumber: currentPeriod.periodNumber };
+  }, [labourShifts]);
 
   // Explicit aliases for reporting compliance
   const posPaymentsHistory = liveSalesData.history;
@@ -1028,6 +1041,13 @@ const today = londonHour < 6
       });
     }, (err: any) => handleFirestoreError(err, OperationType.LIST, 'staffProfiles'));
 
+    // Feeds the Dashboard's Period-to-date Labour Cost card — same collection and
+    // locationId/date-desc query Labour Intelligence already reads from.
+    const unsubLabourShifts = onSnapshot(query(collection(db, 'labourShifts'), where('locationId', '==', LOCATION_ID), orderBy('date', 'desc')), (snapshot: any) => {
+      const data = snapshot.docs.map((doc: any) => ({ ...doc.data(), id: doc.id } as LabourShift));
+      setLabourShifts(data);
+    }, (err: any) => handleFirestoreError(err, OperationType.LIST, 'labourShifts'));
+
     return () => {
       unsubPosTransactions();
       unsubInventory();
@@ -1050,6 +1070,7 @@ const today = londonHour < 6
       unsubMenuCategories();
       unsubUser();
       unsubStaff();
+      unsubLabourShifts();
       unsubForecasts();
       unsubStaffPerf();
       unsubCertifications();
@@ -2927,7 +2948,7 @@ const today = londonHour < 6
             <header className="mb-6 sm:mb-8 flex justify-between items-center rounded-md">
               <div className={`flex flex-col text-text-navy`}>
                 <h1 className="text-xl sm:text-2xl font-bold leading-none">
-                  {currentView === 'dashboard' && 'Backbone Hub'}
+                  {currentView === 'dashboard' && 'Smart Dashboard'}
                   {currentView === 'financial_command' && 'Financial Command Center'}
                   {currentView === 'inventory' && 'Inventory Management'}
                   {currentView === 'orders' && 'Stock Orders'}
@@ -2943,11 +2964,6 @@ const today = londonHour < 6
                   {currentView === 'reports' && 'Business Reports'}
                   {currentView === 'settings' && 'System Settings'}
                 </h1>
-                {currentView === 'dashboard' && (
-                  <span className={`text-[10px] sm:text-xs font-medium uppercase tracking-wider mt-1 text-text-muted`}>
-                    Backoffice
-                  </span>
-                )}
               </div>
               <button
                 onClick={() => setIsDarkMode(!isDarkMode)}
@@ -2969,6 +2985,7 @@ const today = londonHour < 6
                   livePosSalesSummary={livePosSalesSummary}
                   todayCovers={liveSalesData.aggregate.todayCovers}
                   todaysClosure={closures.find(c => c.type === ClosureType.DAY && c.date === getBusinessDay()) || null}
+                  labourCostPeriodToDate={labourCostPeriodToDate}
                   setCurrentView={setCurrentView}
                   onAddToCart={handleAddToCart}
                 />
