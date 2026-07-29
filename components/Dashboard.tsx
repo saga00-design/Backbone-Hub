@@ -188,10 +188,11 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const [grossDetailOpen, setGrossDetailOpen] = useState(false);
   const sph = todayCovers > 0 ? totalRevenue / todayCovers : 0;
 
-  // System connectivity compact indicator — driven by whether the posTransactions listener
-  // is actively synced to the server (App.tsx: isPosStreamSynced) and the browser is online.
-  // Previously this used `posPaymentsCount > 0`, which is "has this location ever had a
-  // payment" — permanently true once any history exists, so the dot could never go red.
+  // System connectivity compact indicator — driven by the app-wide Firestore heartbeat
+  // signal (App.tsx: useConnectionStatus), the same source as OfflineBanner and the
+  // reconnect toast, so all three always agree. Previously this used `posPaymentsCount > 0`,
+  // which is "has this location ever had a payment" — permanently true once any history
+  // exists, so the dot could never go red.
   const [connDetailOpen, setConnDetailOpen] = useState(false);
   const isOnline = isPosLive;
 

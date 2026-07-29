@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useMemo, Component, ReactNode } from 'react';
+import React, { useState, useEffect, useMemo, useRef, Component, ReactNode } from 'react';
 import { initializeSystem } from './services/restaurantService';
 import { Dashboard } from './components/Dashboard';
 import { ConfirmationModal } from './components/ConfirmationModal';
@@ -28,6 +28,7 @@ import { calculateTotalCost, mapCategoryId } from './utils/recipeUtils';
 import { CONVERSION_FACTORS, toSafeNumber, resolveInvoiceLine } from './utils/unitConversions';
 import { normalizeCurrency, normalizeTimestamp, normalizeStatus } from './utils/currencyUtils';
 import { OfflineBanner } from './components/OfflineBanner';
+import { useConnectionStatus } from './hooks/useConnectionStatus';
 import { WasteManager } from './components/WasteManager';
 import { OperationCosts } from './components/OperationCosts';
 import { ShiftBriefingManager } from './components/ShiftBriefingManager';
@@ -401,24 +402,48 @@ const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [tables, setTables] = useState<Table[]>([]);
   const [posOrders, setPosOrders] = useState<POSOrder[]>([]);
   const [posTransactions, setPosTransactions] = useState<any[]>([]);
-  // Genuine live-connectivity signal for the System Connectivity dot: true only while the
-  // posTransactions listener is actively synced to the server (not serving stale local cache)
-  // AND the browser itself reports a network connection. Previously the dot's color was driven
-  // by `posPaymentsCount > 0`, which just means "this location has ever had a payment" — that's
-  // permanently true once any history exists, so the dot could never meaningfully go red.
-  const [isPosStreamSynced, setIsPosStreamSynced] = useState(false);
-  const [isBrowserOnline, setIsBrowserOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
+  // Single source of truth for connectivity across the app (OfflineBanner, the
+  // reconnect toast, and the Dashboard's connectivity dot): a direct Firestore
+  // server round-trip, not an approximation from listener sync state or the
+  // browser's online/offline events.
+  const { isOnline: isConnectionOnline, offlineDuration } = useConnectionStatus();
+
+  // Threshold-based toast on top of the same connectivity signal driving the
+  // OfflineBanner and the dashboard dot (isConnectionOnline). Brief blips that
+  // recover within DISCONNECT_TOAST_DELAY_MS never show anything — only a
+  // sustained outage crossing the threshold surfaces a toast, once per outage.
+  const disconnectToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const disconnectToastShownRef = useRef(false);
 
   useEffect(() => {
-    const goOnline = () => setIsBrowserOnline(true);
-    const goOffline = () => setIsBrowserOnline(false);
-    window.addEventListener('online', goOnline);
-    window.addEventListener('offline', goOffline);
+    const DISCONNECT_TOAST_DELAY_MS = 12000;
+
+    if (!isConnectionOnline) {
+      if (!disconnectToastTimerRef.current) {
+        disconnectToastTimerRef.current = setTimeout(() => {
+          toast.error('Connection lost');
+          disconnectToastShownRef.current = true;
+          disconnectToastTimerRef.current = null;
+        }, DISCONNECT_TOAST_DELAY_MS);
+      }
+    } else {
+      if (disconnectToastTimerRef.current) {
+        clearTimeout(disconnectToastTimerRef.current);
+        disconnectToastTimerRef.current = null;
+      }
+      if (disconnectToastShownRef.current) {
+        toast.success('Connection restored');
+        disconnectToastShownRef.current = false;
+      }
+    }
+
     return () => {
-      window.removeEventListener('online', goOnline);
-      window.removeEventListener('offline', goOffline);
+      if (disconnectToastTimerRef.current) {
+        clearTimeout(disconnectToastTimerRef.current);
+        disconnectToastTimerRef.current = null;
+      }
     };
-  }, []);
+  }, [isConnectionOnline]);
   const [posPayments, setPosPayments] = useState<POSPayment[]>([]);
   const [closures, setClosures] = useState<DailyClosure[]>([]);
   const [permissionsConfig, setPermissionsConfig] = useState<Record<string, AppPermissions>>(DEFAULT_PERMISSIONS);
@@ -852,13 +877,9 @@ const today = londonHour < 6
     collection(db, 'posTransactions'),
     where('locationId', '==', LOCATION_ID)
   ),
-  { includeMetadataChanges: true },
   (snapshot: any) => {
     const data = snapshot.docs.map((d: any) => ({ id: d.id, ...d.data() }));
     setPosTransactions(data);
-    // fromCache === false means this snapshot came from an active server connection —
-    // the genuine "is the live POS -> Hub stream actually connected right now" signal.
-    setIsPosStreamSynced(!snapshot.metadata.fromCache);
   },
   (err: any) => handleFirestoreError(err, OperationType.LIST, 'posTransactions')
 );
@@ -2790,7 +2811,7 @@ const today = londonHour < 6
   return (
     <ErrorBoundary>
       <Toaster position="top-right" richColors />
-      <OfflineBanner position="top" />
+      <OfflineBanner position="top" isOnline={isConnectionOnline} offlineDuration={offlineDuration} />
       <div className={`h-screen flex flex-col md:flex-row overflow-hidden transition-colors duration-200 ${isDarkMode ? 'dark' : ''} bg-main-bg text-text-navy`}>
         {/* Mobile Header */}
         <div className={`md:hidden border-b px-4 py-3 flex items-center justify-between flex-shrink-0 z-30 transition-colors duration-200 ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-primary-surface border-border-grey'}`}>
@@ -2942,7 +2963,7 @@ const today = londonHour < 6
                   items={combinedItems}
                   totalRevenue={combinedTotalRevenue}
                   posPaymentsCount={posPayments.length}
-                  isPosLive={isPosStreamSynced && isBrowserOnline}
+                  isPosLive={isConnectionOnline}
                   databaseId={(db as any)._databaseId?.database}
                   orderCountToday={liveSalesData.aggregate.numberOfPaidOrders}
                   livePosSalesSummary={livePosSalesSummary}
