@@ -524,7 +524,7 @@ export const InventoryList: React.FC<InventoryListProps> = ({
               });
               toast.success(`added missing stock for ${filteredItems.length} items to order`);
             }}
-            className="ml-auto flex items-center gap-2 px-4 py-2 bg-text-navy text-white text-[10px] font-black uppercase tracking-widest rounded-xl hover:scale-105 transition-all shadow-lg"
+            className="ml-auto flex items-center gap-2 px-4 py-2 text-[10px] font-black uppercase tracking-widest rounded-xl hover:scale-105 transition-all shadow-lg"
           >
             <TrendingUp className="w-3 h-3 rotate-45" />
             Order All Missing
@@ -537,10 +537,10 @@ export const InventoryList: React.FC<InventoryListProps> = ({
           value={searchTerm}
           onChange={setSearchTerm}
           placeholder="Search items..."
-          className="flex-1 lg:flex-none lg:w-[156px]"
+          className="flex-1 lg:flex-1 lg:min-w-[240px]"
         />
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:flex lg:flex-row lg:flex-nowrap gap-1.5">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:flex lg:flex-row lg:flex-wrap gap-1.5">
             <div className="relative rounded-xl shadow-sm w-full lg:w-[100px] lg:flex-shrink-0">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                     <Building className="h-3.5 w-3.5 text-text-muted" />

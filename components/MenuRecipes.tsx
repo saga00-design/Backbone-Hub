@@ -2447,12 +2447,12 @@ const handleSave = async () => {
             <Button
               onClick={handleSyncAll}
               disabled={isSyncing}
-              variant="secondary"
-              className="flex-1 sm:flex-none bg-accent/10 border border-accent/30 text-accent hover:bg-accent/20 px-4 sm:px-6 py-3 rounded-xl shadow-lg transition-all flex items-center justify-center font-bold uppercase tracking-widest text-[10px] disabled:opacity-50"
+              variant="primary"
+              className="flex-1 sm:flex-none px-4 sm:px-6 py-3 rounded-xl shadow-lg transition-all flex items-center justify-center font-bold uppercase tracking-widest text-[10px] disabled:opacity-50"
             >
               {isSyncing ? (
                 <>
-                  <span className="animate-spin mr-2 h-4 w-4 border-2 border-accent border-t-transparent rounded-full inline-block" />
+                  <span className="animate-spin mr-2 h-4 w-4 border-2 border-white/30 border-t-white rounded-full inline-block" />
                   Syncing...
                 </>
               ) : (
