@@ -3,7 +3,7 @@ import Papa from 'papaparse';
 import { toast } from 'sonner';
 import { Upload, AlertTriangle, AlertCircle, CheckCircle2, History, Shield, UserPlus } from 'lucide-react';
 import { Button } from './Button';
-import { StaffMember } from '../types';
+import { StaffMember, LabourShift } from '../types';
 import {
   RotaCsvRow,
   ParsedShiftRow,
@@ -14,6 +14,7 @@ import {
 
 interface LabourImportPanelProps {
   staff: StaffMember[];
+  shifts: LabourShift[];
   importLogs: any[];
   onImported?: () => void;
 }
@@ -23,7 +24,7 @@ const flagBadgeClass = (severity: 'error' | 'warning') =>
     ? 'bg-cta/10 text-cta border-cta/20'
     : 'bg-amber-50 text-amber-700 border-amber-200';
 
-export const LabourImportPanel: React.FC<LabourImportPanelProps> = ({ staff, importLogs, onImported }) => {
+export const LabourImportPanel: React.FC<LabourImportPanelProps> = ({ staff, shifts, importLogs, onImported }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [step, setStep] = useState<'upload' | 'preview'>('upload');
   const [headerError, setHeaderError] = useState<string[] | null>(null);
@@ -68,7 +69,7 @@ export const LabourImportPanel: React.FC<LabourImportPanelProps> = ({ staff, imp
               setParseError('No valid rows found in this file.');
               return;
             }
-            const rows = buildRotaImportPreview(results.data, staff);
+            const rows = buildRotaImportPreview(results.data, staff, shifts);
             setPreviewRows(rows);
             setSelectedRowIndexes(new Set(rows.filter(r => r.includeByDefault).map(r => r.rowIndex)));
             setStep('preview');
@@ -126,6 +127,7 @@ export const LabourImportPanel: React.FC<LabourImportPanelProps> = ({ staff, imp
 
   const errorRowCount = previewRows.filter(r => r.flags.some(f => f.severity === 'error')).length;
   const duplicateIdentityCount = previewRows.filter(r => r.flags.some(f => f.code === 'POSSIBLE_DUPLICATE_IDENTITY')).length;
+  const alreadyImportedCount = previewRows.filter(r => r.flags.some(f => f.code === 'DUPLICATE_ALREADY_IMPORTED')).length;
   const unmatchedCount = previewRows.filter(r => r.flags.some(f => f.code === 'UNMATCHED_STAFF')).length;
 
   if (step === 'upload') {
@@ -222,6 +224,7 @@ export const LabourImportPanel: React.FC<LabourImportPanelProps> = ({ staff, imp
             {selectedRowIndexes.size} selected to import
             {errorRowCount > 0 && <span className="text-cta"> · {errorRowCount} with errors</span>}
             {duplicateIdentityCount > 0 && <span className="text-amber-600"> · {duplicateIdentityCount} possible duplicate identity</span>}
+            {alreadyImportedCount > 0 && <span className="text-amber-600"> · {alreadyImportedCount} already imported</span>}
             {unmatchedCount > 0 && <span className="text-amber-600"> · {unmatchedCount} unmatched staff</span>}
           </p>
         </div>
@@ -244,6 +247,17 @@ export const LabourImportPanel: React.FC<LabourImportPanelProps> = ({ staff, imp
             Possible duplicate identity detected — these rows are unchecked by default. Review the "Matched Staff" column below:
             pick the same existing profile for both names if they're the same person, or leave separate if they genuinely aren't,
             then tick the row(s) to include them.
+          </p>
+        </div>
+      )}
+
+      {alreadyImportedCount > 0 && (
+        <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl flex items-start gap-3">
+          <History className="w-4 h-4 text-amber-700 flex-shrink-0 mt-0.5" />
+          <p className="text-xs font-bold text-amber-800">
+            {alreadyImportedCount} row{alreadyImportedCount !== 1 ? 's' : ''} match a shift already imported for that employee and date —
+            unchecked by default so re-importing this file doesn't silently double their hours and cost. Only tick a flagged row
+            if you're intentionally correcting or replacing an earlier import.
           </p>
         </div>
       )}

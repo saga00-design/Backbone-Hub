@@ -1,4 +1,4 @@
-import { StaffMember } from '../types';
+import { StaffMember, LabourShift } from '../types';
 import { getShiftWindowForHour } from '../constants';
 import { getBusinessDayFor } from '../utils/businessDay';
 
@@ -58,6 +58,10 @@ export interface ParsedShiftRow {
 
 const TOLERANCE_HOURS = 0.05; // ~3 minutes
 const TOLERANCE_COST = 0.05; // pence-level rounding
+
+// Single source of truth for the source label written on every shift this importer creates —
+// reused by labourImportService.ts's commit step so the two never drift apart.
+export const ROTA_IMPORT_SOURCE = 'Rota Export CSV';
 
 export function validateRotaCsvHeaders(fields: string[]): { valid: boolean; missing: string[] } {
   const present = new Set(fields.map(f => f.trim()));
@@ -169,8 +173,38 @@ function weekdayName(date: Date): string {
   return date.toLocaleDateString('en-GB', { timeZone: 'Europe/London', weekday: 'long' });
 }
 
-export function buildRotaImportPreview(csvRows: RotaCsvRow[], staff: StaffMember[]): ParsedShiftRow[] {
+/** Identity used to match a CSV row against already-imported shifts: the matched staff
+ * profile id when there is one, otherwise the normalized raw employee name (so unmatched
+ * staff can still be detected as duplicates of themselves on re-import). */
+function shiftIdentityKey(staffId: string | null | undefined, employeeName: string): string {
+  return staffId || normalizeName(employeeName);
+}
+
+function existingShiftKey(source: string, date: string, identity: string): string {
+  return `${source}::${date}::${identity}`;
+}
+
+/** Builds a lookup of every already-imported shift's (source, date, employee identity)
+ * combination, so a re-uploaded CSV can be checked row-by-row against real, already-saved
+ * data — not just against other rows in the same file. */
+function buildExistingShiftKeySet(existingShifts: LabourShift[]): Set<string> {
+  const set = new Set<string>();
+  existingShifts.forEach(s => {
+    if (!s.date) return;
+    const identity = shiftIdentityKey(s.staffId, s.employeeName);
+    if (!identity) return;
+    set.add(existingShiftKey(s.source, s.date, identity));
+  });
+  return set;
+}
+
+export function buildRotaImportPreview(
+  csvRows: RotaCsvRow[],
+  staff: StaffMember[],
+  existingShifts: LabourShift[] = []
+): ParsedShiftRow[] {
   const duplicateIdentities = detectDuplicateIdentities(csvRows.map(r => r['Employee Name']));
+  const existingShiftKeys = buildExistingShiftKeySet(existingShifts);
 
   return csvRows.map((raw, rowIndex): ParsedShiftRow => {
     const flags: RowFlag[] = [];
@@ -257,11 +291,22 @@ export function buildRotaImportPreview(csvRows: RotaCsvRow[], staff: StaffMember
       });
     }
 
+    if (businessDate) {
+      const identity = shiftIdentityKey(matchedStaff?.id || null, employeeNameRaw);
+      if (identity && existingShiftKeys.has(existingShiftKey(ROTA_IMPORT_SOURCE, businessDate, identity))) {
+        flags.push({
+          code: 'DUPLICATE_ALREADY_IMPORTED',
+          severity: 'warning',
+          message: `A shift for "${employeeNameRaw}" on ${businessDate} has already been imported. Re-importing this row will double their hours and cost for that day — confirm before import.`
+        });
+      }
+    }
+
     const startHour = Math.floor(parseTimeToHourFraction(raw['Start Time']) || 0);
     const shiftWindow = getShiftWindowForHour(startHour).name;
 
     const hasError = flags.some(f => f.severity === 'error');
-    const hasDuplicateFlag = flags.some(f => f.code === 'POSSIBLE_DUPLICATE_IDENTITY');
+    const hasDuplicateFlag = flags.some(f => f.code === 'POSSIBLE_DUPLICATE_IDENTITY' || f.code === 'DUPLICATE_ALREADY_IMPORTED');
 
     return {
       rowIndex,

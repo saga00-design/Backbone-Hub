@@ -28,6 +28,7 @@ import {
   getWeeksStartingInMonth,
   getQuarterWeekStarts
 } from '../utils/fiscalCalendar';
+import { sumLabourCostForWeeks } from '../services/labourImportService';
 
 interface LabourIntelligenceProps {
   staff: StaffMember[];
@@ -208,17 +209,10 @@ export const LabourIntelligence: React.FC<LabourIntelligenceProps> = ({ staff, o
   }, [viewMode, rollupPeriod, rollupFiscalYear, rollupMonth, rollupMonthYear, rollupQuarter]);
 
   const rollup = useMemo(() => {
-    const expectedKeys = expectedWeekStarts.map(toDateKey);
-    let pence = 0;
-    let weeksWithData = 0;
-    expectedKeys.forEach(k => {
-      const bucket = weeklyBuckets.get(k);
-      if (bucket) {
-        pence += bucket.totalCostPence;
-        weeksWithData += 1;
-      }
-    });
-    return { totalCost: pence / 100, weeksWithData, expectedCount: expectedKeys.length };
+    const weeklyPenceMap = new Map(
+      Array.from(weeklyBuckets.entries()).map(([k, bucket]) => [k, bucket.totalCostPence])
+    );
+    return sumLabourCostForWeeks(weeklyPenceMap, expectedWeekStarts);
   }, [expectedWeekStarts, weeklyBuckets]);
 
   // --- Custom date range (Step 3) — sums whatever falls within the exact selected dates,
@@ -271,6 +265,7 @@ export const LabourIntelligence: React.FC<LabourIntelligenceProps> = ({ staff, o
         <div className="bg-white p-8 rounded-3xl border border-border-grey shadow-sm min-h-[500px]">
           <LabourImportPanel
             staff={staff}
+            shifts={shifts}
             importLogs={importLogs}
             onImported={() => setView('dashboard')}
           />
