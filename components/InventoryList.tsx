@@ -266,7 +266,7 @@ export const InventoryList: React.FC<InventoryListProps> = ({
 
   const formatPricePerPack = (item: InventoryItem) => {
     const factor = convertToBaseUnit(1, item.unit);
-    const pricePerPack = item.pricePerUnit * factor;
+    const pricePerPack = toSafeNumber(item.pricePerUnit) * factor;
     
     // Format with at least 2 decimals, up to 4 if needed
     const formattedPrice = pricePerPack.toLocaleString('en-GB', {
@@ -1117,7 +1117,7 @@ export const InventoryList: React.FC<InventoryListProps> = ({
                     )}
                     {visibleColumns.includes('Retail Price') && (
                       <td className="px-3 py-2 whitespace-nowrap text-xs font-bold text-text-navy">
-                        {item.retailPrice !== undefined ? `£${item.retailPrice.toFixed(2)}` : '-'}
+                        {item.retailPrice !== undefined ? `£${toSafeNumber(item.retailPrice).toFixed(2)}` : '-'}
                       </td>
                     )}
                     {visibleColumns.includes('VAT') && (
@@ -1263,11 +1263,11 @@ export const InventoryList: React.FC<InventoryListProps> = ({
                   </div>
                   <div>
                     <p className="text-text-muted mb-1.5">Total Cost</p>
-                    <p className="text-sm font-bold text-accent">£{(toSafeNumber(item.quantity) * toSafeNumber(item.unitSize, 1) * toSafeNumber(item.pricePerUnit)).toFixed(2)}</p>
+                    <p className="text-sm font-bold text-accent">£{calculateTotalCost(item).toFixed(2)}</p>
                   </div>
                   <div>
                     <p className="text-text-muted mb-1.5">Retail Price</p>
-                    <p className="text-sm font-bold text-text-navy">{item.retailPrice !== undefined ? `£${item.retailPrice.toFixed(2)}` : '-'}</p>
+                    <p className="text-sm font-bold text-text-navy">{item.retailPrice !== undefined ? `£${toSafeNumber(item.retailPrice).toFixed(2)}` : '-'}</p>
                   </div>
                   <div>
                     <p className="text-text-muted mb-1.5">VAT</p>

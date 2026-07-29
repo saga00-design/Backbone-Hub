@@ -12,7 +12,6 @@ import {
   addDoc,
   deleteDoc,
   getDocs,
-  orderBy,
   LOCATION_ID,
   handleFirestoreError,
   OperationType,
@@ -168,12 +167,15 @@ export const StockAvailabilityManager: React.FC<StockAvailabilityManagerProps> =
 
   const pushToActiveBriefing = async (itemName: string) => {
     try {
+      // ShiftBriefingManager guarantees at most one note has isActiveOnPOS: true at a time
+      // (it deactivates all others in the same batch that sets this one), so no orderBy is
+      // needed here — and skipping it avoids requiring a composite index for a field
+      // ('createdAt') that shiftBriefings documents don't even have.
       const snap = await getDocs(
         query(
           collection(db, 'shiftBriefings'),
           where('locationId', '==', LOCATION_ID),
-          where('isActive', '==', true),
-          orderBy('createdAt', 'desc')
+          where('isActiveOnPOS', '==', true)
         )
       );
       if (snap.empty) return;
@@ -185,8 +187,10 @@ export const StockAvailabilityManager: React.FC<StockAvailabilityManagerProps> =
         });
         toast.info(`Added "${itemName}" to today's active briefing 86 list.`);
       }
-    } catch {
-      // Non-critical — don't block the main action if no active briefing exists
+    } catch (err) {
+      // Non-critical — don't block the main 86 action if this fails, but log it so a
+      // real failure here is visible instead of silently vanishing.
+      console.error('Failed to push 86 item to active briefing:', err);
     }
   };
 

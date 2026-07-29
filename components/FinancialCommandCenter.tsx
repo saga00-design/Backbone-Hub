@@ -1128,7 +1128,7 @@ export const FinancialCommandCenter: React.FC<FinancialCommandCenterProps> = ({
                 <div key={s.id} className="space-y-2">
                   <div className="flex justify-between items-center text-[11px] font-bold text-text-navy uppercase">
                     <span>{s.firstName} {s.lastName}</span>
-                    <span className="text-text-muted">£{s.performanceMetrics?.totalSales.toLocaleString() || 0}</span>
+                    <span className="text-text-muted">£{(s.performanceMetrics?.totalSales ?? 0).toLocaleString()}</span>
                   </div>
                   <div className="h-1.5 w-full bg-secondary-surface rounded-full overflow-hidden">
                     <div

@@ -119,6 +119,16 @@ export function convertToBaseUnit(quantity: number, unit: Unit, unitSize?: numbe
 export function convertFromBaseUnit(baseQuantity: number, targetUnit: Unit, unitSize?: number): number {
   baseQuantity = toSafeNumber(baseQuantity);
   const factor = CONVERSION_FACTORS[targetUnit] || 1;
+
+  // Mirror convertToBaseUnit's metric special-case: a unitSize on a kg/g/L/ml-labeled item
+  // describes packaging (e.g. a 100g pack), not a second unit conversion on top of the
+  // fixed metric factor. Without this, an item whose unit label already equals its base
+  // unit but also has a pack size set gets divided by unitSize a second time here, showing
+  // e.g. 0.15 instead of 15 (see Achiote Paste).
+  if (['kg', 'g', 'gr', 'L', 'ml', 'cl'].includes(targetUnit)) {
+    return factor > 0 ? roundTo(baseQuantity / factor) : 0;
+  }
+
   const size = unitSize !== undefined ? toSafeNumber(unitSize, 1) : 1;
   const totalFactor = size * factor;
   return totalFactor > 0 ? roundTo(baseQuantity / totalFactor) : 0;
