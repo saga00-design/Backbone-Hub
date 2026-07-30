@@ -782,11 +782,11 @@ export const TrainingCenter: React.FC<TrainingCenterProps> = ({ recipes, invento
                 spirits/product entry) doesn't have them. */}
             <div className="px-3 pt-3 space-y-2">
               {(item as any).description && (
-                <p className="text-[8px] italic text-gray-500 dark:text-slate-400 leading-snug">{(item as any).description}</p>
+                <p className="text-[11px] italic text-gray-500 dark:text-slate-400 leading-snug">{(item as any).description}</p>
               )}
 
               {(item as any).type === 'menu_item' && typeof (item as any).sellingPrice === 'number' && (
-                <div className="flex justify-between text-[9px] font-black">
+                <div className="flex justify-between text-[11px] font-black">
                   <span className="text-text-muted uppercase tracking-wide">Menu Price</span>
                   <span className="text-gray-900 dark:text-white">£{(item as any).sellingPrice.toFixed(2)}</span>
                 </div>
@@ -794,8 +794,8 @@ export const TrainingCenter: React.FC<TrainingCenterProps> = ({ recipes, invento
 
               {Array.isArray((item as any).ingredients) && (item as any).ingredients.length > 0 && (
                 <div className="pt-2 border-t border-gray-100 dark:border-slate-800">
-                  <p className="text-[7px] font-black text-text-muted uppercase tracking-widest mb-0.5">Ingredients ({(item as any).ingredients.length})</p>
-                  <p className="text-[8px] text-gray-900 dark:text-white leading-snug">
+                  <p className="text-[9px] font-black text-text-muted uppercase tracking-widest mb-0.5">Ingredients ({(item as any).ingredients.length})</p>
+                  <p className="text-[11px] text-gray-900 dark:text-white leading-snug">
                     {(item as any).ingredients.map((ing: any) => inventoryItems.find(i => i.id === ing.inventoryItemId)?.name || 'Unknown').join(', ')}
                   </p>
                 </div>
@@ -803,24 +803,24 @@ export const TrainingCenter: React.FC<TrainingCenterProps> = ({ recipes, invento
 
               {(item as any).type === 'menu_item' && (
                 <div className="pt-2 border-t border-gray-100 dark:border-slate-800">
-                  <p className="text-[7px] font-black text-text-muted uppercase tracking-widest mb-0.5">Allergies</p>
+                  <p className="text-[9px] font-black text-text-muted uppercase tracking-widest mb-0.5">Allergies</p>
                   {(item as any).allergies && (item as any).allergies.length > 0 ? (
                     <div className="flex flex-wrap gap-1">
                       {(item as any).allergies.map((allergy: string) => (
-                        <div key={allergy} className="flex items-center gap-0.5 bg-gray-100 dark:bg-slate-800 px-1 py-0.5 rounded text-gray-500 dark:text-slate-400 [&>svg]:h-3 [&>svg]:w-3">
-                          {allergyIcons[allergy] || <AlertCircle className="h-3 w-3" />}
-                          <span className="text-[7px] font-bold">{allergy}</span>
+                        <div key={allergy} className="flex items-center gap-1 bg-gray-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-gray-500 dark:text-slate-400 [&>svg]:h-3.5 [&>svg]:w-3.5">
+                          {allergyIcons[allergy] || <AlertCircle className="h-3.5 w-3.5" />}
+                          <span className="text-[9px] font-bold">{allergy}</span>
                         </div>
                       ))}
                     </div>
                   ) : (
-                    <span className="text-[8px] font-bold text-text-muted uppercase tracking-widest">No allergens</span>
+                    <span className="text-[10px] font-bold text-text-muted uppercase tracking-widest">No allergens</span>
                   )}
                 </div>
               )}
 
               {!!(item as any).calories && (
-                <div className="pt-2 border-t border-gray-100 dark:border-slate-800 flex justify-between text-[8px] font-bold">
+                <div className="pt-2 border-t border-gray-100 dark:border-slate-800 flex justify-between text-[10px] font-bold">
                   <span className="text-text-muted uppercase tracking-wide">Calories</span>
                   <span className="text-gray-900 dark:text-white">{(item as any).calories} kcal</span>
                 </div>

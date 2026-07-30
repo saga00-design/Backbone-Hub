@@ -3444,28 +3444,28 @@ const handleSave = async () => {
                         removed for now per feedback; still viewable via click-through. */}
                     <div className="p-3 space-y-2">
                       {recipe.description && (
-                        <p className="text-[8px] italic text-text-muted leading-snug">{recipe.description}</p>
+                        <p className="text-[11px] italic text-text-muted leading-snug">{recipe.description}</p>
                       )}
 
                       {/* Pricing */}
                       <div className="pt-2 border-t border-border-grey space-y-0.5">
-                        <p className="text-[7px] font-black text-text-muted uppercase tracking-widest mb-1">Pricing</p>
-                        <div className="flex justify-between text-[8px] font-bold">
+                        <p className="text-[9px] font-black text-text-muted uppercase tracking-widest mb-1">Pricing</p>
+                        <div className="flex justify-between text-[10px] font-bold">
                           <span className="text-text-muted uppercase tracking-wide">Cost (COGS)</span>
                           <span className="text-text-navy">£{cost.toFixed(2)}</span>
                         </div>
-                        <div className="flex justify-between text-[8px] font-bold">
+                        <div className="flex justify-between text-[10px] font-bold">
                           <span className="text-text-muted uppercase tracking-wide">Net (exc VAT)</span>
                           <span className="text-text-navy">£{priceExcVat.toFixed(2)}</span>
                         </div>
-                        <div className="flex justify-between text-[9px] font-black">
+                        <div className="flex justify-between text-[11px] font-black">
                           <span className="text-text-muted uppercase tracking-wide">Menu Price</span>
                           <span className="text-text-navy">£{priceIncVat.toFixed(2)}</span>
                         </div>
                         {checkPermission('recipes', 'viewCosts') && (
-                          <div className="flex justify-between text-[8px] font-black">
+                          <div className="flex justify-between text-[10px] font-black">
                             <span className="text-text-muted uppercase tracking-wide flex items-center gap-1">
-                              {isLowMargin && <AlertCircle className="h-2.5 w-2.5 text-error" />}
+                              {isLowMargin && <AlertCircle className="h-3 w-3 text-error" />}
                               GP Margin
                             </span>
                             <span className={isLowMargin ? 'text-error' : 'text-accent'}>{marginPercent.toFixed(1)}%</span>
@@ -3475,32 +3475,32 @@ const handleSave = async () => {
 
                       {/* Ingredients — full list */}
                       <div className="pt-2 border-t border-border-grey">
-                        <p className="text-[7px] font-black text-text-muted uppercase tracking-widest mb-0.5">Ingredients ({recipe.ingredients.length})</p>
-                        <p className="text-[8px] text-text-navy leading-snug">
+                        <p className="text-[9px] font-black text-text-muted uppercase tracking-widest mb-0.5">Ingredients ({recipe.ingredients.length})</p>
+                        <p className="text-[11px] text-text-navy leading-snug">
                           {recipe.ingredients.map(ing => inventoryItems.find(i => i.id === ing.inventoryItemId)?.name || 'Unknown').join(', ')}
                         </p>
                       </div>
 
                       {/* Allergies — full list */}
                       <div className="pt-2 border-t border-border-grey">
-                        <p className="text-[7px] font-black text-text-muted uppercase tracking-widest mb-0.5">Allergies</p>
+                        <p className="text-[9px] font-black text-text-muted uppercase tracking-widest mb-0.5">Allergies</p>
                         {recipe.allergies && recipe.allergies.length > 0 ? (
                           <div className="flex flex-wrap gap-1">
                             {recipe.allergies.map(a => (
-                              <div key={a} className="flex items-center gap-0.5 bg-secondary-surface px-1 py-0.5 rounded text-text-muted [&>svg]:h-3 [&>svg]:w-3">
-                                {allergyIcons[a] || <AlertCircle className="h-3 w-3" />}
-                                <span className="text-[7px] font-bold">{a}</span>
+                              <div key={a} className="flex items-center gap-1 bg-secondary-surface px-1.5 py-0.5 rounded text-text-muted [&>svg]:h-3.5 [&>svg]:w-3.5">
+                                {allergyIcons[a] || <AlertCircle className="h-3.5 w-3.5" />}
+                                <span className="text-[9px] font-bold">{a}</span>
                               </div>
                             ))}
                           </div>
                         ) : (
-                          <span className="text-[8px] font-bold text-text-muted uppercase tracking-widest">No allergens</span>
+                          <span className="text-[10px] font-bold text-text-muted uppercase tracking-widest">No allergens</span>
                         )}
                       </div>
 
                       {/* Calories */}
                       {!!recipe.calories && (
-                        <div className="pt-2 border-t border-border-grey flex justify-between text-[8px] font-bold">
+                        <div className="pt-2 border-t border-border-grey flex justify-between text-[10px] font-bold">
                           <span className="text-text-muted uppercase tracking-wide">Calories</span>
                           <span className="text-text-navy">{recipe.calories} kcal</span>
                         </div>
