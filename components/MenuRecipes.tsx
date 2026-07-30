@@ -1560,20 +1560,44 @@ const handleSave = async () => {
         format: 'a4',
       });
 
-      const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pageHeight = pdf.internal.pageSize.getHeight();
-      const imgHeight = (canvas.height * pdfWidth) / canvas.width;
-      let heightLeft = imgHeight;
-      let position = 0;
+      // Real printable margin on every side — the old version placed the image at x=0 using
+      // the full page width/height with no margin at all, so the last column(s) sat right on
+      // (or past) the page's physical edge.
+      const margin = 10;
+      const pdfWidthFull = pdf.internal.pageSize.getWidth();
+      const pdfHeightFull = pdf.internal.pageSize.getHeight();
+      const contentWidth = pdfWidthFull - margin * 2;
+      const contentHeight = pdfHeightFull - margin * 2;
 
-      pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, imgHeight);
-      heightLeft -= pageHeight;
+      let renderWidth = contentWidth;
+      let renderHeight = (canvas.height * renderWidth) / canvas.width;
 
-      while (heightLeft > 0) {
-        position = heightLeft - imgHeight;
-        pdf.addPage();
-        pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, imgHeight);
-        heightLeft -= pageHeight;
+      // Avoid an awkward near-empty trailing page: if the table only slightly overflows into
+      // one extra page (the last page would be mostly blank), shrink by up to 15% so the whole
+      // table fits into one fewer page instead — small enough to stay fully legible.
+      const naturalPageCount = Math.ceil(renderHeight / contentHeight);
+      if (naturalPageCount > 1) {
+        const lastPageFraction = (renderHeight - (naturalPageCount - 1) * contentHeight) / contentHeight;
+        if (lastPageFraction < 0.2) {
+          const targetHeight = (naturalPageCount - 1) * contentHeight;
+          const shrinkFactor = targetHeight / renderHeight;
+          if (shrinkFactor >= 0.85) {
+            renderHeight = targetHeight;
+            renderWidth = renderWidth * shrinkFactor;
+          }
+        }
+      }
+
+      const xOffset = margin + (contentWidth - renderWidth) / 2; // center if shrunk
+
+      let topOffset = 0; // how much of renderHeight has already been drawn on previous pages
+      let pageIndex = 0;
+      while (topOffset < renderHeight) {
+        if (pageIndex > 0) pdf.addPage();
+        const y = margin - topOffset;
+        pdf.addImage(imgData, 'PNG', xOffset, y, renderWidth, renderHeight);
+        topOffset += contentHeight;
+        pageIndex++;
       }
 
       pdf.save('allergy-matrix.pdf');
@@ -2611,11 +2635,11 @@ const handleSave = async () => {
             <table className="min-w-full divide-y divide-border-grey">
             <thead className="bg-main-bg">
               <tr>
-                <th className="px-6 py-4 text-left text-xs font-bold text-text-muted uppercase tracking-wider sticky left-0 bg-main-bg z-10 border-r border-border-grey">Menu Item</th>
+                <th className="px-3 py-2 text-left text-xs font-bold text-text-muted uppercase tracking-wider sticky left-0 bg-main-bg z-10 border-r border-border-grey">Menu Item</th>
                 {ALLERGIES_LIST.map(allergy => (
-                  <th key={allergy} className="px-4 py-4 text-center text-xs font-bold text-text-muted uppercase tracking-wider border-r border-border-grey min-w-[120px]">
-                    <div className="flex flex-col items-center justify-center gap-2">
-                      <div className="p-2 bg-card-bg rounded-lg border border-border-grey">
+                  <th key={allergy} className="px-1.5 py-2 text-center text-xs font-bold text-text-muted uppercase tracking-wider border-r border-border-grey min-w-[80px]">
+                    <div className="flex flex-col items-center justify-center gap-1">
+                      <div className="p-1 bg-card-bg rounded-lg border border-border-grey">
                         {allergyIcons[allergy] || '⚠️'}
                       </div>
                       <span className="whitespace-normal text-center leading-tight">
@@ -2629,22 +2653,22 @@ const handleSave = async () => {
             <tbody className="bg-card-bg divide-y divide-border-grey">
               {recipes.filter(r => r.type === 'menu_item' && (filterCategory === 'All' || r.category === filterCategory)).map((recipe, idx) => (
                 <tr key={recipe.id} className="hover:bg-secondary-surface transition-colors">
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-text-navy sticky left-0 bg-card-bg z-10 border-r border-border-grey">
+                  <td className="px-3 py-2 whitespace-nowrap text-sm font-bold text-text-navy sticky left-0 bg-card-bg z-10 border-r border-border-grey">
                     {recipe.name}
                   </td>
                   {ALLERGIES_LIST.map(allergy => {
                     let ingredientsWithAllergy: string[] = [];
-                    
+
                     if (recipe.allergyIngredients && recipe.allergyIngredients[allergy]) {
                       ingredientsWithAllergy = recipe.allergyIngredients[allergy];
                     } else if (recipe.ingredients) {
                       ingredientsWithAllergy = recipe.ingredients.map(ing => {
                         const item = inventoryItems.find(i => i.id === ing.inventoryItemId);
                         if (!item) return null;
-                        
+
                         if (item.allergies?.includes(allergy)) return item.name;
                         if (ingredientAllergies[item.name]?.includes(allergy)) return item.name;
-                        
+
                         return null;
                       }).filter(Boolean) as string[];
                     }
@@ -2652,16 +2676,16 @@ const handleSave = async () => {
                     const hasAllergy = recipe.allergies?.includes(allergy) || ingredientsWithAllergy.length > 0;
 
                     return (
-                      <td key={allergy} className={`px-2 py-4 text-center border-r border-border-grey align-top ${hasAllergy ? 'bg-error/5' : ''}`}>
+                      <td key={allergy} className={`px-1 py-2 text-center border-r border-border-grey align-top ${hasAllergy ? 'bg-error/5' : ''}`}>
                         {hasAllergy ? (
-                          <div className="flex flex-col items-center gap-2">
-                            <span className="inline-flex items-center justify-center h-8 w-8 rounded-xl bg-error/20 text-error shrink-0 border border-error/30">
-                              <Check className="h-5 w-5" />
+                          <div className="flex flex-col items-center gap-1">
+                            <span className="inline-flex items-center justify-center h-6 w-6 rounded-lg bg-error/20 text-error shrink-0 border border-error/30">
+                              <Check className="h-4 w-4" />
                             </span>
                             {ingredientsWithAllergy.length > 0 && (
-                              <div className="flex flex-col items-center mt-1 w-full space-y-1">
+                              <div className="flex flex-col items-center mt-0.5 w-full space-y-0.5">
                                 {ingredientsWithAllergy.map((ingName, i) => (
-                                  <span key={i} className="text-[9px] leading-tight text-error/80 text-center w-full break-words px-1" title={ingName}>
+                                  <span key={i} className="text-[8px] leading-tight text-error/80 text-center w-full break-words px-0.5" title={ingName}>
                                     {ingName}
                                   </span>
                                 ))}
