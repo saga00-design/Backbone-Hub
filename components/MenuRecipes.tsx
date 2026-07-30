@@ -94,6 +94,7 @@ export const MenuRecipes: React.FC<MenuRecipesProps> = ({
   const [activeTab, setActiveTab] = useState<'basic' | 'pricing' | 'ingredients' | 'allergies' | 'training' | 'sustainability' | 'sides'>('basic');
   const [targetGP, setTargetGP] = useState<number>(75);
   const [isOptimizing, setIsOptimizing] = useState(false);
+  const [showRecipeBookMenu, setShowRecipeBookMenu] = useState(false);
 
   const [ingredientSearchTerm, setIngredientSearchTerm] = useState('');
   const [isDetectingAllergies, setIsDetectingAllergies] = useState(false);
@@ -1606,7 +1607,7 @@ const handleSave = async () => {
     }
   };
 
-  const downloadRecipeBook = async () => {
+  const downloadRecipeBook = async (filterType: 'food' | 'drinks' | 'both' = 'both') => {
     const doc = new jsPDF();
     const logoUrl = "Backbonehub-ico.png";
     let logoData = "";
@@ -1615,9 +1616,9 @@ const handleSave = async () => {
     } catch (e) {}
 
     // --- COVER PAGE ---
-    doc.setFillColor(15, 15, 15); // Dark background
+    doc.setFillColor(255, 255, 255); // White background (was solid dark 15,15,15)
     doc.rect(0, 0, 210, 297, 'F');
-    
+
     if (logoData.startsWith('data:image')) {
       doc.addImage(logoData, 'JPEG', 85, 40, 40, 40);
     }
@@ -1626,19 +1627,22 @@ const handleSave = async () => {
     doc.setTextColor(72, 101, 129); // brand-600
     doc.setFont("helvetica", "bold");
     doc.text("Backbone Hub", 105, 100, { align: 'center' });
-    
+
     doc.setDrawColor(72, 101, 129);
     doc.setLineWidth(1.5);
     doc.line(50, 105, 160, 105);
 
     doc.setFontSize(32);
-    doc.setTextColor(255, 255, 255);
+    doc.setTextColor(15, 15, 15); // Dark text (was white, invisible against the old dark background)
     doc.text("MASTER RECIPE BOOK", 105, 130, { align: 'center' });
     
     doc.setFontSize(14);
     doc.setFont("helvetica", "normal");
     doc.setTextColor(150, 150, 150);
-    doc.text("Food Menu • Beverage Menu • Batches", 105, 145, { align: 'center' });
+    const coverSubtitle = filterType === 'food' ? 'Food Menu'
+      : filterType === 'drinks' ? 'Beverage Menu'
+      : 'Food Menu • Beverage Menu • Batches';
+    doc.text(coverSubtitle, 105, 145, { align: 'center' });
     
     doc.setFontSize(12);
     doc.text(`Version 2.0 | Generated: ${new Date().toLocaleDateString()}`, 105, 260, { align: 'center' });
@@ -1655,8 +1659,26 @@ const handleSave = async () => {
     doc.text("TABLE OF CONTENTS", 14, 30);
     doc.line(14, 35, 196, 35);
 
-    const allRecipes = [...recipes].sort((a, b) => 
-      (a.category || '').localeCompare(b.category || '') || 
+    // Same Food/Beverage classification as the on-screen Food/Beverage tabs (filteredRecipes
+    // above) — menu_item + category, with Sides/Extras/Add-ons excluded from Food since those
+    // belong to the separate Sides & Add-ons tab, not the Food menu.
+    const isFoodMenuItem = (r: Recipe) => {
+      const isSideOrAddonCategory =
+        r.posCategoryId === 'cat_sides' ||
+        r.posCategoryId === 'cat_extras' ||
+        r.posCategoryId === 'cat_addons' ||
+        mapCategoryId(r) === 'cat_sides' ||
+        mapCategoryId(r) === 'cat_extras';
+      return r.type === 'menu_item' && r.category === 'Food' && !isSideOrAddonCategory;
+    };
+    const isBeverageMenuItem = (r: Recipe) => r.type === 'menu_item' && r.category === 'Beverage';
+
+    const sourceRecipes = filterType === 'food' ? recipes.filter(isFoodMenuItem)
+      : filterType === 'drinks' ? recipes.filter(isBeverageMenuItem)
+      : recipes; // 'both' — unfiltered, matches the existing full-book behavior (incl. Batches)
+
+    const allRecipes = [...sourceRecipes].sort((a, b) =>
+      (a.category || '').localeCompare(b.category || '') ||
       (a.name || '').localeCompare(b.name || '')
     );
 
@@ -1781,23 +1803,25 @@ const handleSave = async () => {
       doc.text("Cost of Goods (COGS):", 14, yPos);
       doc.text(`£${cost.toFixed(2)}`, 60, yPos);
 
+      // 6mm between each line below (was 3mm for these three specifically, which visually
+      // collided at 10pt/bold — every other line in this block already uses a 6mm rhythm).
       doc.text(`Menu Price (inc. VAT): £${recipe.sellingPrice.toFixed(2)}`, 14, yPos + 6);
-      doc.text(`Net (exc. VAT): £${priceExcVat.toFixed(2)}`, 14, yPos + 9);
+      doc.text(`Net (exc. VAT): £${priceExcVat.toFixed(2)}`, 14, yPos + 12);
 
       doc.setFont("helvetica", "bold");
-      doc.text("Gross Profit Margin:", 14, yPos + 12);
+      doc.text("Gross Profit Margin:", 14, yPos + 18);
       if (marginPercent >= targetGP) doc.setTextColor(22, 163, 74);
       else doc.setTextColor(220, 38, 38);
-      doc.text(`${marginPercent.toFixed(1)}%`, 60, yPos + 12);
+      doc.text(`${marginPercent.toFixed(1)}%`, 60, yPos + 18);
       doc.setTextColor(15, 15, 15);
 
       if (recipe.calories) {
         doc.setFont("helvetica", "bold");
         doc.setTextColor(72, 101, 129);
-        doc.text(`CALORIES: ${recipe.calories} kcal`, 14, yPos + 18);
+        doc.text(`CALORIES: ${recipe.calories} kcal`, 14, yPos + 24);
       }
-      
-      yPos += 25;
+
+      yPos += 31;
 
       // Allergens
       if (recipe.allergies && recipe.allergies.length > 0) {
@@ -1832,7 +1856,11 @@ const handleSave = async () => {
         head: [['Ingredient Name', 'Measurement']],
         body: ingredientRows,
         theme: 'grid',
-        headStyles: { fillGray: 240, textColor: 15, fontStyle: 'bold', fontSize: 9 },
+        // `fillGray` was never a real jspdf-autotable option, so the head row silently fell
+        // back to the theme's own default fill (a green/teal), never the intended light gray.
+        // Using the app's real accent blue (--accent: #0D6EFD) instead, with white text for
+        // contrast against the now-solid fill.
+        headStyles: { fillColor: [13, 110, 253], textColor: 255, fontStyle: 'bold', fontSize: 9 },
         bodyStyles: { fontSize: 9 },
         margin: { left: 14 },
         tableWidth: 100
@@ -1928,7 +1956,8 @@ const handleSave = async () => {
       }
     }
 
-    doc.save(`Backbone_Hub_Recipe_Book_${new Date().toISOString().split('T')[0]}.pdf`);
+    const filenameSuffix = filterType === 'food' ? '_Food' : filterType === 'drinks' ? '_Drinks' : '';
+    doc.save(`Backbone_Hub_Recipe_Book${filenameSuffix}_${new Date().toISOString().split('T')[0]}.pdf`);
   };
 
   const getBase64ImageFromUrl = async (url: string): Promise<string> => {
@@ -2453,14 +2482,42 @@ const handleSave = async () => {
                'Create Batch'}
             </span>
           </Button>
-          <Button
-            onClick={downloadRecipeBook}
-            variant="secondary"
-            className="flex-1 sm:flex-none bg-transparent border border-border-grey text-text-navy hover:bg-secondary-surface px-4 sm:px-6 py-3 rounded-xl shadow-lg transition-all flex items-center justify-center font-bold uppercase tracking-widest text-[10px]"
-          >
-            <Download className="mr-2 h-4 w-4 sm:h-5 sm:w-5" />
-            <span className="inline">Recipe Book</span>
-          </Button>
+          <div className="relative flex-1 sm:flex-none">
+            <Button
+              onClick={() => setShowRecipeBookMenu(o => !o)}
+              variant="secondary"
+              className="w-full bg-transparent border border-border-grey text-text-navy hover:bg-secondary-surface px-4 sm:px-6 py-3 rounded-xl shadow-lg transition-all flex items-center justify-center font-bold uppercase tracking-widest text-[10px]"
+            >
+              <Download className="mr-2 h-4 w-4 sm:h-5 sm:w-5" />
+              <span className="inline">Recipe Book</span>
+              <ChevronDown className={`ml-2 h-3.5 w-3.5 transition-transform ${showRecipeBookMenu ? 'rotate-180' : ''}`} />
+            </Button>
+            {showRecipeBookMenu && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setShowRecipeBookMenu(false)} />
+                <div className="absolute right-0 sm:left-0 mt-2 w-56 bg-card-bg border border-border-grey rounded-xl shadow-2xl z-50 overflow-hidden">
+                  <button
+                    onClick={() => { setShowRecipeBookMenu(false); downloadRecipeBook('food'); }}
+                    className="w-full text-left px-4 py-3 text-[10px] font-bold uppercase tracking-widest text-text-navy hover:bg-secondary-surface transition-colors"
+                  >
+                    Food Only
+                  </button>
+                  <button
+                    onClick={() => { setShowRecipeBookMenu(false); downloadRecipeBook('drinks'); }}
+                    className="w-full text-left px-4 py-3 text-[10px] font-bold uppercase tracking-widest text-text-navy hover:bg-secondary-surface transition-colors border-t border-border-grey"
+                  >
+                    Drinks Only
+                  </button>
+                  <button
+                    onClick={() => { setShowRecipeBookMenu(false); downloadRecipeBook('both'); }}
+                    className="w-full text-left px-4 py-3 text-[10px] font-bold uppercase tracking-widest text-accent hover:bg-accent/10 transition-colors border-t border-border-grey"
+                  >
+                    Both (Full Book)
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
           {onSyncAllToPos && (
             <Button
               onClick={handleSyncAll}
