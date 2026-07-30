@@ -2949,27 +2949,12 @@ const today = londonHour < 6
               </button>
             </div>
           )}
-          <div className="max-w-7xl mx-auto pb-20">
-            <header className="mb-6 sm:mb-8 flex justify-between items-center rounded-md">
-              <div className={`flex flex-col text-text-navy`}>
-                <h1 className="text-xl sm:text-2xl font-bold leading-none">
-                  {currentView === 'dashboard' && 'Smart Dashboard'}
-                  {currentView === 'financial_command' && 'Financial Command Center'}
-                  {currentView === 'inventory' && 'Inventory Management'}
-                  {currentView === 'orders' && 'Stock Orders'}
-                  {currentView === 'recipes' && 'Menu & Recipes'}
-                  {currentView === 'training' && 'Staff Training'}
-                  {currentView === 'sales' && 'Sales Import'}
-                  {currentView === 'stocktake' && 'Stock Count'}
-                  {currentView === 'waste' && 'Waste Management'}
-                  {currentView === 'invoices' && 'Invoice Processing'}
-                  {currentView === 'expenses' && 'Operation Costs'}
-                  {currentView === 'suppliers' && 'Supplier Management'}
-                  {currentView === 'briefing' && 'Shift Briefing & Performance'}
-                  {currentView === 'reports' && 'Business Reports'}
-                  {currentView === 'settings' && 'System Settings'}
-                </h1>
-              </div>
+          <div className={`mx-auto pb-20 ${currentView === 'inventory' ? 'max-w-[1920px]' : 'max-w-7xl'}`}>
+            <header className="mb-6 sm:mb-8 flex justify-end items-center rounded-md">
+              {/* Per-page title (icon + name + subtitle) now lives inside each page's own
+                  component via the shared PageHeader — this bar no longer repeats it in
+                  plain text above, which used to show the page name twice with slightly
+                  different wording (e.g. "Stock Orders" here + "Orders & Purchasing" below). */}
               <button
                 onClick={() => setIsDarkMode(!isDarkMode)}
                 className={`hidden md:flex p-2.5 rounded-xl shadow-sm transition-all focus:outline-none ${isDarkMode ? 'bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-white' : 'bg-card-bg text-text-muted hover:bg-secondary-surface hover:text-accent'}`}

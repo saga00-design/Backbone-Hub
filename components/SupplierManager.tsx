@@ -2,6 +2,7 @@
 import React, { useState } from 'react';
 import { Supplier, InventoryItem, Invoice } from '../types';
 import { Button } from './Button';
+import { PageHeader } from './PageHeader';
 import { Plus, Trash2, Edit2, Phone, Mail, MapPin, Truck, Package, Search, FileText, CheckCircle, XCircle, Clock } from 'lucide-react';
 
 import { ConfirmationModal } from './ConfirmationModal';
@@ -91,36 +92,31 @@ export const SupplierManager: React.FC<SupplierManagerProps> = ({
 
   return (
     <div className="space-y-8">
-      {/* Header */}
-      <div className="bg-white dark:bg-slate-900 shadow-2xl rounded-2xl p-8 flex flex-col lg:flex-row justify-between items-center border border-gray-100 dark:border-slate-800 gap-6 transition-colors">
-        <div>
-          <h2 className="text-2xl font-black text-gray-900 dark:text-white flex items-center tracking-tight uppercase">
-            <div className="bg-accent/10 p-3 rounded-xl mr-4">
-              <Truck className="h-7 w-7 text-accent" />
+      <PageHeader
+        icon={Truck}
+        title="Supplier Management"
+        subtitle="Manage vendor contact details and view supplied items"
+        actions={
+          <>
+            <div className="relative rounded-xl shadow-sm w-full sm:w-64 group">
+              <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                <Search className="h-4 w-4 text-gray-400 group-focus-within:text-accent transition-colors" />
+              </div>
+              <input
+                type="text"
+                className="bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-900 dark:text-white block w-full pl-11 py-2.5 text-sm rounded-xl focus:outline-none focus:ring-2 focus:ring-accent transition-all placeholder-gray-400 dark:placeholder-slate-600"
+                placeholder="Search suppliers..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+              />
             </div>
-            Supplier Management
-          </h2>
-          <p className="mt-1 text-[10px] font-bold text-gray-400 dark:text-slate-500 uppercase tracking-widest">Manage vendor contact details and view supplied items.</p>
-        </div>
-        <div className="mt-4 lg:mt-0 flex flex-col sm:flex-row gap-4 w-full lg:w-auto">
-           <div className="relative rounded-xl shadow-sm w-full sm:w-64 group">
-                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                    <Search className="h-4 w-4 text-gray-400 group-focus-within:text-accent transition-colors" />
-                </div>
-                <input
-                    type="text"
-                    className="bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-900 dark:text-white block w-full pl-11 py-2.5 text-sm rounded-xl focus:outline-none focus:ring-2 focus:ring-accent transition-all placeholder-gray-400 dark:placeholder-slate-600"
-                    placeholder="Search suppliers..."
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                />
-           </div>
-          <Button onClick={() => handleOpenModal()} className="px-6 py-2.5 rounded-xl font-black uppercase tracking-widest text-[10px] bg-accent hover:bg-accent/90 text-white shadow-lg shadow-accent/20">
-            <Plus className="mr-2 h-4 w-4" />
-            Add Supplier
-          </Button>
-        </div>
-      </div>
+            <Button onClick={() => handleOpenModal()} className="px-6 py-2.5 rounded-xl font-black uppercase tracking-widest text-[10px] bg-accent hover:bg-accent/90 text-white shadow-lg shadow-accent/20">
+              <Plus className="mr-2 h-4 w-4" />
+              Add Supplier
+            </Button>
+          </>
+        }
+      />
 
       {/* Suppliers Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-8">

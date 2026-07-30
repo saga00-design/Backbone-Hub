@@ -1,7 +1,8 @@
 
 import React, { useState, useEffect } from 'react';
 import { Button } from './Button';
-import { Download, Upload, Trash2, Cloud, LogOut, User, Shield, Users, Building, Check, X, Plus, ChevronRight, ChevronDown, Clock, Package, Copy, Pencil, RefreshCw, AlertTriangle, ClipboardCheck } from 'lucide-react';
+import { Download, Upload, Trash2, Cloud, LogOut, User, Shield, Users, Building, Check, X, Plus, ChevronRight, ChevronDown, Clock, Package, Copy, Pencil, RefreshCw, AlertTriangle, ClipboardCheck, Settings as SettingsIcon } from 'lucide-react';
+import { PageHeader } from './PageHeader';
 import { auth, db, collection, doc, getDoc, getDocs, setDoc, updateDoc, onSnapshot, cleanObject, handleFirestoreError, OperationType, query, where } from '../firebase';
 import { APP_SECTIONS, DEFAULT_ROLES, DEFAULT_DEPARTMENTS, DEFAULT_PERMISSIONS } from '../constants';
 import { StaffMember, AppPermissions, AuditLog } from '../types';
@@ -514,6 +515,12 @@ export const Settings: React.FC<SettingsProps> = ({ auditLogs = [] }) => {
 
   return (
     <div className="space-y-6">
+      <PageHeader
+        icon={SettingsIcon}
+        title="Settings"
+        subtitle="Account, team, and system configuration"
+      />
+
       {/* Tabs */}
       <div className="flex border-b border-border-grey">
         <button

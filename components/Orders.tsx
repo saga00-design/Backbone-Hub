@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { Order, OrderItem, Supplier, InventoryItem, Recipe, POSOrder, ReceivingRecordItem, ReceivingRecord } from '../types';
-import { ShoppingCart, Package, Search, Filter, Plus, Minus, Check, Clock, ChevronDown, ChevronUp, Users, PoundSterling, Zap, AlertTriangle, Mail } from 'lucide-react';
+import { ShoppingCart, Package, Search, Filter, Plus, Minus, Check, Clock, ChevronDown, ChevronUp, Zap, AlertTriangle, Mail } from 'lucide-react';
 import { Button } from './Button';
+import { PageHeader } from './PageHeader';
 import { SearchInput } from './SearchInput';
 import { formatPacksLabel, formatCaseBoxSackLabel } from '../utils/unitConversions';
 import { getOrderShortfalls, buildShortageEmailUrl } from '../utils/shortageEmail';
@@ -40,18 +41,8 @@ export const Orders: React.FC<OrdersProps> = ({
   checkPermission
 }) => {
   const [receivingOrder, setReceivingOrder] = useState<Order | null>(null);
-  const [activeTab, setActiveTab] = useState<'create' | 'cart' | 'history' | 'pos'>('create');
+  const [activeTab, setActiveTab] = useState<'create' | 'cart' | 'history'>('create');
   const [expandedOrder, setExpandedOrder] = useState<string | null>(null);
-
-  // Group active POS orders
-  const activePosOrders = posOrders.filter(o => o.status === 'Open' || o.status === 'Sent');
-  const totalLiveRevenue = activePosOrders.reduce((sum, o) => {
-    const orderTotal = o.items.reduce((itemSum, item) => {
-      const itemPrice = item.price + (item.modifiers || []).reduce((mSum, m) => mSum + (m.price || 0), 0);
-      return itemSum + (itemPrice * item.quantity);
-    }, 0);
-    return sum + orderTotal;
-  }, 0);
 
   // Filters for Create Order tab
   const [searchTerm, setSearchTerm] = useState('');
@@ -131,269 +122,50 @@ export const Orders: React.FC<OrdersProps> = ({
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h2 className="text-xl font-semibold text-gray-900">Orders & Purchasing</h2>
-        <div className="flex space-x-2 bg-white rounded-lg shadow-sm p-1">
-          {checkPermission('orders', 'create') && (
+      <PageHeader
+        icon={ShoppingCart}
+        title="Stock Orders"
+        subtitle="Create purchase orders and manage supplier deliveries"
+        actions={
+          <div className="flex space-x-2 bg-white rounded-lg shadow-sm p-1">
+            {checkPermission('orders', 'create') && (
+              <button
+                onClick={() => setActiveTab('create')}
+                className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                  activeTab === 'create' ? 'bg-accent/10 text-accent' : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                <div className="flex items-center">
+                  <Plus className="w-4 h-4 mr-2" />
+                  Create Order
+                </div>
+              </button>
+            )}
             <button
-              onClick={() => setActiveTab('create')}
+              onClick={() => setActiveTab('cart')}
               className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-                activeTab === 'create' ? 'bg-accent/10 text-accent' : 'text-gray-500 hover:text-gray-700'
+                activeTab === 'cart' ? 'bg-accent/10 text-accent' : 'text-gray-500 hover:text-gray-700'
               }`}
             >
               <div className="flex items-center">
-                <Plus className="w-4 h-4 mr-2" />
-                Create Order
+                <ShoppingCart className="w-4 h-4 mr-2" />
+                Current Cart ({cart.length})
               </div>
             </button>
-          )}
-          <button
-            onClick={() => setActiveTab('cart')}
-            className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-              activeTab === 'cart' ? 'bg-accent/10 text-accent' : 'text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            <div className="flex items-center">
-              <ShoppingCart className="w-4 h-4 mr-2" />
-              Current Cart ({cart.length})
-            </div>
-          </button>
-          <button
-            onClick={() => setActiveTab('history')}
-            className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-              activeTab === 'history' ? 'bg-accent/10 text-accent' : 'text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            <div className="flex items-center">
-              <Package className="w-4 h-4 mr-2" />
-              History
-            </div>
-          </button>
-          {checkPermission('orders', 'managePOS') && (
             <button
-              onClick={() => setActiveTab('pos')}
+              onClick={() => setActiveTab('history')}
               className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-                activeTab === 'pos' ? 'bg-cta/10 text-cta' : 'text-gray-500 hover:text-gray-700'
+                activeTab === 'history' ? 'bg-accent/10 text-accent' : 'text-gray-500 hover:text-gray-700'
               }`}
             >
               <div className="flex items-center">
-                <Clock className="w-4 h-4 mr-2" />
-                Live POS ({activePosOrders.length})
+                <Package className="w-4 h-4 mr-2" />
+                History
               </div>
             </button>
-          )}
-        </div>
-      </div>
-
-      {activeTab === 'pos' && (
-        <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-             <div className="bg-white p-6 rounded-2xl shadow-sm border border-border-grey relative overflow-hidden group">
-                <div className="absolute top-0 right-0 p-3 opacity-10 group-hover:scale-110 transition-transform">
-                   <Users className="w-12 h-12 text-text-navy" />
-                </div>
-                <p className="text-[10px] font-black text-text-muted uppercase tracking-widest mb-1">Active Tables</p>
-                <p className="text-3xl font-black text-text-navy">{activePosOrders.length}</p>
-                <div className="mt-2 flex items-center gap-1">
-                   <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                   <span className="text-[9px] font-bold text-emerald-600 uppercase">Live Monitor</span>
-                </div>
-             </div>
-             <div className="bg-white p-6 rounded-2xl shadow-sm border border-border-grey relative overflow-hidden group">
-                <div className="absolute top-0 right-0 p-3 opacity-10 group-hover:scale-110 transition-transform">
-                   <PoundSterling className="w-12 h-12 text-accent" />
-                </div>
-                <p className="text-[10px] font-black text-text-muted uppercase tracking-widest mb-1">Unpaid Bill Total</p>
-                <p className="text-3xl font-black text-accent">£{totalLiveRevenue.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
-                <p className="mt-2 text-[9px] font-bold text-text-muted uppercase">Accrued Revenue</p>
-             </div>
-             <div className="bg-white p-6 rounded-2xl shadow-sm border border-border-grey relative overflow-hidden group">
-                <div className="absolute top-0 right-0 p-3 opacity-10 group-hover:scale-110 transition-transform">
-                   <Clock className="w-12 h-12 text-cta" />
-                </div>
-                <p className="text-[10px] font-black text-text-muted uppercase tracking-widest mb-1">Avg. Table Age</p>
-                <p className="text-3xl font-black text-text-navy">
-                  {activePosOrders.length > 0 
-                    ? Math.round(activePosOrders.reduce((sum, o) => sum + (Date.now() - new Date(o.createdAt).getTime()), 0) / (activePosOrders.length * 60000))
-                    : 0}m
-                </p>
-                <p className="mt-2 text-[9px] font-bold text-text-muted uppercase">Minutes since open</p>
-             </div>
-             <div className="bg-text-navy p-6 rounded-2xl shadow-xl border border-white/10 relative overflow-hidden group text-white">
-                <div className="absolute top-0 right-0 p-3 opacity-20 group-hover:scale-110 transition-transform">
-                   <Zap className="w-12 h-12 text-accent" />
-                </div>
-                <p className="text-[10px] font-black text-accent uppercase tracking-widest mb-1">POS Efficiency</p>
-                <p className="text-3xl font-black font-serif italic">94%</p>
-                <p className="mt-2 text-[9px] font-bold text-white/40 uppercase">Operational Score</p>
-             </div>
           </div>
-
-          <div className="bg-white rounded-2xl shadow-sm border border-border-grey overflow-hidden">
-            <div className="p-4 border-b border-border-grey bg-secondary-surface flex items-center justify-between">
-               <div className="flex items-center gap-3">
-                  <h3 className="text-xs font-black text-text-navy uppercase tracking-widest">Active Operations</h3>
-                  <span className="bg-text-navy/5 text-text-navy px-2 py-0.5 rounded text-[10px] font-black">{activePosOrders.length} ORDERS</span>
-               </div>
-               <div className="flex items-center gap-2">
-                  <div className="relative">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-text-muted" />
-                    <input 
-                      type="text" 
-                      placeholder="Search table or waiter..." 
-                      className="pl-9 pr-4 py-1.5 bg-white border border-border-grey rounded-lg text-xs focus:ring-1 focus:ring-accent outline-none"
-                    />
-                  </div>
-                  <Button variant="ghost" className="p-1.5 h-auto">
-                    <Filter className="w-4 h-4" />
-                  </Button>
-               </div>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-border-grey">
-                <thead className="bg-secondary-surface/50">
-                  <tr>
-                    <th className="px-6 py-3 text-left text-[9px] font-black text-text-muted uppercase tracking-widest">Table / Order</th>
-                    <th className="px-6 py-3 text-left text-[9px] font-black text-text-muted uppercase tracking-widest">Status</th>
-                    <th className="px-6 py-3 text-left text-[9px] font-black text-text-muted uppercase tracking-widest">Waiter</th>
-                    <th className="px-6 py-3 text-left text-[9px] font-black text-text-muted uppercase tracking-widest">Items</th>
-                    <th className="px-6 py-3 text-left text-[9px] font-black text-text-muted uppercase tracking-widest">Time</th>
-                    <th className="px-6 py-3 text-right text-[9px] font-black text-text-muted uppercase tracking-widest">Running Total</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border-grey bg-white">
-                  {activePosOrders.length > 0 ? activePosOrders.map(order => (
-                    <React.Fragment key={order.id}>
-                      <tr className="hover:bg-primary-surface transition-colors cursor-pointer group" onClick={() => setExpandedOrder(expandedOrder === order.id ? null : order.id)}>
-                      <td className="px-6 py-4">
-                         <div className="flex items-center gap-3">
-                            <div className="w-8 h-8 rounded-lg bg-secondary-surface flex items-center justify-center font-black text-xs text-text-navy border border-border-grey group-hover:bg-white group-hover:border-accent group-hover:text-accent transition-colors">
-                               {order.tableNumber || '#'}
-                            </div>
-                            <span className="text-xs font-bold text-text-navy">{order.tableName || order.tableNumber || `Order #${order.id.slice(-4)}`}</span>
-                         </div>
-                      </td>
-                      <td className="px-6 py-4 text-[10px] font-black">
-                         <span className={`px-2 py-0.5 rounded-lg border ${
-                           order.status === 'Open' ? 'bg-accent/5 text-accent border-accent/20' : 'bg-warning/5 text-warning-text border-warning/20'
-                         }`}>
-                           {order.status}
-                         </span>
-                      </td>
-                      <td className="px-6 py-4 text-xs font-medium text-text-muted">
-                         {order.waiterName || 'Staff'}
-                      </td>
-                      <td className="px-6 py-4">
-                         <span className="text-[10px] font-black bg-secondary-surface px-2 py-0.5 rounded border border-border-grey">{order.items.reduce((sum, i) => sum + i.quantity, 0)} Items</span>
-                      </td>
-                      <td className="px-6 py-4">
-                         <div className="flex items-center gap-1.5">
-                            <Clock className="w-3 h-3 text-text-muted" />
-                            <span className="text-xs text-text-muted font-medium">
-                              {Math.floor((Date.now() - new Date(order.createdAt).getTime()) / 60000)}m
-                            </span>
-                         </div>
-                      </td>
-                      <td className="px-6 py-4 text-right">
-                         <div className="flex items-center justify-end gap-3">
-                            <span className="text-sm font-black text-text-navy">
-                              £{(order.items.reduce((sum, item) => {
-                                const itemPrice = item.price + (item.modifiers || []).reduce((mSum, m) => mSum + (m.price || 0), 0);
-                                return sum + (itemPrice * item.quantity);
-                              }, 0)).toFixed(2)}
-                            </span>
-                            {expandedOrder === order.id ? <ChevronUp className="w-4 h-4 text-text-muted" /> : <ChevronDown className="w-4 h-4 text-text-muted" />}
-                         </div>
-                      </td>
-                    </tr>
-                    {expandedOrder === order.id && (
-                      <tr className="bg-secondary-surface/30">
-                        <td colSpan={6} className="px-12 py-6">
-                           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 animate-in slide-in-from-top-2 duration-300">
-                              <div>
-                                 <h4 className="text-[10px] font-black text-text-muted uppercase tracking-widest mb-4 flex items-center gap-2">
-                                    <Package className="w-3 h-3" />
-                                    Ordered Items
-                                 </h4>
-                                 <div className="space-y-2">
-                                    {order.items.map((item, idx) => (
-                                       <div key={idx} className="flex justify-between items-center bg-white p-3 rounded-xl border border-border-grey shadow-sm">
-                                          <div className="flex items-center gap-3">
-                                             <div className="w-6 h-6 rounded bg-text-navy/5 flex items-center justify-center text-[10px] font-black text-text-navy">
-                                                {item.quantity}x
-                                             </div>
-                                             <div>
-                                                <p className="text-xs font-bold text-text-navy">{item.name}</p>
-                                                {item.modifiers && item.modifiers.length > 0 && (
-                                                   <p className="text-[9px] text-text-muted italic">{item.modifiers.map(m => m.name).join(', ')}</p>
-                                                )}
-                                             </div>
-                                          </div>
-                                          <div className="text-right">
-                                             <p className="text-xs font-black text-text-navy">£{((item.price + (item.modifiers || []).reduce((sum, mod) => sum + (mod.price || 0), 0)) * item.quantity).toFixed(2)}</p>
-                                             <span className="text-[8px] font-black uppercase text-accent">{item.status}</span>
-                                          </div>
-                                       </div>
-                                    ))}
-                                 </div>
-                              </div>
-                              <div className="border-l border-border-grey/50 pl-8">
-                                 <h4 className="text-[10px] font-black text-text-muted uppercase tracking-widest mb-4 flex items-center gap-2">
-                                    <Zap className="w-3 h-3" />
-                                    Inventory Impact
-                                 </h4>
-                                 <div className="p-4 bg-white rounded-2xl border border-border-grey/60 border-dashed">
-                                    {order.isInventoryDepleted ? (
-                                       <div className="space-y-3">
-                                          <div className="flex items-center gap-2 text-success">
-                                             <Check className="w-4 h-4" />
-                                             <span className="text-[10px] font-bold uppercase">Stock Successfully Deducted</span>
-                                          </div>
-                                          <p className="text-[10px] text-text-muted">HUB automatically updated your inventory based on the recipes for these items.</p>
-                                       </div>
-                                    ) : (
-                                       <div className="space-y-3">
-                                          <div className="flex items-center gap-2 text-warning-text opacity-70">
-                                             <Clock className="w-4 h-4" />
-                                             <span className="text-[10px] font-bold uppercase">Awaiting Finalization</span>
-                                          </div>
-                                          <p className="text-[10px] text-text-muted">Stock will be auto-deducted the moment this order status changes to "Paid".</p>
-                                       </div>
-                                    )}
-                                 </div>
-                                 <div className="mt-6 flex justify-end gap-2">
-                                    <Button variant="secondary" size="sm" className="text-[9px] h-8 font-black uppercase tracking-widest">
-                                       Print Bill
-                                    </Button>
-                                    {order.status === 'Open' && (
-                                       <Button className="text-[9px] h-8 font-black uppercase tracking-widest px-4">
-                                          Send to Kitchen
-                                       </Button>
-                                    )}
-                                 </div>
-                              </div>
-                           </div>
-                        </td>
-                      </tr>
-                    )}
-                    </React.Fragment>
-                  )) : (
-                    <tr>
-                      <td colSpan={6} className="px-6 py-12 text-center">
-                         <div className="flex flex-col items-center gap-2 opacity-30">
-                            <Zap className="w-8 h-8 mb-2" />
-                            <p className="text-xs font-black uppercase tracking-widest">No active orders found</p>
-                            <p className="text-[10px] uppercase font-bold italic">POS is currently idle</p>
-                         </div>
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      )}
+        }
+      />
 
       {activeTab === 'create' && (
         <div className="bg-white rounded-lg shadow-sm overflow-hidden">

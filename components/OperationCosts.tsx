@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { ReceiptPoundSterling, Calculator } from 'lucide-react';
 import { ExpenseManager } from './ExpenseManager';
 import { WeeklyCostEntry } from './WeeklyCostEntry';
+import { PageHeader } from './PageHeader';
 import { ExpenseRecord } from '../types';
 
 interface OperationCostsProps {
@@ -25,6 +26,12 @@ export const OperationCosts: React.FC<OperationCostsProps> = ({
 
   return (
     <div className="space-y-6">
+      <PageHeader
+        icon={ReceiptPoundSterling}
+        title="Operation Costs"
+        subtitle="Expense approvals and weekly P&L cost entry"
+      />
+
       <div className="flex items-center gap-2 bg-secondary-surface dark:bg-slate-900 p-1 rounded-xl w-fit border border-border-grey dark:border-slate-700">
         {[
           { id: 'tracking' as const, label: 'Expense Tracking', icon: ReceiptPoundSterling },

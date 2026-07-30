@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { Trash2, Plus, Search, Calendar, User, FileText, Download, Filter, ArrowUpDown, Trash, X } from 'lucide-react';
 import { InventoryItem, WasteRecord, Unit } from '../types';
+import { PageHeader } from './PageHeader';
 import { toast } from 'sonner';
 import { convertToBaseUnit } from '../utils/unitConversions';
 import { jsPDF } from 'jspdf';
@@ -128,28 +129,29 @@ export const WasteManager: React.FC<WasteManagerProps> = ({
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div>
-          <h2 className={`text-lg font-bold ${isDarkMode ? 'text-white' : 'text-text-navy'}`}>Waste Records</h2>
-          <p className="text-sm text-text-muted">Track and analyze inventory waste to improve margins</p>
-        </div>
-        <div className="flex gap-2">
-          <button
-            onClick={() => generatePDF()}
-            className="flex items-center gap-2 px-4 py-2 bg-card-bg dark:bg-slate-800 border border-border-grey dark:border-slate-700 rounded-xl text-sm font-semibold hover:bg-secondary-surface dark:hover:bg-slate-700 transition-colors shadow-sm"
-          >
-            <Download className="w-4 h-4" />
-            Export PDF
-          </button>
-          <button
-            onClick={() => setIsFormOpen(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-accent text-white rounded-xl text-sm font-semibold hover:opacity-90 transition-colors shadow-sm"
-          >
-            <Plus className="w-4 h-4" />
-            Record Waste
-          </button>
-        </div>
-      </div>
+      <PageHeader
+        icon={Trash2}
+        title="Waste Records"
+        subtitle="Track and analyze inventory waste to improve margins"
+        actions={
+          <>
+            <button
+              onClick={() => generatePDF()}
+              className="flex items-center gap-2 px-4 py-2 bg-card-bg dark:bg-slate-800 border border-border-grey dark:border-slate-700 rounded-xl text-sm font-semibold hover:bg-secondary-surface dark:hover:bg-slate-700 transition-colors shadow-sm"
+            >
+              <Download className="w-4 h-4" />
+              Export PDF
+            </button>
+            <button
+              onClick={() => setIsFormOpen(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-accent text-white rounded-xl text-sm font-semibold hover:opacity-90 transition-colors shadow-sm"
+            >
+              <Plus className="w-4 h-4" />
+              Record Waste
+            </button>
+          </>
+        }
+      />
 
       {/* Stats Summary */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">

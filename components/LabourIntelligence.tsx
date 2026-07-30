@@ -15,6 +15,7 @@ import {
   POSOrder
 } from '../types';
 import { Button } from './Button';
+import { PageHeader } from './PageHeader';
 import { TimePeriodLegend } from './TimePeriodLegend';
 import { LabourImportPanel } from './LabourImportPanel';
 import { collection, onSnapshot, query, where, orderBy } from 'firebase/firestore';
@@ -230,36 +231,24 @@ export const LabourIntelligence: React.FC<LabourIntelligenceProps> = ({ staff, o
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="bg-white p-8 rounded-3xl border border-border-grey shadow-sm">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
-          <div className="flex items-center gap-5">
-            <div className="bg-accent/10 p-4 rounded-2xl">
-              <HardHat className="w-8 h-8 text-accent" />
-            </div>
-            <div>
-              <h1 className="text-3xl font-black text-text-navy uppercase tracking-tight">Labour Intelligence</h1>
-              <p className="text-sm font-bold text-text-muted uppercase tracking-widest mt-1">
-                Shift Data Import &amp; Cost Review
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-3">
-            {view === 'import' ? (
-              <Button variant="secondary" className="gap-2 h-12 px-6" onClick={() => setView('dashboard')}>
-                <X className="w-4 h-4" />
-                Back to Dashboard
-              </Button>
-            ) : (
-              <Button variant="primary" className="gap-2 h-12 px-6" onClick={() => setView('import')}>
-                <Upload className="w-4 h-4" />
-                Import Shifts
-              </Button>
-            )}
-          </div>
-        </div>
-      </div>
+      <PageHeader
+        icon={HardHat}
+        title="Labour Intelligence"
+        subtitle="Shift Data Import & Cost Review"
+        actions={
+          view === 'import' ? (
+            <Button variant="secondary" className="gap-2 h-12 px-6" onClick={() => setView('dashboard')}>
+              <X className="w-4 h-4" />
+              Back to Dashboard
+            </Button>
+          ) : (
+            <Button variant="primary" className="gap-2 h-12 px-6" onClick={() => setView('import')}>
+              <Upload className="w-4 h-4" />
+              Import Shifts
+            </Button>
+          )
+        }
+      />
 
       {view === 'import' && (
         <div className="bg-white p-8 rounded-3xl border border-border-grey shadow-sm min-h-[500px]">

@@ -1,6 +1,7 @@
 
 import React, { useState, useRef } from 'react';
 import { Button } from './Button';
+import { PageHeader } from './PageHeader';
 import { Upload, FileText, Check, AlertCircle, ArrowRight, AlertTriangle, TrendingUp, Clock, History, Search, Edit2, Save, X, RotateCcw } from 'lucide-react';
 import { InventoryItem, Recipe, SalesImportRecord } from '../types';
 import { ConfirmationModal } from './ConfirmationModal';
@@ -287,29 +288,35 @@ export const SalesImport: React.FC<SalesImportProps> = ({ recipes, inventoryItem
 
   return (
     <div className="space-y-6">
-      {/* Tabs */}
-      <div className="bg-white dark:bg-slate-900 rounded-xl shadow-sm p-1 inline-flex border border-gray-200 dark:border-slate-800">
-        <button
-          onClick={() => setActiveTab('new')}
-          className={`px-6 py-2 text-[10px] font-bold uppercase tracking-widest rounded-lg transition-all ${
-            activeTab === 'new' 
-              ? 'bg-accent/10 text-accent shadow-sm' 
-              : 'text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200 hover:bg-gray-50 dark:hover:bg-slate-800'
-          }`}
-        >
-          New Import
-        </button>
-        <button
-          onClick={() => setActiveTab('history')}
-          className={`px-6 py-2 text-[10px] font-bold uppercase tracking-widest rounded-lg transition-all ${
-            activeTab === 'history' 
-              ? 'bg-accent/10 text-accent shadow-sm' 
-              : 'text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200 hover:bg-gray-50 dark:hover:bg-slate-800'
-          }`}
-        >
-          History
-        </button>
-      </div>
+      <PageHeader
+        icon={TrendingUp}
+        title="Sales Import"
+        subtitle="Upload your sales report (CSV) to automatically deduct ingredients from stock based on recipes"
+        actions={
+          <div className="bg-secondary-surface dark:bg-slate-800 rounded-xl p-1 inline-flex border border-border-grey dark:border-slate-700">
+            <button
+              onClick={() => setActiveTab('new')}
+              className={`px-6 py-2 text-[10px] font-bold uppercase tracking-widest rounded-lg transition-all ${
+                activeTab === 'new'
+                  ? 'bg-accent/10 text-accent shadow-sm'
+                  : 'text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200 hover:bg-white dark:hover:bg-slate-800'
+              }`}
+            >
+              New Import
+            </button>
+            <button
+              onClick={() => setActiveTab('history')}
+              className={`px-6 py-2 text-[10px] font-bold uppercase tracking-widest rounded-lg transition-all ${
+                activeTab === 'history'
+                  ? 'bg-accent/10 text-accent shadow-sm'
+                  : 'text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200 hover:bg-white dark:hover:bg-slate-800'
+              }`}
+            >
+              History
+            </button>
+          </div>
+        }
+      />
 
       {activeTab === 'new' ? (
         <>
@@ -321,16 +328,11 @@ export const SalesImport: React.FC<SalesImportProps> = ({ recipes, inventoryItem
             onCancel={() => setIsConfirmOpen(false)}
             variant="info"
           />
+          {/* Upload — its own card, separate from the page header */}
           <div className="bg-white dark:bg-slate-900 shadow-2xl rounded-2xl p-8 border border-gray-100 dark:border-slate-800">
-            <div className="flex items-center mb-8">
-                <div className="bg-accent/10 p-4 rounded-2xl mr-5">
-                    <TrendingUp className="h-7 w-7 text-accent" />
-                </div>
-                <div>
-                    <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Sales Import & Stock Deduction</h2>
-                    <p className="text-sm text-gray-500 dark:text-slate-400">Upload your sales report (CSV) to automatically deduct ingredients from stock based on recipes.</p>
-                    <p className="text-[10px] font-bold text-gray-400 dark:text-slate-500 mt-1 uppercase tracking-wider">Requires Column A: Item Name, Column C: Total Quantity, Column D: Total Amount</p>
-                </div>
+            <div className="mb-6">
+              <h3 className="text-sm font-black text-gray-900 dark:text-white uppercase tracking-widest">Upload Sales Report</h3>
+              <p className="text-[10px] font-bold text-gray-400 dark:text-slate-500 mt-1 uppercase tracking-wider">Requires Column A: Item Name, Column C: Total Quantity, Column D: Total Amount</p>
             </div>
 
             {/* Upload Area */}

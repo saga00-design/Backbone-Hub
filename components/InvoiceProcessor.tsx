@@ -2,7 +2,8 @@
 import React, { useState, useRef } from 'react';
 import { toast } from 'sonner';
 import { Button } from './Button';
-import { Upload, FileText, Check, AlertCircle, History, Clock, CheckCircle, Search, Filter, Plus, X, AlertTriangle, Trash2 } from 'lucide-react';
+import { PageHeader } from './PageHeader';
+import { Upload, FileText, Check, AlertCircle, History, Clock, CheckCircle, Search, Filter, Plus, X, AlertTriangle, Trash2, FileInput } from 'lucide-react';
 import { parseInvoiceImage, handleAiError } from '../services/geminiService';
 import { InventoryItem, Supplier, Invoice, Unit, Order, ReceivingRecord, SupplierPriceHistoryEntry } from '../types';
 import { PACKAGING_TO_UNIT } from '../utils/unitConversions';
@@ -235,6 +236,12 @@ export const InvoiceProcessor: React.FC<InvoiceProcessorProps> = ({
 
   return (
     <div className="space-y-6">
+      <PageHeader
+        icon={FileInput}
+        title="Invoices"
+        subtitle="Process and reconcile supplier invoices"
+      />
+
       {/* Tabs */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div className="bg-white dark:bg-slate-900 rounded-xl p-1 inline-flex border border-gray-200 dark:border-slate-800 shadow-sm transition-colors">

@@ -2,8 +2,9 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { InventoryItem, Recipe, RecipeIngredient, ALLERGIES_LIST, RecipeType, MenuCategory, Unit, RecipeSide, RecipeAddon, SideAddonItem, SetMenu, SetMenuCourse, SetMenuCourseItem } from '../types';
 import { Button } from './Button';
+import { PageHeader } from './PageHeader';
 import { SearchInput } from './SearchInput';
-import { Plus, Trash2, Calculator, ChefHat, PoundSterling, Edit2, AlertCircle, Image as ImageIcon, Sparkles, Loader2, Upload, Camera, Check, Wheat, Shell, Egg, Fish, Flower2, Milk, Snail, Droplet, Bean, CircleDot, Sprout, FlaskConical, Nut, Leaf, Download, Minus, Search, X, BookOpen, Info, ChevronDown, Zap, Calendar } from 'lucide-react';
+import { Plus, Trash2, Calculator, ChefHat, PoundSterling, Edit2, AlertCircle, Image as ImageIcon, Sparkles, Loader2, Upload, Camera, Check, Wheat, Shell, Egg, Fish, Flower2, Milk, Snail, Droplet, Bean, CircleDot, Sprout, FlaskConical, Nut, Leaf, Download, Minus, Search, X, BookOpen, Info, ChevronDown, Zap, Calendar, ChevronRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
 import { jsPDF } from 'jspdf';
@@ -2425,24 +2426,41 @@ const handleSave = async () => {
 
   return (
     <div className="space-y-6 bg-main-bg min-h-full p-6">
-      {/* Header */}
-      <div className="bg-card-bg shadow-xl rounded-2xl p-4 sm:p-8 flex flex-col sm:flex-row justify-between items-center border border-border-grey">
-        <div className="text-center sm:text-left">
-          <h2 className="text-2xl sm:text-3xl font-bold text-text-navy flex items-center justify-center sm:justify-start tracking-tight">
-            <ChefHat className="mr-3 h-6 w-6 sm:h-8 sm:w-8 text-accent" />
-            Menu Recipes & Costing
-          </h2>
-          <p className="mt-2 text-[10px] sm:text-sm text-text-muted font-medium uppercase tracking-widest">Create recipes, link ingredients, and track food costs with precision.</p>
-          <div className="mt-2 flex items-center gap-3">
-            <span className="inline-flex items-center gap-1.5 bg-accent/10 text-accent text-[10px] font-bold uppercase tracking-widest px-3 py-1 rounded-full border border-accent/20">
+      <PageHeader
+        icon={ChefHat}
+        title="Menu Recipes"
+        subtitle={
+          <span className="flex flex-wrap items-center gap-2">
+            <span>Create recipes, link ingredients, and track food costs with precision</span>
+            <span className="inline-flex items-center gap-1.5 bg-accent/10 text-accent text-[10px] font-bold uppercase tracking-widest px-3 py-1 rounded-full border border-accent/20 normal-case">
               <span className="text-sm font-black">{recipes.length}</span> Total Recipes
             </span>
-            <span className="inline-flex items-center gap-1.5 bg-success/10 text-success text-[10px] font-bold uppercase tracking-widest px-3 py-1 rounded-full border border-success/20">
+            <span className="inline-flex items-center gap-1.5 bg-success/10 text-success text-[10px] font-bold uppercase tracking-widest px-3 py-1 rounded-full border border-success/20 normal-case">
               <span className="text-sm font-black">{mainTab === 'sides_addons' ? sideAddonRows.length + addonRows.length : filteredRecipes.length}</span> Showing
             </span>
-          </div>
-        </div>
-        <div className="mt-6 sm:mt-0 flex flex-wrap justify-center gap-2 sm:gap-3 w-full sm:w-auto">
+          </span>
+        }
+        actions={
+          <>
+          <Button
+            onClick={() => handleOpenModal()}
+            className="flex-1 sm:flex-none bg-accent hover:opacity-90 text-white px-4 sm:px-6 py-3 rounded-xl shadow-lg shadow-accent/20 transition-all flex items-center justify-center font-bold uppercase tracking-widest text-[10px]"
+          >
+            <Plus className="mr-2 h-4 w-4 sm:h-5 sm:w-5" />
+            <span>
+              {mainTab === 'food_menu' ? 'Create Food' :
+               mainTab === 'beverage_menu' ? 'Create Beverage' :
+               'Create Batch'}
+            </span>
+          </Button>
+          <Button
+            onClick={downloadRecipeBook}
+            variant="secondary"
+            className="flex-1 sm:flex-none bg-transparent border border-border-grey text-text-navy hover:bg-secondary-surface px-4 sm:px-6 py-3 rounded-xl shadow-lg transition-all flex items-center justify-center font-bold uppercase tracking-widest text-[10px]"
+          >
+            <Download className="mr-2 h-4 w-4 sm:h-5 sm:w-5" />
+            <span className="inline">Recipe Book</span>
+          </Button>
           {onSyncAllToPos && (
             <Button
               onClick={handleSyncAll}
@@ -2463,27 +2481,9 @@ const handleSave = async () => {
               )}
             </Button>
           )}
-          <Button 
-            onClick={downloadRecipeBook}
-            variant="secondary"
-            className="flex-1 sm:flex-none bg-transparent border border-border-grey text-text-navy hover:bg-secondary-surface px-4 sm:px-6 py-3 rounded-xl shadow-lg transition-all flex items-center justify-center font-bold uppercase tracking-widest text-[10px]"
-          >
-            <Download className="mr-2 h-4 w-4 sm:h-5 sm:w-5" />
-            <span className="inline">Recipe Book</span>
-          </Button>
-          <Button
-            onClick={() => handleOpenModal()}
-            className="flex-1 sm:flex-none bg-accent hover:opacity-90 text-white px-4 sm:px-8 py-3 rounded-xl shadow-lg shadow-accent/20 transition-all flex items-center justify-center font-bold uppercase tracking-widest text-[10px]"
-          >
-            <Plus className="mr-2 h-4 w-4 sm:h-5 sm:w-5" />
-            <span>
-              {mainTab === 'food_menu' ? 'Create Food' :
-               mainTab === 'beverage_menu' ? 'Create Beverage' :
-               'Create Batch'}
-            </span>
-          </Button>
-        </div>
-      </div>
+          </>
+        }
+      />
 
       {/* Main Tabs */}
       <div className="bg-card-bg p-1.5 rounded-2xl border border-border-grey w-full sm:w-fit mb-8 overflow-x-auto no-scrollbar">
@@ -3278,7 +3278,14 @@ const handleSave = async () => {
             </div>
           )}
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+          {/* Standard grid-card size — matches Training's card exactly: grid-cols-2
+              lg:grid-cols-4 xl:grid-cols-5 gap-2 sm:gap-4 md:gap-6, aspect-[4/5] image tile,
+              rounded-2xl shadow-sm hover:shadow-2xl hover:-translate-y-1.5. Reuse this same
+              shape for any future grid-card UI in the app. Full cost/price/margin-breakdown/
+              allergies/sustainability detail lives in the Details modal (click-through) rather
+              than on the card face — Produce Batch, Training Guide, and Delete stay as compact
+              icon actions in the footer since they have no other entry point in the app. */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-2 sm:gap-4 md:gap-6">
             {filteredRecipes.length === 0 ? (
               <div className="col-span-full text-center py-20 bg-card-bg rounded-3xl border-2 border-dashed border-border-grey">
                 <ChefHat className="mx-auto h-16 w-16 text-border-grey" />
@@ -3286,7 +3293,7 @@ const handleSave = async () => {
                 <p className="mt-2 text-text-muted">Get started by creating a new menu item or batch recipe.</p>
               </div>
             ) : (
-              filteredRecipes.map((recipe, recipeIndex) => {
+              filteredRecipes.map((recipe) => {
                 const cost = calculateTotalCost(recipe.ingredients);
                 const priceIncVat = recipe.sellingPrice; // sellingPrice is gross inc. VAT (menu price)
                 const priceExcVat = priceIncVat / (1 + (Number(recipe.vatRate) || 20) / 100);
@@ -3295,156 +3302,74 @@ const handleSave = async () => {
                 const isLowMargin = marginPercent < currentTargetGP;
 
                 return (
-                  <div 
-                    key={recipe.id} 
-                    className="bg-card-bg rounded-3xl shadow-xl hover:shadow-2xl transition-all duration-300 overflow-hidden border border-border-grey flex flex-col group cursor-pointer"
+                  <div
+                    key={recipe.id}
                     onClick={() => handleOpenModal(recipe)}
+                    className="group bg-card-bg rounded-2xl shadow-sm border border-border-grey overflow-hidden flex flex-col hover:shadow-2xl transition-all duration-300 hover:-translate-y-1.5 cursor-pointer ring-1 ring-black/5"
                   >
-                    <div className="aspect-[16/9] xs:aspect-[4/3] w-full bg-main-bg flex items-center justify-center border-b border-border-grey overflow-hidden relative">
-                      <span className="absolute top-2 left-2 z-10 bg-accent text-white text-[10px] font-black px-2 py-0.5 rounded-full shadow">#{recipeIndex + 1}</span>
-                      <img 
-                        src={recipe.imageUrl || `https://picsum.photos/seed/${encodeURIComponent(recipe.name)}/400/400`} 
-                        alt={recipe.name} 
-                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" 
-                        referrerPolicy="no-referrer" 
+                    <div className="aspect-[4/5] w-full relative overflow-hidden">
+                      <img
+                        src={recipe.imageUrl || `https://picsum.photos/seed/${encodeURIComponent(recipe.name)}/600/750`}
+                        alt={recipe.name}
+                        className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
+                        referrerPolicy="no-referrer"
                       />
-                    </div>
-                    <div className="p-4 sm:p-6 flex-1 flex flex-col">
-                      <div className="flex justify-between items-start mb-3 sm:mb-4">
-                        <div className="flex-1 min-w-0">
-                          <h3 className="text-lg sm:text-xl font-bold text-text-navy truncate leading-tight flex items-center gap-2">
-                            {recipe.name}
-                            {recipe.isEventSpecial && (
-                              <span className="inline-flex items-center gap-1 bg-accent/10 text-accent text-[8px] sm:text-[9px] font-black px-2 py-0.5 rounded-full uppercase tracking-widest">
-                                <Sparkles className="h-2.5 w-2.5" /> Special
-                              </span>
-                            )}
-                          </h3>
-                          <p className="text-[9px] sm:text-[10px] uppercase tracking-widest font-bold text-accent mt-1">{recipe.category} • {recipe.subCategory || 'General'}</p>
-                        </div>
-                        <button onClick={(e) => { e.stopPropagation(); handleOpenModal(recipe); }} className="p-2 text-text-muted hover:text-accent hover:bg-accent/10 rounded-xl transition-all">
-                          <Edit2 className="h-4 w-4" />
-                        </button>
-                      </div>
-                      
-                      {recipe.description && <p className="text-[11px] sm:text-xs text-text-muted mb-4 sm:mb-6 line-clamp-2 leading-relaxed">{recipe.description}</p>}
+                      <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent opacity-60 group-hover:opacity-80 transition-opacity duration-300" />
 
-                      {checkPermission('recipes', 'viewCosts') && (
-                        <div className="grid grid-cols-2 gap-3 sm:gap-6 border-t border-border-grey pt-4 sm:pt-6 mb-4 sm:mb-6">
-                          <div>
-                            <span className="text-[8px] sm:text-[10px] uppercase tracking-widest font-bold text-text-muted block mb-1">Cost</span>
-                            <p className="text-base sm:text-xl font-bold text-text-navy">£{cost.toFixed(2)}</p>
-                            {recipe.type === 'recipe' && recipe.yieldAmount && recipe.yieldAmount > 0 && (
-                              <p className="text-[8px] sm:text-[10px] text-accent font-bold mt-0.5 whitespace-nowrap overflow-hidden text-ellipsis">£{(cost / recipe.yieldAmount).toFixed(2)}/{recipe.yieldUnit || 'unit'}</p>
-                            )}
-                          </div>
-                          <div className="text-right">
-                            <span className="text-[8px] sm:text-[10px] uppercase tracking-widest font-bold text-text-muted block mb-1">Price</span>
-                            <p className="text-base sm:text-xl font-bold text-text-navy">£{priceIncVat.toFixed(2)}</p>
-                            <p className="text-[8px] sm:text-[10px] text-text-muted font-bold mt-0.5">£{priceExcVat.toFixed(2)} exc.</p>
-                          </div>
+                      <div className="absolute top-2 right-2 flex flex-col gap-1 items-end">
+                        <div className="bg-white/90 backdrop-blur-md px-2 py-0.5 rounded text-[8px] font-black text-accent shadow uppercase tracking-widest border border-white/20">
+                          {recipe.category}
                         </div>
-                      )}
-
-                      {checkPermission('recipes', 'viewCosts') && (
-                        <div className="flex items-center justify-between bg-main-bg p-3 sm:p-4 rounded-2xl border border-border-grey mb-4 sm:mb-6">
-                          <div className="flex items-center">
-                             <span className={`text-[11px] sm:text-sm font-bold px-2 sm:px-3 py-1 rounded-lg ${isLowMargin ? 'bg-error/10 text-error' : 'bg-accent/10 text-accent'}`}>
-                               {marginPercent.toFixed(1)}% GP
-                             </span>
-                             {isLowMargin && <span title="Low Gross Profit Margin"><AlertCircle className="ml-1 sm:ml-2 h-3 w-3 sm:h-4 sm:w-4 text-error" /></span>}
+                        {recipe.isEventSpecial && (
+                          <div className="bg-accent/90 backdrop-blur-md px-2 py-0.5 rounded text-[8px] font-black text-white shadow uppercase tracking-widest flex items-center gap-1">
+                            <Sparkles className="h-2.5 w-2.5" /> Special
                           </div>
-                          <div className="flex flex-col items-end">
-                            {recipe.calories && (
-                              <span className="text-[8px] sm:text-[10px] text-text-muted font-bold uppercase tracking-wider">
-                                {recipe.type === 'recipe' && recipe.yieldAmount && recipe.yieldAmount > 0 
-                                  ? `${Math.round(recipe.calories / recipe.yieldAmount)}/unit` 
-                                  : `${recipe.calories} kcal`}
-                              </span>
-                            )}
-                            {recipe.type === 'recipe' && recipe.yieldAmount && (
-                              <span className="text-[8px] sm:text-[10px] text-accent font-bold uppercase tracking-wider mt-0.5 whitespace-nowrap overflow-hidden text-ellipsis">Y: {recipe.yieldAmount}{recipe.yieldUnit || ''}</span>
-                            )}
-                          </div>
-                        </div>
-                      )}
-
-                      <div className="flex gap-2 mt-auto" onClick={(e) => e.stopPropagation()}>
-                        {recipe.type === 'recipe' && (
-                          <Button 
-                            onClick={() => {
-                              setProducingBatch(recipe);
-                              setProduceQuantity(1);
-                            }}
-                            className="flex-1 bg-accent/10 text-accent hover:bg-accent/20 border border-accent/20 rounded-xl py-2 sm:py-3 text-[9px] sm:text-[10px] font-bold uppercase tracking-widest transition-all"
-                          >
-                            Produce
-                          </Button>
                         )}
-                        <Button 
-                          onClick={() => handleOpenModal(recipe)}
-                          className="flex-1 bg-accent hover:opacity-90 text-white rounded-xl py-2 sm:py-3 text-[9px] sm:text-[10px] font-bold uppercase tracking-widest shadow-lg shadow-accent/20 transition-all"
-                        >
-                          Details
-                        </Button>
                       </div>
 
-                      {recipe.sustainabilityScore !== undefined && (
-                        <div className="mt-4 flex items-center justify-between bg-success/5 p-3 rounded-xl border border-success/20">
-                          <div className="flex items-center gap-2">
-                            <Leaf className="h-4 w-4 text-success" />
-                            <span className="text-[10px] font-bold text-success uppercase tracking-widest">Eco Score: {recipe.sustainabilityScore}/100</span>
-                          </div>
-                          <span className={`text-[10px] font-bold uppercase tracking-widest ${
-                            recipe.carbonFootprint === 'Low' ? 'text-success' : 
-                            recipe.carbonFootprint === 'Medium' ? 'text-warning' : 'text-error'
-                          }`}>
-                            {recipe.carbonFootprint} Footprint
-                          </span>
-                        </div>
-                      )}
-                      
-                      {recipe.allergies && recipe.allergies.length > 0 && (
-                        <div className="mt-6 pt-6 border-t border-border-grey">
-                          <div className="flex flex-wrap gap-2">
-                            {recipe.allergies.map(allergy => (
-                              <span key={allergy} className="text-[10px] font-bold bg-secondary-surface text-text-navy px-2 py-1 rounded-lg flex items-center gap-1.5 border border-border-grey">
-                                <span className="opacity-70 scale-75">{allergyIcons[allergy] || '⚠️'}</span>
-                                {allergy}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-                      )}
+                      <div className="absolute bottom-0 left-0 right-0 p-3">
+                        <h3 className="text-xs sm:text-sm font-black text-white line-clamp-2 uppercase tracking-tight leading-tight">{recipe.name}</h3>
+                        <p className="text-[8px] text-white/70 font-bold uppercase tracking-widest mt-0.5">{recipe.subCategory || 'General'}</p>
+                      </div>
                     </div>
-                    <div className="bg-main-bg px-6 py-4 flex justify-between items-center border-t border-border-grey">
-                      <div className="flex gap-3">
+
+                    <div className="p-3 bg-gray-50/50 dark:bg-slate-800/50 border-t border-border-grey flex items-center justify-between gap-1" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex items-center gap-1">
                         {recipe.type === 'recipe' && (
                           <button
-                            onClick={() => setProducingBatch(recipe)}
-                            className="text-[10px] uppercase tracking-widest font-bold text-accent hover:text-text-navy flex items-center transition-colors"
+                            onClick={() => { setProducingBatch(recipe); setProduceQuantity(1); }}
+                            title="Produce Batch"
+                            className="p-1.5 text-accent hover:bg-accent/10 rounded-lg transition-colors"
                           >
-                            <ChefHat className="h-3 w-3 mr-1.5" /> Produce Batch
+                            <ChefHat className="h-3.5 w-3.5" />
                           </button>
                         )}
                         {recipe.trainingSteps && recipe.trainingSteps.length > 0 && (
                           <button
-                            onClick={() => {
-                              handleOpenModal(recipe);
-                              setActiveTab('training');
-                            }}
-                            className="text-[10px] uppercase tracking-widest font-bold text-accent hover:text-text-navy flex items-center transition-colors"
+                            onClick={() => { handleOpenModal(recipe); setActiveTab('training'); }}
+                            title="Training Guide"
+                            className="p-1.5 text-accent hover:bg-accent/10 rounded-lg transition-colors"
                           >
-                            <Sparkles className="h-3 w-3 mr-1.5" /> Training Guide
+                            <Sparkles className="h-3.5 w-3.5" />
                           </button>
                         )}
+                        <button
+                          onClick={() => onDeleteRecipe(recipe.id)}
+                          title="Delete"
+                          className="p-1.5 text-cta hover:bg-cta/10 rounded-lg transition-colors"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
                       </div>
-                      <button 
-                        onClick={() => onDeleteRecipe(recipe.id)}
-                        className="text-[10px] uppercase tracking-widest font-bold text-cta hover:opacity-80 flex items-center transition-colors"
-                      >
-                        <Trash2 className="h-3 w-3 mr-1.5" /> Delete
-                      </button>
+
+                      {checkPermission('recipes', 'viewCosts') ? (
+                        <span className={`flex items-center gap-1 text-[9px] font-black px-1.5 py-0.5 rounded-full whitespace-nowrap ${isLowMargin ? 'bg-error/10 text-error' : 'bg-accent/10 text-accent'}`}>
+                          {isLowMargin && <AlertCircle className="h-2.5 w-2.5" />}
+                          {marginPercent.toFixed(1)}% GP
+                        </span>
+                      ) : (
+                        <ChevronRight className="h-3.5 w-3.5 text-accent group-hover:translate-x-1 transition-transform flex-shrink-0" />
+                      )}
                     </div>
                   </div>
                 );

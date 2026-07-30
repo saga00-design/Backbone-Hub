@@ -1,8 +1,9 @@
 
 import React, { useMemo, useState } from 'react';
 import { InventoryItem, DailyClosure } from '../types';
-import { TrendingUp, AlertTriangle, PoundSterling, Brain, RefreshCw, ArrowRight, Banknote, ShoppingCart, Clock, Bot, Wifi, WifiOff, ChevronDown, ChevronUp, HardHat } from 'lucide-react';
+import { TrendingUp, AlertTriangle, PoundSterling, Brain, RefreshCw, ArrowRight, Banknote, ShoppingCart, Clock, Bot, Wifi, WifiOff, ChevronDown, ChevronUp, HardHat, LayoutDashboard } from 'lucide-react';
 import { Button } from './Button';
+import { PageHeader } from './PageHeader';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts';
 
 interface LivePosSalesSummary {
@@ -209,6 +210,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
   return (
     <div className="space-y-6">
+
+      <PageHeader icon={LayoutDashboard} title="Dashboard" subtitle="Live operations overview" />
 
       {/* Compact connectivity indicator — auto-hidden detail, unobtrusive top-corner dot */}
       <div className="flex justify-end">

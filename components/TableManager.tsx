@@ -1,13 +1,13 @@
 import React, { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { 
-  Plus, 
-  Search, 
-  Edit2, 
-  Trash2, 
-  Copy, 
-  Filter, 
-  CheckCircle, 
+import {
+  Plus,
+  Search,
+  Edit2,
+  Trash2,
+  Copy,
+  Filter,
+  CheckCircle,
   XCircle,
   Users,
   Grid,
@@ -15,9 +15,11 @@ import {
   ChevronRight,
   MoreVertical,
   X,
-  AlertTriangle
+  AlertTriangle,
+  LayoutList
 } from 'lucide-react';
 import { Table } from '../types';
+import { PageHeader } from './PageHeader';
 import { 
   db, 
   collection, 
@@ -201,6 +203,12 @@ export function TableManager({ tables, onTableClick }: TableManagerProps) {
 
   return (
     <div className="space-y-6">
+      <PageHeader
+        icon={LayoutList}
+        title="Table Manager"
+        subtitle="Manage floor layout and table status"
+      />
+
       {/* Header Actions */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="flex-1 max-w-md relative">

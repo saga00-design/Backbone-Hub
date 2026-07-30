@@ -19,6 +19,7 @@ import {
 import { VATReturnExport } from './VATReturnExport';
 import { VATTracker, VATReturn } from '../types';
 import { Button } from './Button';
+import { PageHeader } from './PageHeader';
 import { performClosure } from '../services/closureService';
 import { generateForecast } from '../services/predictionService';
 import { runMenuEngineering } from '../services/menuEngineeringService';
@@ -1190,26 +1191,27 @@ export const Reports: React.FC<ReportsProps> = ({
 
   return (
     <div className="p-8 space-y-8 bg-main-bg min-h-screen">
-      <header className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-4xl font-serif font-bold text-text-navy tracking-tight">Reports & Analytics</h1>
-          <p className="text-text-muted mt-1 italic font-serif">Deep dive into your business performance</p>
-        </div>
-        <div className="flex items-center gap-3">
-          <Button 
-            onClick={exportCSV}
-            className="bg-secondary-surface text-text-navy border border-border-grey hover:bg-white flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-widest"
-          >
-            <Download className="w-4 h-4" /> Export CSV
-          </Button>
-          <Button 
-            onClick={generatePDF}
-            className="bg-accent text-white hover:opacity-90 flex items-center gap-2 px-6 py-2 rounded-xl text-xs font-bold uppercase tracking-widest shadow-lg shadow-accent/20"
-          >
-            <TrendingUp className="w-4 h-4" /> Generate PDF
-          </Button>
-        </div>
-      </header>
+      <PageHeader
+        icon={TrendingUp}
+        title="Reports"
+        subtitle="Deep dive into your business performance"
+        actions={
+          <>
+            <Button
+              onClick={exportCSV}
+              className="bg-secondary-surface text-text-navy border border-border-grey hover:bg-white flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-widest"
+            >
+              <Download className="w-4 h-4" /> Export CSV
+            </Button>
+            <Button
+              onClick={generatePDF}
+              className="bg-accent text-white hover:opacity-90 flex items-center gap-2 px-6 py-2 rounded-xl text-xs font-bold uppercase tracking-widest shadow-lg shadow-accent/20"
+            >
+              <TrendingUp className="w-4 h-4" /> Generate PDF
+            </Button>
+          </>
+        }
+      />
 
       {/* Tabs */}
       <div className="grid grid-cols-2 md:grid-cols-5 bg-border-grey gap-px border-b border-border-grey rounded-t-2xl overflow-hidden">

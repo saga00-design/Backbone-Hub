@@ -2,10 +2,11 @@
 import React, { useState, useEffect } from 'react';
 import { ShiftBriefingNote, Recipe, ShiftType } from '../types';
 import { db, auth, collection, onSnapshot, query, where, doc, setDoc, deleteDoc, handleFirestoreError, OperationType, cleanObject, LOCATION_ID, writeBatch } from '../firebase';
-import { Plus, Trash2, Edit2, Sparkles, Clock, Users, X, Zap, ShieldAlert } from 'lucide-react';
+import { Plus, Trash2, Edit2, Sparkles, Clock, Users, X, Zap, ShieldAlert, Megaphone } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { toast } from 'sonner';
 import { StockAvailabilityManager } from './StockAvailabilityManager';
+import { PageHeader } from './PageHeader';
 
 interface ShiftBriefingManagerProps {
   recipes: Recipe[];
@@ -89,6 +90,12 @@ export const ShiftBriefingManager: React.FC<ShiftBriefingManagerProps> = ({ reci
 
   return (
     <div className="space-y-6">
+
+      <PageHeader
+        icon={Megaphone}
+        title="Shift Briefing"
+        subtitle="Manager updates, directives, and 86/availability status"
+      />
 
       {/* Tab bar */}
       <div className="flex gap-2 bg-primary-surface rounded-xl p-1 border border-border-grey w-fit">

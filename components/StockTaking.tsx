@@ -4,11 +4,12 @@ import ReactMarkdown from 'react-markdown';
 import { InventoryItem, StockCountItem, Unit, StockCountRecord, InventoryType, MovementType } from '../types';
 import { Button } from './Button';
 import { SearchInput } from './SearchInput';
+import { PageHeader } from './PageHeader';
 import { analyzeDiscrepancies } from '../services/geminiService';
 import { convertToBaseUnit, convertFromBaseUnit, CONVERSION_FACTORS, roundTo, getQtyDecimals, getQtyStep } from '../utils/unitConversions';
 import { jsPDF } from "jspdf";
 import autoTable from 'jspdf-autotable';
-import { Save, FileText, CheckCircle, Clock, History as HistoryIcon, ChevronDown, ChevronUp, ScanBarcode, Camera } from 'lucide-react';
+import { Save, FileText, CheckCircle, Clock, History as HistoryIcon, ChevronDown, ChevronUp, ScanBarcode, Camera, ClipboardCheck } from 'lucide-react';
 import { BarcodeScanner } from './BarcodeScanner';
 import { ItemSpecsTooltip } from './ItemSpecsTooltip';
 import { toast } from 'sonner';
@@ -384,6 +385,12 @@ export const StockTaking: React.FC<StockTakingProps> = ({ items, onUpdateInvento
 
   return (
     <div className="space-y-6">
+      <PageHeader
+        icon={ClipboardCheck}
+        title="Stock Count"
+        subtitle="Count inventory and reconcile discrepancies"
+      />
+
       {/* Tabs */}
       <div className="bg-card-bg rounded-xl p-1 inline-flex border border-border-grey shadow-lg">
         <button

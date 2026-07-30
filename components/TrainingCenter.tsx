@@ -6,6 +6,7 @@ import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 import { motion } from 'motion/react';
 import { db, collection, addDoc, LOCATION_ID, handleFirestoreError, OperationType } from '../firebase';
+import { PageHeader } from './PageHeader';
 import { toast } from 'sonner';
 import { QuizBankManager } from './QuizBankManager';
 
@@ -424,6 +425,12 @@ export const TrainingCenter: React.FC<TrainingCenterProps> = ({ recipes, invento
 
   return (
     <div className="space-y-6">
+      <PageHeader
+        icon={BookOpen}
+        title="Staff Training"
+        subtitle="Menu, prep, and spirits knowledge reference"
+      />
+
       <div className="flex border-b border-gray-200 dark:border-slate-800 mb-8 bg-white dark:bg-slate-900 p-1 rounded-xl shadow-sm inline-flex">
         <button
           onClick={() => { setActiveTab('menu'); setFilterCategory('All'); }}

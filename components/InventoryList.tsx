@@ -1,13 +1,14 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { InventoryItem, InventoryCategory, OrderItem, Unit, InventoryType, Recipe } from '../types';
-import { 
-  Search, Filter, Plus, Calendar, AlertTriangle, Pencil, Clock, Tag, 
+import {
+  Search, Filter, Plus, Calendar, AlertTriangle, Pencil, Clock, Tag,
   HeartCrack, TrendingUp, AlertCircle, Minus, Building, Settings2, Check, X, Receipt,
-  Download, Upload, FileText, Trash2
+  Download, Upload, FileText, Trash2, Package
 } from 'lucide-react';
 import Papa from 'papaparse';
 import { Button } from './Button';
+import { PageHeader } from './PageHeader';
 import { SearchInput } from './SearchInput';
 import { toast } from 'sonner';
 import { DEFAULT_DEPARTMENTS } from '../constants';
@@ -420,68 +421,70 @@ export const InventoryList: React.FC<InventoryListProps> = ({
 
   return (
     <div className="bg-card-bg shadow-2xl rounded-3xl flex flex-col h-full border border-border-grey overflow-hidden">
-      <div className="px-8 py-6 border-b border-border-grey bg-primary-surface sm:flex sm:items-center sm:justify-between">
-        <div className="flex items-center gap-4">
-          <div>
-            <div className="flex items-center gap-3">
-              <h3 className="text-xl font-bold text-text-navy tracking-tight">Current Inventory</h3>
-              <div className="flex items-center gap-1.5 px-2 py-0.5 bg-success/10 border border-success/20 rounded-lg shadow-sm">
-                <Check className="h-3 w-3 text-success font-black" />
-                <span className="text-[10px] font-black text-success uppercase tracking-widest">Cloud Protected</span>
-              </div>
-            </div>
-            <div className="flex items-center gap-2 mt-1">
-              <p className="text-[10px] font-bold text-text-muted uppercase tracking-widest">Manage your stock and supplies</p>
-              <span className="bg-accent/10 text-accent px-2 py-0.5 rounded-full text-[9px] font-black uppercase whitespace-nowrap">
+      <div className="px-8 py-6 border-b border-border-grey bg-primary-surface">
+        <PageHeader
+          bare
+          icon={Package}
+          title="Inventory"
+          subtitle={
+            <span className="flex flex-wrap items-center gap-2">
+              <span>Manage your stock and supplies</span>
+              <span className="bg-accent/10 text-accent px-2 py-0.5 rounded-full text-[9px] font-black uppercase whitespace-nowrap normal-case tracking-normal">
                 {items.length} Total Items
               </span>
-            </div>
-          </div>
-        </div>
-        <div className="mt-4 sm:mt-0 sm:ml-4 flex flex-wrap gap-2">
-          {checkPermission('inventory', 'edit') && (
+              <span className="flex items-center gap-1.5 px-2 py-0.5 bg-success/10 border border-success/20 rounded-lg shadow-sm normal-case tracking-normal">
+                <Check className="h-3 w-3 text-success font-black" />
+                <span className="text-[10px] font-black text-success uppercase tracking-widest">Cloud Protected</span>
+              </span>
+            </span>
+          }
+          actions={
             <>
-              <Button 
-                onClick={downloadTemplate} 
-                className="bg-white dark:bg-slate-900 text-gray-500 dark:text-slate-400 border border-gray-200 dark:border-slate-800 hover:bg-gray-50 dark:hover:bg-slate-800 px-4 py-2 rounded-xl flex items-center shadow-sm transition-all font-bold uppercase tracking-widest text-[10px]"
-                title="Download CSV Template"
-              >
-                <FileText className="-ml-1 mr-2 h-4 w-4" />
-                Template
-              </Button>
-              <Button 
-                onClick={handleExport} 
-                className="bg-white dark:bg-slate-900 text-gray-500 dark:text-slate-400 border border-gray-200 dark:border-slate-800 hover:bg-gray-50 dark:hover:bg-slate-800 px-4 py-2 rounded-xl flex items-center shadow-sm transition-all font-bold uppercase tracking-widest text-[10px]"
-              >
-                <Download className="-ml-1 mr-2 h-4 w-4" />
-                Export
-              </Button>
-              <Button 
-                onClick={() => fileInputRef.current?.click()} 
-                className="bg-white dark:bg-slate-900 text-gray-500 dark:text-slate-400 border border-gray-200 dark:border-slate-800 hover:bg-gray-50 dark:hover:bg-slate-800 px-4 py-2 rounded-xl flex items-center shadow-sm transition-all font-bold uppercase tracking-widest text-[10px]"
-              >
-                <Upload className="-ml-1 mr-2 h-4 w-4" />
-                Import
-              </Button>
-              <input 
-                type="file" 
-                ref={fileInputRef} 
-                className="hidden" 
-                accept=".csv" 
-                onChange={handleImport} 
-              />
+              {checkPermission('inventory', 'edit') && (
+                <>
+                  <Button
+                    onClick={downloadTemplate}
+                    className="bg-white dark:bg-slate-900 text-gray-500 dark:text-slate-400 border border-gray-200 dark:border-slate-800 hover:bg-gray-50 dark:hover:bg-slate-800 px-4 py-2 rounded-xl flex items-center shadow-sm transition-all font-bold uppercase tracking-widest text-[10px]"
+                    title="Download CSV Template"
+                  >
+                    <FileText className="-ml-1 mr-2 h-4 w-4" />
+                    Template
+                  </Button>
+                  <Button
+                    onClick={handleExport}
+                    className="bg-white dark:bg-slate-900 text-gray-500 dark:text-slate-400 border border-gray-200 dark:border-slate-800 hover:bg-gray-50 dark:hover:bg-slate-800 px-4 py-2 rounded-xl flex items-center shadow-sm transition-all font-bold uppercase tracking-widest text-[10px]"
+                  >
+                    <Download className="-ml-1 mr-2 h-4 w-4" />
+                    Export
+                  </Button>
+                  <Button
+                    onClick={() => fileInputRef.current?.click()}
+                    className="bg-white dark:bg-slate-900 text-gray-500 dark:text-slate-400 border border-gray-200 dark:border-slate-800 hover:bg-gray-50 dark:hover:bg-slate-800 px-4 py-2 rounded-xl flex items-center shadow-sm transition-all font-bold uppercase tracking-widest text-[10px]"
+                  >
+                    <Upload className="-ml-1 mr-2 h-4 w-4" />
+                    Import
+                  </Button>
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    className="hidden"
+                    accept=".csv"
+                    onChange={handleImport}
+                  />
+                </>
+              )}
+              {checkPermission('inventory', 'create') && (
+                <Button
+                  onClick={onAddItem}
+                  className="bg-accent hover:opacity-90 text-white px-6 py-2 rounded-xl flex items-center shadow-lg shadow-accent/20 transition-all font-bold uppercase tracking-widest text-[10px]"
+                >
+                  <Plus className="-ml-1 mr-2 h-4 w-4" />
+                  Add Item
+                </Button>
+              )}
             </>
-          )}
-          {checkPermission('inventory', 'create') && (
-            <Button 
-              onClick={onAddItem} 
-              className="bg-accent hover:opacity-90 text-white px-6 py-2 rounded-xl flex items-center shadow-lg shadow-accent/20 transition-all font-bold uppercase tracking-widest text-[10px]"
-            >
-              <Plus className="-ml-1 mr-2 h-4 w-4" />
-              Add Item
-            </Button>
-          )}
-        </div>
+          }
+        />
       </div>
       
       <div className="px-8 py-4 border-b border-border-grey bg-white/50 flex gap-4">
@@ -744,7 +747,16 @@ export const InventoryList: React.FC<InventoryListProps> = ({
 
         {/* Desktop Table View */}
         <div className="hidden md:block">
-          <div className="overflow-x-auto custom-scrollbar">
+          {/* Bounded height + overflow on BOTH axes here (not just x) so the horizontal
+              scrollbar sits at the bottom of this visible box instead of below every row —
+              previously it only lived at the bottom of the full unbounded table, unreachable
+              without scrolling past the whole list first. Same pattern as LabourIntelligence's
+              and Dashboard's scrollable tables. The column-visibility picker above already lets
+              users trim down to what fits their screen if they'd rather avoid scrolling at all;
+              with every optional column (Supplier, Storage Location, Expiry Status, etc.) on,
+              no fixed-width squeeze fits reliably across screen sizes, so scroll is the honest
+              choice here rather than the default-fit table. */}
+          <div className="overflow-x-auto overflow-y-auto max-h-[65vh] custom-scrollbar">
             <table className="min-w-full divide-y divide-border-grey table-fixed lg:table-auto">
               <thead className="bg-secondary-surface sticky top-0 z-10 backdrop-blur-md bg-white/90">
                 <tr>
