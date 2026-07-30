@@ -382,6 +382,11 @@ const INITIAL_RECIPES: Recipe[] = [
 
 type View = 'dashboard' | 'inventory' | 'stocktake' | 'invoices' | 'recipes' | 'sales' | 'suppliers' | 'settings' | 'training' | 'orders' | 'reports' | 'waste' | 'expenses' | 'briefing' | 'tables' | 'financial_command' | 'labour';
 
+// Soft-hidden (not deleted): Financial Command Center's nav item and route are gated behind
+// this flag rather than removed, so the component, pnlEngine.ts, and its Firestore reads all
+// stay fully intact for Reports.tsx and any future re-enable — flip to true to bring it back.
+const SHOW_FINANCIAL_COMMAND = false;
+
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [currentView, setCurrentView] = useState<View>('dashboard');
@@ -2882,7 +2887,7 @@ const today = londonHour < 6
             <nav className="flex-1 px-4 py-4 space-y-1 overflow-y-auto">
               <NavItem view="dashboard" icon={LayoutDashboard} label="Dashboard" />
               {checkPermission('reports', 'viewFinancials') && <NavItem view="labour" icon={HardHat} label="Labour Import" />}
-              {checkPermission('reports', 'viewFinancials') && <NavItem view="financial_command" icon={PoundSterling} label="Financial Command" />}
+              {SHOW_FINANCIAL_COMMAND && checkPermission('reports', 'viewFinancials') && <NavItem view="financial_command" icon={PoundSterling} label="Financial Command" />}
               {checkPermission('staff', 'viewBriefing') && <NavItem view="briefing" icon={Megaphone} label="Shift Briefing" />}
               {checkPermission('inventory', 'view') && <NavItem view="inventory" icon={Package} label="Inventory" />}
               {checkPermission('orders', 'view') && <NavItem view="orders" icon={ShoppingCart} label="Stock Orders" />}
@@ -2991,7 +2996,7 @@ const today = londonHour < 6
                 />
               )}
 
-            {currentView === 'financial_command' && (
+            {SHOW_FINANCIAL_COMMAND && currentView === 'financial_command' && (
               <FinancialCommandCenter
                 closures={closures}
                 orders={posOrders}
