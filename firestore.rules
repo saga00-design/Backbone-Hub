@@ -191,6 +191,13 @@ service cloud.firestore {
       allow read, write: if isAuthenticated();
     }
 
+    // NI/Pension/Holiday Accrual — structure-only collection for Labour Import's Review
+    // feature (components/LabourIntelligence.tsx). Figures are manually entered pending a
+    // future real payroll import.
+    match /payrollAccruals/{docId} {
+      allow read, write: if isAuthenticated();
+    }
+
     match /labourBudgets/{docId} {
       allow read, write: if isAuthenticated();
     }

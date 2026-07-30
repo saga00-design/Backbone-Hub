@@ -24,6 +24,7 @@ import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'motion/react';
 import { generateFinancialPackPDF } from '../services/pdfService';
 import { computePnl, PnlEngineResult } from '../services/pnlEngine';
+import { filterShiftsForCost } from '../services/labourImportService';
 import {
   DateRange, getCurrentPeriod, getWeekStart, getWeekRange, getFiscalWeek,
   getPeriodWeekStarts, getWeeksStartingInMonth, getQuarterWeekStarts,
@@ -167,7 +168,13 @@ export const FinancialCommandCenter: React.FC<FinancialCommandCenterProps> = ({
     });
   };
 
-  const pnlInputs = { closures, labourShifts, expenseRecords, wasteRecords, stockCountRecords };
+  // Salaried staff's real cost is a fixed salary, not hours x rate — excluded here (matching
+  // App.tsx's Dashboard card and Labour Import's own totals) so the P&L's Wages figure doesn't
+  // double-count alongside their actual salary. Only affects the pnlEngine feed below —
+  // `labourShifts` itself (used elsewhere, e.g. generateFinancialInsights) is untouched.
+  const labourShiftsForCost = useMemo(() => filterShiftsForCost(labourShifts, staff), [labourShifts, staff]);
+
+  const pnlInputs = { closures, labourShifts: labourShiftsForCost, expenseRecords, wasteRecords, stockCountRecords };
 
   // Overview tab, the KPI bar, P&L, Cashflow's pie, VAT, and AI Actions all now read from this
   // ONE figure set for the currently selected Week/Period/Month/Quarter/Custom Range.

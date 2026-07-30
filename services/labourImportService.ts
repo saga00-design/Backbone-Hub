@@ -104,6 +104,96 @@ export function buildWeeklyLabourCostPenceMap(shifts: LabourShift[]): Map<string
   return map;
 }
 
+/**
+ * True if this shift belongs to a Salaried staff member — their real cost is a fixed salary,
+ * not hours x rate, so their shifts must be excluded from any automated Wages/labour cost
+ * total (that total would otherwise double-count alongside their actual salary). Unmatched
+ * shifts (no staffId, or staffId not found in `staff`) are treated as Hourly/cost-eligible —
+ * the safe default, since we can't confirm they're Salaried and existing behavior for anyone
+ * not explicitly marked Salaried must not change.
+ */
+export function isSalariedShift(shift: LabourShift, staff: StaffMember[]): boolean {
+  if (!shift.staffId) return false;
+  const matched = staff.find(s => s.id === shift.staffId);
+  return matched?.employmentType === 'Salaried';
+}
+
+/**
+ * Filters a shift list down to only the shifts that should count toward an automated Wages/
+ * labour cost total — i.e. excludes Salaried staff's shifts (see isSalariedShift()). Hours/
+ * attendance tracking is unaffected by this filter; it is ONLY applied before summing cost
+ * (buildWeeklyLabourCostPenceMap, computePnl's labourShifts input, etc.) — never applied to
+ * the raw shift list used for hour totals or shift-level display.
+ */
+export function filterShiftsForCost(shifts: LabourShift[], staff: StaffMember[]): LabourShift[] {
+  return shifts.filter(s => !isSalariedShift(s, staff));
+}
+
+// Settings' canonical staff department dropdown (confirmed live options — NOT the separate
+// inventory-item DEFAULT_DEPARTMENTS in constants.ts, which is a different value space).
+export const CANONICAL_DEPARTMENTS = [
+  'Front of the house',
+  'Back of the house',
+  'Administration',
+  'Management',
+  'Bar',
+  'Not Chosen'
+] as const;
+export type CanonicalDepartment = typeof CANONICAL_DEPARTMENTS[number];
+
+// Real TTP rota exports mix abbreviated and fully-spelled department text for different roles
+// within the SAME file (confirmed: a single export containing both "Foh" and
+// "Front of the house", plus "Kitchen" and "Administration" — see rota_export_2026-05-25.csv).
+// Meanwhile Settings' StaffMember.department is picked from the canonical dropdown directly.
+// Neither side is rewritten — this mapping is applied only where Wages (shift-level) and
+// Salaries (StaffMember-level) department figures are grouped together for display, so the
+// same real department merges into one row instead of two differently-spelled ones.
+const DEPARTMENT_VARIANTS: Record<string, CanonicalDepartment> = {
+  'front of the house': 'Front of the house',
+  'front of house': 'Front of the house',
+  'foh': 'Front of the house',
+  'fnb': 'Front of the house',
+  'f&b': 'Front of the house',
+
+  'back of the house': 'Back of the house',
+  'back of house': 'Back of the house',
+  'boh': 'Back of the house',
+  'kitchen': 'Back of the house',
+
+  'administration': 'Administration',
+  'admin': 'Administration',
+
+  'management': 'Management',
+  'manager': 'Management',
+
+  'bar': 'Bar',
+
+  'not chosen': 'Not Chosen',
+};
+
+// Logged once per distinct unrecognized value (not per call) so a busy import doesn't spam
+// the console with the same warning for every shift row of an unmapped department.
+const loggedUnrecognizedDepartments = new Set<string>();
+
+/**
+ * Maps raw department text (TTP CSV free text, or a Settings dropdown value) to Settings'
+ * canonical department list, case-insensitively. Unrecognized values fall back to "Not
+ * Chosen" (matching Settings' own fallback option) rather than being dropped or crashing —
+ * and are logged once so real-world variants can be reviewed and added to
+ * DEPARTMENT_VARIANTS above.
+ */
+export function normalizeDepartment(raw: string | null | undefined): CanonicalDepartment {
+  const trimmed = (raw || '').trim();
+  if (!trimmed) return 'Not Chosen';
+  const match = DEPARTMENT_VARIANTS[trimmed.toLowerCase()];
+  if (match) return match;
+  if (!loggedUnrecognizedDepartments.has(trimmed)) {
+    loggedUnrecognizedDepartments.add(trimmed);
+    console.warn(`[labourImportService] Unrecognized department value "${trimmed}" — showing as "Not Chosen" in Labour Import's Review breakdown. Add a mapping in normalizeDepartment() if this is a real department variant.`);
+  }
+  return 'Not Chosen';
+}
+
 export interface LabourWeeksRollup {
   totalCost: number;
   weeksWithData: number;

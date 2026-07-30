@@ -600,6 +600,16 @@ export interface StaffMember {
   hourlyRate: number;
   salaryChanges?: SalaryChange[];
 
+  // Employment type: defaults to 'Hourly' wherever unset (existing staff, existing imports)
+  // so nothing changes for anyone not explicitly marked Salaried. Salaried staff still clock
+  // in/out and appear in Labour Import for hours/attendance tracking, but their real cost is
+  // this fixed salary, not hours x rate — see services/labourImportService.ts's
+  // filterShiftsForCost(), which excludes their shifts from the automated Wages cost total.
+  employmentType?: 'Hourly' | 'Salaried';
+  // Annual salary for Salaried staff, prorated per fiscal Period as annualSalary / 13 (this
+  // app's fiscal calendar is 13 four-week Periods per year — see utils/fiscalCalendar.ts).
+  annualSalary?: number;
+
   permissions: AppPermissions;
 
   allowedStations: string[]; // ['food', 'beverage', 'non_fb']
@@ -748,6 +758,25 @@ export interface WeeklyCostEntry {
   insurance: number;
   legalAndProfessional: number;
   recruitmentFeesAndRMLarge: number;
+}
+
+// Structure-only, per Labour Import's Review feature — receives NI/Pension/Holiday Accrual
+// figures once a real payroll system import exists (future work, not built yet). One record
+// per staff member per fiscal Period. Values are entered manually (from a real payroll system)
+// and are NEVER calculated/derived by this app — see components/LabourIntelligence.tsx's
+// Review section, which only rolls these up (sums by department + an "All" total) for display.
+export interface PayrollAccrualRecord {
+  id: string; // `${locationId}-${staffId}-P${periodNumber}-FY${fiscalYear}`
+  locationId: string;
+  staffId: string;
+  employeeName: string;
+  department?: string | null;
+  periodNumber: number;
+  fiscalYear: number;
+  ni: number;
+  pension: number;
+  holidayAccrual: number;
+  lastUpdated: string;
 }
 
 // --- Shift Briefing & Performance ---

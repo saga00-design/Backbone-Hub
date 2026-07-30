@@ -7,33 +7,51 @@ import {
   HardHat,
   X,
   CheckCircle2,
-  AlertTriangle
+  AlertTriangle,
+  ClipboardList,
+  Send,
+  Loader2,
+  Building2
 } from 'lucide-react';
 import {
   LabourShift,
   StaffMember,
-  POSOrder
+  POSOrder,
+  DailyClosure,
+  ExpenseRecord,
+  WasteRecord,
+  StockCountRecord,
+  PayrollAccrualRecord
 } from '../types';
 import { Button } from './Button';
 import { PageHeader } from './PageHeader';
 import { TimePeriodLegend } from './TimePeriodLegend';
 import { LabourImportPanel } from './LabourImportPanel';
-import { collection, onSnapshot, query, where, orderBy } from 'firebase/firestore';
-import { db, LOCATION_ID, auth, handleFirestoreError, OperationType } from '../firebase';
+import { collection, onSnapshot, query, where, orderBy, doc, setDoc } from 'firebase/firestore';
+import { db, LOCATION_ID, auth, handleFirestoreError, OperationType, cleanObject } from '../firebase';
 import {
   getWeekStart,
   toDateKey,
   parseDateKey,
   getCurrentPeriod,
+  getPeriodRange,
   getPeriodWeekStarts,
   getWeeksStartingInMonth,
   getQuarterWeekStarts
 } from '../utils/fiscalCalendar';
-import { sumLabourCostForWeeks } from '../services/labourImportService';
+import { sumLabourCostForWeeks, filterShiftsForCost, normalizeDepartment } from '../services/labourImportService';
+import { computePnl } from '../services/pnlEngine';
+import { pushLabourReviewToWeeklyCostEntries } from '../services/weeklyCostEntryService';
+import { toast } from 'sonner';
 
 interface LabourIntelligenceProps {
   staff: StaffMember[];
   orders: POSOrder[];
+  closures: DailyClosure[];
+  liveSalesData: { history: any[]; aggregate: any };
+  expenseRecords: ExpenseRecord[];
+  wasteRecords: WasteRecord[];
+  stockCountRecords: StockCountRecord[];
 }
 
 const money = (v: number) => `£${(v || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -59,7 +77,7 @@ function useStaffProductivity(staff: StaffMember[], shifts: LabourShift[], order
   }, [staff, shifts, orders]);
 }
 
-export const LabourIntelligence: React.FC<LabourIntelligenceProps> = ({ staff, orders }) => {
+export const LabourIntelligence: React.FC<LabourIntelligenceProps> = ({ staff, orders, closures, liveSalesData, expenseRecords, wasteRecords, stockCountRecords }) => {
   const [view, setView] = useState<'dashboard' | 'import'>('dashboard');
   const [shifts, setShifts] = useState<LabourShift[]>([]);
   const [importLogs, setImportLogs] = useState<any[]>([]);
@@ -165,12 +183,19 @@ export const LabourIntelligence: React.FC<LabourIntelligenceProps> = ({ staff, o
 
   const [viewMode, setViewMode] = useState<ViewMode>('All Shifts');
 
+  // Salaried staff's real cost is a fixed salary, not hours x rate — their shifts are excluded
+  // from every automated Wages/cost total below (Weekly/Period/Monthly/Quarterly/Custom Range),
+  // matching what feeds services/pnlEngine.ts and the Dashboard's labour cost card. The raw
+  // "All Shifts" table further down deliberately keeps using the unfiltered `shifts`/
+  // `filteredShifts` so hours/attendance tracking for Salaried staff is completely unaffected.
+  const costEligibleShifts = useMemo(() => filterShiftsForCost(shifts, staff), [shifts, staff]);
+
   // --- Weekly breakdown (Step 1): buckets the already-safe, additive-per-shift storage into
   // Monday-Sunday weeks for viewing only — importing more shifts never touches prior weeks'
   // documents, so this is just a client-side grouping of what's already there.
   const weeklyBuckets = useMemo(() => {
     const map = new Map<string, { weekStartDate: string; weekEndDate: string; totalCostPence: number; shiftCount: number }>();
-    shifts.forEach(s => {
+    costEligibleShifts.forEach(s => {
       if (!s.date) return;
       const weekStart = getWeekStart(parseDateKey(s.date));
       const weekStartKey = toDateKey(weekStart);
@@ -186,7 +211,7 @@ export const LabourIntelligence: React.FC<LabourIntelligenceProps> = ({ staff, o
       }
     });
     return map;
-  }, [shifts]);
+  }, [costEligibleShifts]);
 
   const weeklyBucketsSorted = useMemo(
     () => Array.from(weeklyBuckets.values()).sort((a, b) => b.weekStartDate.localeCompare(a.weekStartDate)),
@@ -224,10 +249,175 @@ export const LabourIntelligence: React.FC<LabourIntelligenceProps> = ({ staff, o
   const [customEnd, setCustomEnd] = useState(() => toDateKey(new Date()));
 
   const customRangeTotal = useMemo(() => {
-    const rows = shifts.filter(s => s.date && s.date >= customStart && s.date <= customEnd);
+    const rows = costEligibleShifts.filter(s => s.date && s.date >= customStart && s.date <= customEnd);
     const pence = rows.reduce((acc, s) => acc + Math.round((s.totalCost || 0) * 100), 0);
     return { totalCost: pence / 100, shiftCount: rows.length };
-  }, [shifts, customStart, customEnd]);
+  }, [costEligibleShifts, customStart, customEnd]);
+
+  // ==================== REVIEW: Wages / Salaries / Department split / Bonus ====================
+  // Only meaningful for the Period view (Push to P&L writes to specific weeks of one Period),
+  // gated in the UI on the same "X of 4 weeks have data" completeness check as `rollup` above.
+  const [showReview, setShowReview] = useState(false);
+  const [pushingToPnl, setPushingToPnl] = useState(false);
+
+  const periodReview = useMemo(() => {
+    const range = getPeriodRange(rollupPeriod, rollupFiscalYear);
+    const startKey = toDateKey(range.start);
+    const endKey = toDateKey(range.end);
+
+    // Wages — Hourly-only shifts (costEligibleShifts already excludes Salaried) whose date
+    // falls inside this specific Period. Department is normalized (see normalizeDepartment())
+    // so raw TTP text like "Foh"/"Kitchen" collapses onto Settings' canonical department list —
+    // stored data is untouched, this is purely a grouping key for display here.
+    const periodHourlyShifts = costEligibleShifts.filter(s => s.date && s.date >= startKey && s.date <= endKey);
+    const wagesByDept = new Map<string, number>();
+    periodHourlyShifts.forEach(s => {
+      const key = normalizeDepartment(s.department);
+      wagesByDept.set(key, (wagesByDept.get(key) || 0) + (s.totalCost || 0));
+    });
+    const wages = periodHourlyShifts.reduce((acc, s) => acc + (s.totalCost || 0), 0);
+
+    // Salaries — every Salaried staff member's annual salary prorated to one Period (÷13,
+    // this app's fiscal calendar being 13 four-week Periods/year). Grouped by the SAME
+    // normalizeDepartment() as Wages above, so e.g. a shift department of "Foh" and a
+    // StaffMember.department of "Front of the house" merge into one row instead of two.
+    const salariedStaff = staff.filter(s => s.employmentType === 'Salaried');
+    const salariesByDept = new Map<string, number>();
+    let salaries = 0;
+    salariedStaff.forEach(s => {
+      const prorated = (s.annualSalary || 0) / 13;
+      salaries += prorated;
+      const key = normalizeDepartment(s.department);
+      salariesByDept.set(key, (salariesByDept.get(key) || 0) + prorated);
+    });
+
+    // Bonus — 1% of this Period's Net Profit, computed BEFORE the bonus is added anywhere
+    // (Salaries/Bonus aren't wired into pnlEngine at all yet — see WeeklyCostEntry.tsx — so
+    // netProfit here is already "before bonus" with no extra step needed). Floored at 0: a
+    // loss-making Period can't sensibly produce a negative bonus.
+    const periodPnl = computePnl({
+      range,
+      posOrders: liveSalesData.history,
+      closures,
+      labourShifts: costEligibleShifts,
+      expenseRecords,
+      wasteRecords,
+      stockCountRecords
+    });
+    const bonus = Math.max(0, periodPnl.netProfit * 0.01);
+
+    const departments = Array.from(new Set([...wagesByDept.keys(), ...salariesByDept.keys()]))
+      .sort((a, b) => (a === 'Not Chosen' ? 1 : b === 'Not Chosen' ? -1 : a.localeCompare(b)));
+
+    return {
+      range, wages, salaries, bonus, netProfitBeforeBonus: periodPnl.netProfit,
+      wagesByDept, salariesByDept, departments, salariedStaff
+    };
+  }, [rollupPeriod, rollupFiscalYear, costEligibleShifts, staff, liveSalesData, closures, expenseRecords, wasteRecords, stockCountRecords]);
+
+  const handlePushToPnl = async () => {
+    setPushingToPnl(true);
+    try {
+      const weekStarts = getPeriodWeekStarts(rollupPeriod, rollupFiscalYear);
+      await pushLabourReviewToWeeklyCostEntries(weekStarts, {
+        salaries: periodReview.salaries,
+        bonuses: periodReview.bonus
+      });
+      toast.success(`Pushed Salaries (${money(periodReview.salaries)}) and Bonus (${money(periodReview.bonus)}) to P&L for Period ${rollupPeriod}, FY${rollupFiscalYear}`);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, 'weeklyCostEntries');
+      toast.error('Failed to push to P&L. Please try again.');
+    } finally {
+      setPushingToPnl(false);
+    }
+  };
+
+  // ==================== NI / Pension / Holiday Accrual — structure only ====================
+  // Per-employee figures for the reviewed Period, manually entered (a real payroll import is
+  // future work — see types.ts's PayrollAccrualRecord). This section only stores what's typed
+  // in and sums it by department + an "All" total; it never calculates NI/pension/holiday from
+  // salary or hours itself.
+  const [accrualRecords, setAccrualRecords] = useState<PayrollAccrualRecord[]>([]);
+  const [accrualDraft, setAccrualDraft] = useState<Record<string, { ni: number; pension: number; holidayAccrual: number }>>({});
+  const [savingAccruals, setSavingAccruals] = useState(false);
+
+  useEffect(() => {
+    if (!auth.currentUser || !showReview) return;
+    const q = query(
+      collection(db, 'payrollAccruals'),
+      where('locationId', '==', LOCATION_ID),
+      where('periodNumber', '==', rollupPeriod),
+      where('fiscalYear', '==', rollupFiscalYear)
+    );
+    return onSnapshot(q, (snap) => {
+      setAccrualRecords(snap.docs.map(d => ({ ...d.data(), id: d.id } as PayrollAccrualRecord)));
+    }, (err) => handleFirestoreError(err, OperationType.LIST, 'payrollAccruals'));
+  }, [showReview, rollupPeriod, rollupFiscalYear]);
+
+  // Reset the draft to what's saved whenever the reviewed Period changes (not on every
+  // snapshot echo, so in-progress typing isn't clobbered by our own writes coming back).
+  useEffect(() => {
+    const next: Record<string, { ni: number; pension: number; holidayAccrual: number }> = {};
+    staff.forEach(s => {
+      const existing = accrualRecords.find(r => r.staffId === s.id);
+      next[s.id] = {
+        ni: existing?.ni || 0,
+        pension: existing?.pension || 0,
+        holidayAccrual: existing?.holidayAccrual || 0
+      };
+    });
+    setAccrualDraft(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rollupPeriod, rollupFiscalYear, staff.length]);
+
+  const accrualRollup = useMemo(() => {
+    const byDept = new Map<string, { ni: number; pension: number; holidayAccrual: number }>();
+    let all = { ni: 0, pension: 0, holidayAccrual: 0 };
+    staff.forEach(s => {
+      const draft = accrualDraft[s.id];
+      if (!draft) return;
+      const key = normalizeDepartment(s.department);
+      const existing = byDept.get(key) || { ni: 0, pension: 0, holidayAccrual: 0 };
+      byDept.set(key, {
+        ni: existing.ni + draft.ni,
+        pension: existing.pension + draft.pension,
+        holidayAccrual: existing.holidayAccrual + draft.holidayAccrual
+      });
+      all = { ni: all.ni + draft.ni, pension: all.pension + draft.pension, holidayAccrual: all.holidayAccrual + draft.holidayAccrual };
+    });
+    return { byDept, all };
+  }, [staff, accrualDraft]);
+
+  const handleSaveAccruals = async () => {
+    setSavingAccruals(true);
+    try {
+      await Promise.all(staff.map(s => {
+        const draft = accrualDraft[s.id];
+        if (!draft) return Promise.resolve();
+        const id = `${LOCATION_ID}-${s.id}-P${rollupPeriod}-FY${rollupFiscalYear}`;
+        const payload: PayrollAccrualRecord = {
+          id,
+          locationId: LOCATION_ID,
+          staffId: s.id,
+          employeeName: `${s.firstName} ${s.lastName}`.trim(),
+          department: s.department || null,
+          periodNumber: rollupPeriod,
+          fiscalYear: rollupFiscalYear,
+          ni: draft.ni,
+          pension: draft.pension,
+          holidayAccrual: draft.holidayAccrual,
+          lastUpdated: new Date().toISOString()
+        };
+        return setDoc(doc(db, 'payrollAccruals', id), cleanObject(payload), { merge: true });
+      }));
+      toast.success('Saved NI / Pension / Holiday Accrual figures');
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, 'payrollAccruals');
+      toast.error('Failed to save accrual figures. Please try again.');
+    } finally {
+      setSavingAccruals(false);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -412,6 +602,12 @@ export const LabourIntelligence: React.FC<LabourIntelligenceProps> = ({ staff, o
                         <AlertTriangle className="w-3.5 h-3.5" /> {rollup.weeksWithData} of {rollup.expectedCount} weeks have data
                       </span>
                     )}
+                    {viewMode === 'Period' && rollup.expectedCount > 0 && rollup.weeksWithData === rollup.expectedCount && (
+                      <Button variant={showReview ? 'secondary' : 'primary'} size="sm" className="gap-1.5" onClick={() => setShowReview(v => !v)}>
+                        <ClipboardList className="w-3.5 h-3.5" />
+                        {showReview ? 'Hide Review' : 'Review'}
+                      </Button>
+                    )}
                   </div>
                 </div>
 
@@ -423,6 +619,154 @@ export const LabourIntelligence: React.FC<LabourIntelligenceProps> = ({ staff, o
                     <p className="text-3xl font-black text-white">{money(rollup.totalCost)}</p>
                   </div>
                 </div>
+
+                {viewMode === 'Period' && showReview && rollup.expectedCount > 0 && rollup.weeksWithData === rollup.expectedCount && (
+                  <div className="mt-6 space-y-4">
+                    <div className="p-6 bg-card-bg rounded-2xl border border-border-grey shadow-sm">
+                      <h4 className="text-sm font-black text-text-navy uppercase tracking-wide mb-4">
+                        Period {rollupPeriod}, FY{rollupFiscalYear} — Review
+                      </h4>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+                        <div className="p-4 bg-secondary-surface rounded-xl border border-border-grey">
+                          <p className="text-[9px] font-black text-text-muted uppercase tracking-widest">Wages (Hourly staff, automated)</p>
+                          <p className="text-xl font-black text-text-navy mt-1">{money(periodReview.wages)}</p>
+                          <p className="text-[9px] text-text-muted font-bold mt-1">Feeds P&amp;L automatically — not pushed manually</p>
+                        </div>
+                        <div className="p-4 bg-secondary-surface rounded-xl border border-border-grey">
+                          <p className="text-[9px] font-black text-text-muted uppercase tracking-widest">Salaries ({periodReview.salariedStaff.length} staff, prorated)</p>
+                          <p className="text-xl font-black text-text-navy mt-1">{money(periodReview.salaries)}</p>
+                        </div>
+                        <div className="p-4 bg-secondary-surface rounded-xl border border-border-grey">
+                          <p className="text-[9px] font-black text-text-muted uppercase tracking-widest">Bonus (1% of Net Profit before bonus)</p>
+                          <p className="text-xl font-black text-text-navy mt-1">{money(periodReview.bonus)}</p>
+                          <p className="text-[9px] text-text-muted font-bold mt-1">Net Profit before bonus: {money(periodReview.netProfitBeforeBonus)}</p>
+                        </div>
+                      </div>
+
+                      <div className="border border-border-grey rounded-2xl overflow-hidden mb-6">
+                        <table className="w-full text-left text-xs">
+                          <thead className="bg-secondary-surface">
+                            <tr className="text-[9px] font-black text-text-muted uppercase tracking-widest">
+                              <th className="px-4 py-3 flex items-center gap-1.5"><Building2 className="w-3.5 h-3.5" /> Department</th>
+                              <th className="px-4 py-3">Wages</th>
+                              <th className="px-4 py-3">Salaries</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-border-grey">
+                            {periodReview.departments.map(dept => (
+                              <tr key={dept}>
+                                <td className="px-4 py-2.5 font-bold text-text-navy whitespace-nowrap">{dept}</td>
+                                <td className="px-4 py-2.5 text-text-muted whitespace-nowrap">{money(periodReview.wagesByDept.get(dept) || 0)}</td>
+                                <td className="px-4 py-2.5 text-text-muted whitespace-nowrap">{money(periodReview.salariesByDept.get(dept) || 0)}</td>
+                              </tr>
+                            ))}
+                            {periodReview.departments.length === 0 && (
+                              <tr>
+                                <td colSpan={3} className="px-4 py-8 text-center text-text-muted font-bold text-xs">
+                                  No Wages or Salaries recorded for this Period yet.
+                                </td>
+                              </tr>
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 p-4 bg-main-bg rounded-2xl border border-border-grey">
+                        <p className="text-[10px] font-bold text-text-muted uppercase tracking-wide max-w-md">
+                          Pushes Salaries and Bonus to Operation Costs' P&amp;L Cost Entry, split evenly across this Period's 4 weeks. Wages is not pushed — it already flows automatically.
+                        </p>
+                        <Button variant="primary" className="gap-2" onClick={handlePushToPnl} disabled={pushingToPnl}>
+                          {pushingToPnl ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                          {pushingToPnl ? 'Pushing...' : 'Push to P&L'}
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div className="p-6 bg-card-bg rounded-2xl border border-border-grey shadow-sm">
+                      <h4 className="text-sm font-black text-text-navy uppercase tracking-wide mb-1">NI / Pension / Holiday Accrual</h4>
+                      <p className="text-[10px] font-bold text-text-muted uppercase tracking-wide mb-4 normal-case">
+                        Structure only — figures are entered manually (from a real payroll system) and are never calculated by this app. This just stores what you type and rolls it up by department + an All total.
+                      </p>
+                      <div className="border border-border-grey rounded-2xl overflow-hidden mb-4">
+                        <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
+                          <table className="w-full text-left text-xs">
+                            <thead className="sticky top-0 bg-secondary-surface z-10">
+                              <tr className="text-[9px] font-black text-text-muted uppercase tracking-widest">
+                                <th className="px-4 py-3">Employee</th>
+                                <th className="px-4 py-3">Department</th>
+                                <th className="px-4 py-3">NI (£)</th>
+                                <th className="px-4 py-3">Pension (£)</th>
+                                <th className="px-4 py-3">Holiday Accrual (£)</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-border-grey">
+                              {staff.filter(s => s.active).map(s => (
+                                <tr key={s.id}>
+                                  <td className="px-4 py-2 font-bold text-text-navy whitespace-nowrap">{s.firstName} {s.lastName}</td>
+                                  <td className="px-4 py-2 text-text-muted whitespace-nowrap">{normalizeDepartment(s.department)}</td>
+                                  {(['ni', 'pension', 'holidayAccrual'] as const).map(field => (
+                                    <td key={field} className="px-4 py-2">
+                                      <input
+                                        type="number"
+                                        step="0.01"
+                                        value={accrualDraft[s.id]?.[field] === 0 ? '' : accrualDraft[s.id]?.[field] ?? ''}
+                                        onChange={(e) => {
+                                          const num = e.target.value === '' ? 0 : Number(e.target.value);
+                                          setAccrualDraft(prev => ({
+                                            ...prev,
+                                            [s.id]: { ...(prev[s.id] || { ni: 0, pension: 0, holidayAccrual: 0 }), [field]: isNaN(num) ? 0 : num }
+                                          }));
+                                        }}
+                                        placeholder="0.00"
+                                        className="w-24 bg-secondary-surface border-none rounded-md text-xs px-2 py-1 focus:ring-1 focus:ring-accent"
+                                      />
+                                    </td>
+                                  ))}
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+
+                      <div className="border border-border-grey rounded-2xl overflow-hidden mb-4">
+                        <table className="w-full text-left text-xs">
+                          <thead className="bg-secondary-surface">
+                            <tr className="text-[9px] font-black text-text-muted uppercase tracking-widest">
+                              <th className="px-4 py-3">Rollup</th>
+                              <th className="px-4 py-3">NI</th>
+                              <th className="px-4 py-3">Pension</th>
+                              <th className="px-4 py-3">Holiday Accrual</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-border-grey">
+                            {Array.from(accrualRollup.byDept.entries()).map(([dept, totals]) => (
+                              <tr key={dept}>
+                                <td className="px-4 py-2 font-bold text-text-navy whitespace-nowrap">{dept}</td>
+                                <td className="px-4 py-2 text-text-muted whitespace-nowrap">{money(totals.ni)}</td>
+                                <td className="px-4 py-2 text-text-muted whitespace-nowrap">{money(totals.pension)}</td>
+                                <td className="px-4 py-2 text-text-muted whitespace-nowrap">{money(totals.holidayAccrual)}</td>
+                              </tr>
+                            ))}
+                            <tr className="bg-secondary-surface/50">
+                              <td className="px-4 py-2 font-black text-text-navy whitespace-nowrap">All</td>
+                              <td className="px-4 py-2 font-black text-text-navy whitespace-nowrap">{money(accrualRollup.all.ni)}</td>
+                              <td className="px-4 py-2 font-black text-text-navy whitespace-nowrap">{money(accrualRollup.all.pension)}</td>
+                              <td className="px-4 py-2 font-black text-text-navy whitespace-nowrap">{money(accrualRollup.all.holidayAccrual)}</td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+
+                      <div className="flex justify-end">
+                        <Button variant="primary" className="gap-2" onClick={handleSaveAccruals} disabled={savingAccruals}>
+                          {savingAccruals ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                          {savingAccruals ? 'Saving...' : 'Save Accrual Figures'}
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </>
             )}
 

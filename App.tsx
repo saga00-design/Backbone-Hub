@@ -21,7 +21,7 @@ import { InventoryItem, InventoryCategory, Unit, StockCountRecord, Recipe, Sales
 import { logAuditAction } from './services/auditService';
 import { getBusinessDay } from './utils/businessDay';
 import { getCurrentPeriod, getPeriodWeekStarts } from './utils/fiscalCalendar';
-import { buildWeeklyLabourCostPenceMap, sumLabourCostForWeeks } from './services/labourImportService';
+import { buildWeeklyLabourCostPenceMap, sumLabourCostForWeeks, filterShiftsForCost } from './services/labourImportService';
 import { LayoutDashboard, Package, ClipboardCheck, FileInput, Menu, X, ChefHat, TrendingUp, Truck, Settings as SettingsIcon, BookOpen, Sun, Moon, ShoppingCart, AlertCircle, LogIn, LogOut, Trash2, ReceiptPoundSterling, Megaphone, LayoutList, PoundSterling } from 'lucide-react';
 import { Toaster, toast } from 'sonner';
 import { auth, db, googleProvider, signInWithPopup, onAuthStateChanged, collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, onSnapshot, handleFirestoreError, OperationType, User, cleanObject, signOut, increment, query, where, orderBy, limit, testConnection, LOCATION_ID, writeBatch } from './firebase';
@@ -599,15 +599,24 @@ const today = londonHour < 6
     return liveSalesData.aggregate.todayPaid;
   }, [liveSalesData.aggregate.todayPaid]);
 
+  // Salaried staff's real cost is their fixed salary, not hours x rate — their shifts are
+  // excluded here (and everywhere else an automated Wages/labour cost total is summed) so
+  // Labour Import can keep showing their HOURS unfiltered while the $ total doesn't
+  // double-count alongside their actual salary (see services/labourImportService.ts).
+  const labourShiftsForCost = useMemo(
+    () => filterShiftsForCost(labourShifts, staffMembers),
+    [labourShifts, staffMembers]
+  );
+
   // Dashboard's Period-to-date Labour Cost card — reuses Labour Intelligence's own
   // weekly-bucket + Period rollup (services/labourImportService.ts) rather than
   // recomputing labour cost separately, so the two screens always agree.
   const labourCostPeriodToDate = useMemo(() => {
     const currentPeriod = getCurrentPeriod();
-    const weeklyPenceMap = buildWeeklyLabourCostPenceMap(labourShifts);
+    const weeklyPenceMap = buildWeeklyLabourCostPenceMap(labourShiftsForCost);
     const weekStarts = getPeriodWeekStarts(currentPeriod.periodNumber, currentPeriod.fiscalYear);
     return { ...sumLabourCostForWeeks(weeklyPenceMap, weekStarts), periodNumber: currentPeriod.periodNumber };
-  }, [labourShifts]);
+  }, [labourShiftsForCost]);
 
   // Explicit aliases for reporting compliance
   const posPaymentsHistory = liveSalesData.history;
@@ -3138,7 +3147,15 @@ const today = londonHour < 6
             )}
 
             {currentView === 'labour' && (
-              <LabourIntelligence staff={staffMembers} orders={posOrders} />
+              <LabourIntelligence
+                staff={staffMembers}
+                orders={posOrders}
+                closures={closures}
+                liveSalesData={liveSalesData}
+                expenseRecords={expenseRecords}
+                wasteRecords={wasteRecords}
+                stockCountRecords={stockHistory}
+              />
             )}
 
             {currentView === 'tables' && (
@@ -3160,7 +3177,7 @@ const today = londonHour < 6
                 recipes={recipes}
                 wasteRecords={wasteRecords}
                 expenseRecords={expenseRecords}
-                labourShifts={labourShifts}
+                labourShifts={labourShiftsForCost}
                 onEditRecipe={handleEditRecipeFromReport}
                 onEditInventoryItem={handleEditInventoryItemFromReport}
               />

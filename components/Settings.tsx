@@ -69,6 +69,7 @@ export const Settings: React.FC<SettingsProps> = ({ auditLogs = [] }) => {
     certifications: [],
     pin: '',
     hourlyRate: 12.50,
+    employmentType: 'Hourly',
     active: true,
   });
 
@@ -121,6 +122,8 @@ export const Settings: React.FC<SettingsProps> = ({ auditLogs = [] }) => {
         locationId: LOCATION_ID,
         department: newStaff.department || 'foh',
         hourlyRate: newStaff.hourlyRate || 12.5,
+        employmentType: newStaff.employmentType || 'Hourly',
+        annualSalary: newStaff.employmentType === 'Salaried' ? (newStaff.annualSalary || 0) : undefined,
 
         permissions: newStaff.permissions || {},
         allowedStations: newStaff.allowedStations || [],
@@ -165,6 +168,7 @@ export const Settings: React.FC<SettingsProps> = ({ auditLogs = [] }) => {
         certifications: [],
         pin: '',
         hourlyRate: 12.5,
+        employmentType: 'Hourly',
         active: true,
       });
 
@@ -1092,6 +1096,34 @@ export const Settings: React.FC<SettingsProps> = ({ auditLogs = [] }) => {
                         <option value="Admin">Admin</option>
                       </select>
                     </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2 block">Employment Type</label>
+                      <select
+                        value={newStaff.employmentType || 'Hourly'}
+                        onChange={(e) => setNewStaff({ ...newStaff, employmentType: e.target.value as 'Hourly' | 'Salaried' })}
+                        className="w-full bg-main-bg border border-border-grey rounded-xl px-4 py-3 text-text-navy focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent transition-all appearance-none"
+                      >
+                        <option value="Hourly">Hourly</option>
+                        <option value="Salaried">Salaried</option>
+                      </select>
+                      <p className="text-[9px] font-bold text-text-muted uppercase tracking-wide mt-1.5 normal-case">
+                        Salaried staff still clock in/out for hours tracking, but their pay comes from the Annual Salary below instead of hours × Hourly Rate — their shifts are excluded from the automated Wages cost total.
+                      </p>
+                    </div>
+                    {newStaff.employmentType === 'Salaried' && (
+                      <div>
+                        <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2 block">Annual Salary (£)</label>
+                        <input
+                          type="number"
+                          value={newStaff.annualSalary ?? ''}
+                          onChange={(e) => setNewStaff({ ...newStaff, annualSalary: parseFloat(e.target.value) || 0 })}
+                          className="w-full bg-main-bg border border-border-grey rounded-xl px-4 py-3 text-text-navy focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent transition-all"
+                        />
+                        <p className="text-[9px] font-bold text-text-muted uppercase tracking-wide mt-1.5 normal-case">
+                          Prorated per fiscal Period as Annual Salary ÷ 13.
+                        </p>
+                      </div>
+                    )}
 
                     <div className="bg-main-bg/50 p-4 rounded-2xl border border-border-grey">
                       <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest mb-4 block">Station Access</label>
