@@ -754,15 +754,17 @@ export const TrainingCenter: React.FC<TrainingCenterProps> = ({ recipes, invento
             onClick={() => setSelectedItem(item as any)}
             className="group bg-white dark:bg-slate-900 rounded-2xl shadow-sm border border-gray-100 dark:border-slate-800 overflow-hidden flex flex-col hover:shadow-2xl transition-all duration-300 hover:-translate-y-1.5 cursor-pointer ring-1 ring-black/5 dark:ring-white/5"
           >
-            <div className="aspect-[4/5] w-full relative overflow-hidden">
-              <img 
-                src={(item as any).imageUrl || `https://picsum.photos/seed/${encodeURIComponent(item.name)}/600/450`} 
-                alt={item.name} 
-                className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" 
+            {/* Image shrunk to match Menu Recipes' card exactly (aspect-[4/5] -> aspect-[20/13],
+                ~48% shorter) to make room for the full info block below. */}
+            <div className="aspect-[20/13] w-full relative overflow-hidden">
+              <img
+                src={(item as any).imageUrl || `https://picsum.photos/seed/${encodeURIComponent(item.name)}/600/450`}
+                alt={item.name}
+                className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
                 referrerPolicy="no-referrer"
               />
               <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent opacity-60 group-hover:opacity-80 transition-opacity duration-300" />
-              
+
               <div className="absolute top-2 right-2 flex flex-col gap-1 items-end">
                 <div className="bg-white/90 dark:bg-slate-900/90 backdrop-blur-md px-2 py-0.5 rounded text-[8px] font-black text-accent dark:text-accent/80 shadow uppercase tracking-widest border border-white/20">
                   {(item as any).category || 'Item'}
@@ -770,19 +772,61 @@ export const TrainingCenter: React.FC<TrainingCenterProps> = ({ recipes, invento
               </div>
 
               <div className="absolute bottom-0 left-0 right-0 p-3">
-                <h3 className="text-xs sm:text-sm font-black text-white line-clamp-2 uppercase tracking-tight leading-tight mb-1">{item.name}</h3>
-                {(item as any).type === 'menu_item' && (
-                   <div className="flex flex-wrap gap-1 mt-1">
-                    {(item as any).allergies && (item as any).allergies.slice(0, 2).map((allergy: string, aIdx: number) => (
-                      <span key={`${item.id || 'new'}-${allergy}-${aIdx}`} className="inline-flex items-center px-1 py-0.5 rounded bg-white/20 backdrop-blur-sm text-white text-[7px] font-bold uppercase tracking-widest">
-                        {allergy}
-                      </span>
-                    ))}
-                  </div>
-                )}
+                <h3 className="text-xs sm:text-sm font-black text-white line-clamp-2 uppercase tracking-tight leading-tight">{item.name}</h3>
               </div>
             </div>
-            
+
+            {/* Info block shown directly on the card face — mirrors Menu Recipes' card:
+                description, Menu Price only (no COGS/GP Margin here), full ingredients list,
+                full allergy list, calories. Fields simply don't render when the item (e.g. a
+                spirits/product entry) doesn't have them. */}
+            <div className="px-3 pt-3 space-y-2">
+              {(item as any).description && (
+                <p className="text-[8px] italic text-gray-500 dark:text-slate-400 leading-snug">{(item as any).description}</p>
+              )}
+
+              {(item as any).type === 'menu_item' && typeof (item as any).sellingPrice === 'number' && (
+                <div className="flex justify-between text-[9px] font-black">
+                  <span className="text-text-muted uppercase tracking-wide">Menu Price</span>
+                  <span className="text-gray-900 dark:text-white">£{(item as any).sellingPrice.toFixed(2)}</span>
+                </div>
+              )}
+
+              {Array.isArray((item as any).ingredients) && (item as any).ingredients.length > 0 && (
+                <div className="pt-2 border-t border-gray-100 dark:border-slate-800">
+                  <p className="text-[7px] font-black text-text-muted uppercase tracking-widest mb-0.5">Ingredients ({(item as any).ingredients.length})</p>
+                  <p className="text-[8px] text-gray-900 dark:text-white leading-snug">
+                    {(item as any).ingredients.map((ing: any) => inventoryItems.find(i => i.id === ing.inventoryItemId)?.name || 'Unknown').join(', ')}
+                  </p>
+                </div>
+              )}
+
+              {(item as any).type === 'menu_item' && (
+                <div className="pt-2 border-t border-gray-100 dark:border-slate-800">
+                  <p className="text-[7px] font-black text-text-muted uppercase tracking-widest mb-0.5">Allergies</p>
+                  {(item as any).allergies && (item as any).allergies.length > 0 ? (
+                    <div className="flex flex-wrap gap-1">
+                      {(item as any).allergies.map((allergy: string) => (
+                        <div key={allergy} className="flex items-center gap-0.5 bg-gray-100 dark:bg-slate-800 px-1 py-0.5 rounded text-gray-500 dark:text-slate-400 [&>svg]:h-3 [&>svg]:w-3">
+                          {allergyIcons[allergy] || <AlertCircle className="h-3 w-3" />}
+                          <span className="text-[7px] font-bold">{allergy}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <span className="text-[8px] font-bold text-text-muted uppercase tracking-widest">No allergens</span>
+                  )}
+                </div>
+              )}
+
+              {!!(item as any).calories && (
+                <div className="pt-2 border-t border-gray-100 dark:border-slate-800 flex justify-between text-[8px] font-bold">
+                  <span className="text-text-muted uppercase tracking-wide">Calories</span>
+                  <span className="text-gray-900 dark:text-white">{(item as any).calories} kcal</span>
+                </div>
+              )}
+            </div>
+
             <div className="p-3 bg-gray-50/50 dark:bg-slate-800/50 border-t border-gray-100 dark:border-slate-800 flex flex-col gap-2">
               <div className="flex items-center justify-between">
                 <span className="text-[8px] font-bold text-text-muted uppercase tracking-widest">

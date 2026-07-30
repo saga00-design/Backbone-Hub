@@ -2949,7 +2949,7 @@ const today = londonHour < 6
               </button>
             </div>
           )}
-          <div className={`mx-auto pb-20 ${currentView === 'inventory' ? 'max-w-[1920px]' : 'max-w-7xl'}`}>
+          <div className={`mx-auto pb-20 ${currentView === 'inventory' || currentView === 'recipes' ? 'max-w-[1920px]' : 'max-w-7xl'}`}>
             <header className="mb-6 sm:mb-8 flex justify-end items-center rounded-md">
               {/* Per-page title (icon + name + subtitle) now lives inside each page's own
                   component via the shared PageHeader — this bar no longer repeats it in

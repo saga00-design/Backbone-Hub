@@ -1553,7 +1553,6 @@ const handleSave = async () => {
         windowHeight: element.scrollHeight
       });
 
-      const imgData = canvas.toDataURL('image/png');
       const pdf = new jsPDF({
         orientation: 'landscape',
         unit: 'mm',
@@ -1570,33 +1569,48 @@ const handleSave = async () => {
       const contentHeight = pdfHeightFull - margin * 2;
 
       let renderWidth = contentWidth;
-      let renderHeight = (canvas.height * renderWidth) / canvas.width;
+      let totalRenderHeight = (canvas.height * renderWidth) / canvas.width;
 
       // Avoid an awkward near-empty trailing page: if the table only slightly overflows into
       // one extra page (the last page would be mostly blank), shrink by up to 15% so the whole
       // table fits into one fewer page instead — small enough to stay fully legible.
-      const naturalPageCount = Math.ceil(renderHeight / contentHeight);
+      const naturalPageCount = Math.ceil(totalRenderHeight / contentHeight);
       if (naturalPageCount > 1) {
-        const lastPageFraction = (renderHeight - (naturalPageCount - 1) * contentHeight) / contentHeight;
+        const lastPageFraction = (totalRenderHeight - (naturalPageCount - 1) * contentHeight) / contentHeight;
         if (lastPageFraction < 0.2) {
           const targetHeight = (naturalPageCount - 1) * contentHeight;
-          const shrinkFactor = targetHeight / renderHeight;
+          const shrinkFactor = targetHeight / totalRenderHeight;
           if (shrinkFactor >= 0.85) {
-            renderHeight = targetHeight;
+            totalRenderHeight = targetHeight;
             renderWidth = renderWidth * shrinkFactor;
           }
         }
       }
 
       const xOffset = margin + (contentWidth - renderWidth) / 2; // center if shrunk
+      const scale = renderWidth / canvas.width; // mm per canvas px, held constant across slices
 
-      let topOffset = 0; // how much of renderHeight has already been drawn on previous pages
+      // Crop the source canvas into one slice per page instead of drawing the full image on
+      // every page and letting the page edge clip it — that old approach only ever respected
+      // the top margin on page 1 and the bottom margin on the last page; every page in between
+      // (and the bottom of page 1, and the top of every page after it) ran flush to the
+      // physical page edge with no margin at all. Slicing guarantees every page gets its own
+      // top/bottom margin because no slice is ever taller than the printable content height.
+      const pageHeightPx = contentHeight / scale;
+      let yPx = 0;
       let pageIndex = 0;
-      while (topOffset < renderHeight) {
+      while (yPx < canvas.height) {
         if (pageIndex > 0) pdf.addPage();
-        const y = margin - topOffset;
-        pdf.addImage(imgData, 'PNG', xOffset, y, renderWidth, renderHeight);
-        topOffset += contentHeight;
+        const sliceHeightPx = Math.min(pageHeightPx, canvas.height - yPx);
+        const sliceCanvas = document.createElement('canvas');
+        sliceCanvas.width = canvas.width;
+        sliceCanvas.height = sliceHeightPx;
+        const ctx = sliceCanvas.getContext('2d');
+        ctx?.drawImage(canvas, 0, yPx, canvas.width, sliceHeightPx, 0, 0, canvas.width, sliceHeightPx);
+        const sliceData = sliceCanvas.toDataURL('image/png');
+        const sliceRenderHeight = sliceHeightPx * scale;
+        pdf.addImage(sliceData, 'PNG', xOffset, margin, renderWidth, sliceRenderHeight);
+        yPx += sliceHeightPx;
         pageIndex++;
       }
 
@@ -3363,14 +3377,18 @@ const handleSave = async () => {
             </div>
           )}
 
-          {/* Standard grid-card size — matches Training's card exactly: grid-cols-2
-              lg:grid-cols-4 xl:grid-cols-5 gap-2 sm:gap-4 md:gap-6, aspect-[4/5] image tile,
-              rounded-2xl shadow-sm hover:shadow-2xl hover:-translate-y-1.5. Reuse this same
-              shape for any future grid-card UI in the app. Full cost/price/margin-breakdown/
-              allergies/sustainability detail lives in the Details modal (click-through) rather
-              than on the card face — Produce Batch, Training Guide, and Delete stay as compact
-              icon actions in the footer since they have no other entry point in the app. */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-2 sm:gap-4 md:gap-6">
+          {/* Standard grid-card size — matches Training's card: grid-cols-2 lg:grid-cols-4
+              xl:grid-cols-5 gap-2 sm:gap-4 md:gap-6, aspect-[4/5] image tile, rounded-2xl
+              shadow-sm hover:shadow-2xl hover:-translate-y-1.5. This page's container is wider
+              than Training's (max-w-[1920px] vs max-w-7xl, to show more recipes at once), so an
+              extra 2xl:grid-cols-6 tier is added at very wide widths purely to keep the card
+              itself the same standard size instead of stretching wider — same card shape,
+              just one more column at 1536px+. Reuse the card shape for any future grid-card UI
+              in the app. Full cost/price/margin-breakdown/allergies/sustainability detail lives
+              in the Details modal (click-through) rather than on the card face — Produce Batch,
+              Training Guide, and Delete stay as compact icon actions in the footer since they
+              have no other entry point in the app. */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-2 sm:gap-4 md:gap-6">
             {filteredRecipes.length === 0 ? (
               <div className="col-span-full text-center py-20 bg-card-bg rounded-3xl border-2 border-dashed border-border-grey">
                 <ChefHat className="mx-auto h-16 w-16 text-border-grey" />
@@ -3392,7 +3410,11 @@ const handleSave = async () => {
                     onClick={() => handleOpenModal(recipe)}
                     className="group bg-card-bg rounded-2xl shadow-sm border border-border-grey overflow-hidden flex flex-col hover:shadow-2xl transition-all duration-300 hover:-translate-y-1.5 cursor-pointer ring-1 ring-black/5"
                   >
-                    <div className="aspect-[4/5] w-full relative overflow-hidden">
+                    {/* Image shrunk ~48% total from the original standard size (aspect-[4/5] ->
+                        aspect-[20/13]: first a 35% height cut, then a further 20% cut on top of
+                        that) to make room for the full info block below — every tab's data now
+                        shows on the card face so there's no need to click through to see it. */}
+                    <div className="aspect-[20/13] w-full relative overflow-hidden">
                       <img
                         src={recipe.imageUrl || `https://picsum.photos/seed/${encodeURIComponent(recipe.name)}/600/750`}
                         alt={recipe.name}
@@ -3414,8 +3436,76 @@ const handleSave = async () => {
 
                       <div className="absolute bottom-0 left-0 right-0 p-3">
                         <h3 className="text-xs sm:text-sm font-black text-white line-clamp-2 uppercase tracking-tight leading-tight">{recipe.name}</h3>
-                        <p className="text-[8px] text-white/70 font-bold uppercase tracking-widest mt-0.5">{recipe.subCategory || 'General'}</p>
                       </div>
+                    </div>
+
+                    {/* Info block shown directly on the card face — Pricing, Ingredients,
+                        Allergies, Calories. Basic (station/course), Training, and Sustainability
+                        removed for now per feedback; still viewable via click-through. */}
+                    <div className="p-3 space-y-2">
+                      {recipe.description && (
+                        <p className="text-[8px] italic text-text-muted leading-snug">{recipe.description}</p>
+                      )}
+
+                      {/* Pricing */}
+                      <div className="pt-2 border-t border-border-grey space-y-0.5">
+                        <p className="text-[7px] font-black text-text-muted uppercase tracking-widest mb-1">Pricing</p>
+                        <div className="flex justify-between text-[8px] font-bold">
+                          <span className="text-text-muted uppercase tracking-wide">Cost (COGS)</span>
+                          <span className="text-text-navy">£{cost.toFixed(2)}</span>
+                        </div>
+                        <div className="flex justify-between text-[8px] font-bold">
+                          <span className="text-text-muted uppercase tracking-wide">Net (exc VAT)</span>
+                          <span className="text-text-navy">£{priceExcVat.toFixed(2)}</span>
+                        </div>
+                        <div className="flex justify-between text-[9px] font-black">
+                          <span className="text-text-muted uppercase tracking-wide">Menu Price</span>
+                          <span className="text-text-navy">£{priceIncVat.toFixed(2)}</span>
+                        </div>
+                        {checkPermission('recipes', 'viewCosts') && (
+                          <div className="flex justify-between text-[8px] font-black">
+                            <span className="text-text-muted uppercase tracking-wide flex items-center gap-1">
+                              {isLowMargin && <AlertCircle className="h-2.5 w-2.5 text-error" />}
+                              GP Margin
+                            </span>
+                            <span className={isLowMargin ? 'text-error' : 'text-accent'}>{marginPercent.toFixed(1)}%</span>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Ingredients — full list */}
+                      <div className="pt-2 border-t border-border-grey">
+                        <p className="text-[7px] font-black text-text-muted uppercase tracking-widest mb-0.5">Ingredients ({recipe.ingredients.length})</p>
+                        <p className="text-[8px] text-text-navy leading-snug">
+                          {recipe.ingredients.map(ing => inventoryItems.find(i => i.id === ing.inventoryItemId)?.name || 'Unknown').join(', ')}
+                        </p>
+                      </div>
+
+                      {/* Allergies — full list */}
+                      <div className="pt-2 border-t border-border-grey">
+                        <p className="text-[7px] font-black text-text-muted uppercase tracking-widest mb-0.5">Allergies</p>
+                        {recipe.allergies && recipe.allergies.length > 0 ? (
+                          <div className="flex flex-wrap gap-1">
+                            {recipe.allergies.map(a => (
+                              <div key={a} className="flex items-center gap-0.5 bg-secondary-surface px-1 py-0.5 rounded text-text-muted [&>svg]:h-3 [&>svg]:w-3">
+                                {allergyIcons[a] || <AlertCircle className="h-3 w-3" />}
+                                <span className="text-[7px] font-bold">{a}</span>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <span className="text-[8px] font-bold text-text-muted uppercase tracking-widest">No allergens</span>
+                        )}
+                      </div>
+
+                      {/* Calories */}
+                      {!!recipe.calories && (
+                        <div className="pt-2 border-t border-border-grey flex justify-between text-[8px] font-bold">
+                          <span className="text-text-muted uppercase tracking-wide">Calories</span>
+                          <span className="text-text-navy">{recipe.calories} kcal</span>
+                        </div>
+                      )}
+
                     </div>
 
                     <div className="p-3 bg-gray-50/50 dark:bg-slate-800/50 border-t border-border-grey flex items-center justify-between gap-1" onClick={(e) => e.stopPropagation()}>
