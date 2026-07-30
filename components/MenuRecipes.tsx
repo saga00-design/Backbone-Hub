@@ -1824,13 +1824,16 @@ const handleSave = async () => {
 
       doc.setFontSize(10);
       doc.setFont("helvetica", "normal");
+      // Every line in this block uses the same label/value tab-stop (label at x=14,
+      // value at the fixed x=60 column) so values line up regardless of label or value length.
       doc.text("Cost of Goods (COGS):", 14, yPos);
       doc.text(`£${cost.toFixed(2)}`, 60, yPos);
 
-      // 6mm between each line below (was 3mm for these three specifically, which visually
-      // collided at 10pt/bold — every other line in this block already uses a 6mm rhythm).
-      doc.text(`Menu Price (inc. VAT): £${recipe.sellingPrice.toFixed(2)}`, 14, yPos + 6);
-      doc.text(`Net (exc. VAT): £${priceExcVat.toFixed(2)}`, 14, yPos + 12);
+      doc.text("Menu Price (inc. VAT):", 14, yPos + 6);
+      doc.text(`£${recipe.sellingPrice.toFixed(2)}`, 60, yPos + 6);
+
+      doc.text("Net (exc. VAT):", 14, yPos + 12);
+      doc.text(`£${priceExcVat.toFixed(2)}`, 60, yPos + 12);
 
       doc.setFont("helvetica", "bold");
       doc.text("Gross Profit Margin:", 14, yPos + 18);
@@ -1842,7 +1845,8 @@ const handleSave = async () => {
       if (recipe.calories) {
         doc.setFont("helvetica", "bold");
         doc.setTextColor(72, 101, 129);
-        doc.text(`CALORIES: ${recipe.calories} kcal`, 14, yPos + 24);
+        doc.text("CALORIES:", 14, yPos + 24);
+        doc.text(`${recipe.calories} kcal`, 60, yPos + 24);
       }
 
       yPos += 31;
