@@ -88,7 +88,7 @@ function isWithinRange(dateKey: string, startKey: string, endKey: string): boole
   return dateKey >= startKey && dateKey <= endKey;
 }
 
-function resolveOrderBusinessDay(order: SalesOrderLike): string {
+export function resolveOrderBusinessDay(order: SalesOrderLike): string {
   const raw = order.financials?.paymentTimestamp || order.createdAt;
   const ts = new Date(raw);
   if (isNaN(ts.getTime())) return '';
@@ -185,8 +185,7 @@ export function computePnl(params: PnlEngineParams): PnlEngineResult {
   };
 }
 
-// Follow-up (not done in this pass): Reports.tsx's own 'pnl' tab (pnlSummary) and its Sales
-// tab (salesReport / filteredOrders) still run their own independent, inline versions of this
-// same logic. Once this engine is proven correct in Financial Command, pointing Reports.tsx at
-// computePnl() here (and at aggregateOrderSales() in utils/salesAggregation.ts) would remove
-// the last of the three disagreeing P&L implementations found in the investigation.
+// Reports.tsx's Sales tab (filteredOrders/salesReport) and its 'pnl' tab (pnlSummary) now
+// also invoke aggregateOrderSales()/computePnl() from here — see Reports.tsx for how it wires
+// its own labourShifts/wasteRecords/stockCountRecords/closures into the same shared engine.
+// This removed the last of the three originally-disagreeing P&L implementations.

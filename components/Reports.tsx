@@ -12,8 +12,9 @@ import {
 } from 'lucide-react';
 import {
   POSOrder, POSPayment, InventoryItem, Supplier, Invoice, Order, VatCode, Recipe, WasteRecord,
-  ClockInRecord, ExpenseRecord, DailyClosure, ClosureType, Forecast, ForecastType, StaffPerformanceRecord, StaffIncentiveConfig,
-  MenuEngineeringRecord, AutomationSettings, AutomationLog, StockCountRecord, ReceivingRecord, StockMovement, SupplierPriceHistoryEntry
+  ExpenseRecord, DailyClosure, ClosureType, Forecast, ForecastType, StaffPerformanceRecord, StaffIncentiveConfig,
+  MenuEngineeringRecord, AutomationSettings, AutomationLog, StockCountRecord, ReceivingRecord, StockMovement, SupplierPriceHistoryEntry,
+  LabourShift
 } from '../types';
 import { VATReturnExport } from './VATReturnExport';
 import { VATTracker, VATReturn } from '../types';
@@ -26,7 +27,9 @@ import { normalizeCurrency } from '../utils/currencyUtils';
 import { toast } from 'sonner';
 import { collection, query, where, onSnapshot, orderBy, limit, doc, setDoc, getDoc, updateDoc } from 'firebase/firestore';
 import { generateClosurePDF, generateClosureCSV } from '../utils/exportUtils';
-import { getWeekStart, getWeekRange, toDateKey } from '../utils/fiscalCalendar';
+import { getWeekStart, getWeekRange, toDateKey, parseDateKey } from '../utils/fiscalCalendar';
+import { aggregateOrderSales } from '../utils/salesAggregation';
+import { computePnl, resolveOrderBusinessDay, PnlEngineResult } from '../services/pnlEngine';
 
 interface ReportsProps {
   posOrders: POSOrder[];
@@ -52,6 +55,7 @@ interface ReportsProps {
   recipes: Recipe[];
   wasteRecords: WasteRecord[];
   expenseRecords: any[];
+  labourShifts: LabourShift[];
   onEditRecipe?: (id: string) => void;
   onEditInventoryItem?: (item: InventoryItem) => void;
 }
@@ -67,11 +71,12 @@ export const Reports: React.FC<ReportsProps> = ({
   suppliers, 
   invoices, 
   orders, 
-  recipes, 
-  wasteRecords, 
+  recipes,
+  wasteRecords,
   expenseRecords,
-  onEditRecipe, 
-  onEditInventoryItem 
+  labourShifts,
+  onEditRecipe,
+  onEditInventoryItem
 }) => {
   const [user, setUser] = useState<any>(null);
 
@@ -329,7 +334,6 @@ export const Reports: React.FC<ReportsProps> = ({
   const [showDiagnostic, setShowDiagnostic] = useState(false);
   const [declaredCash, setDeclaredCash] = useState<string>('0');
   const [closureHistory, setClosureHistory] = useState<DailyClosure[]>([]);
-  const [clockInRecords, setClockInRecords] = useState<ClockInRecord[]>([]);
   const [closureType, setClosureType] = useState<ClosureType>(ClosureType.DAY);
   const [shiftName, setShiftName] = useState('AM');
 
@@ -337,10 +341,14 @@ export const Reports: React.FC<ReportsProps> = ({
   React.useEffect(() => {
     if (!user) return;
     
+    // No limit() cap — the old 50-record cap silently truncated older closures out of
+    // pnlSummary's range once history grew past 50. ClosureType.DAY filtering (avoiding the
+    // DAY+SHIFT-sharing-a-date double-count) now happens inside computePnl() itself; this
+    // raw, unfiltered-by-type list is also what the Closures history tab browses, so it
+    // still needs every closure type, not just DAY.
     const q = query(
-      collection(db, 'dailyClosures'), 
-      where('locationId', '==', LOCATION_ID),
-      limit(50)
+      collection(db, 'dailyClosures'),
+      where('locationId', '==', LOCATION_ID)
     );
     const unsub = onSnapshot(q, (snap) => {
       const docs = snap.docs.map(d => ({ id: d.id, ...d.data() } as DailyClosure));
@@ -355,18 +363,8 @@ export const Reports: React.FC<ReportsProps> = ({
       handleFirestoreError(err, OperationType.LIST, 'dailyClosures');
     });
 
-    const qClocks = query(
-      collection(db, 'clockInRecords'),
-      where('locationId', '==', LOCATION_ID),
-      limit(200)
-    );
-    const unsubClocks = onSnapshot(qClocks, (snap) => {
-      setClockInRecords(snap.docs.map(doc => ({ ...doc.data() } as ClockInRecord)));
-    }, (err) => handleFirestoreError(err, OperationType.LIST, 'clockInRecords'));
-
     return () => {
       unsub();
-      unsubClocks();
     };
   }, [user]);
 
@@ -626,104 +624,85 @@ export const Reports: React.FC<ReportsProps> = ({
     return forecasts.find(f => f.type === forecastType);
   }, [forecasts, forecastType]);
 
-  const pnlSummary = useMemo(() => {
-    const summary = {
-      revenue: {} as Record<string, number>,
-      cogs: {} as Record<string, number>,
-      expenses: {} as Record<string, number>,
-      labour: 0,
-      fixedCosts: 0,
-      totalRevenue: 0,
-      totalCOGS: 0,
-      totalExpenses: 0,
-      grossProfit: 0,
-      ebitda: 0,
-      netProfit: 0,
-      // New fields
-      vatCollected: 0,
-      vatOnExpenses: 0,
-      vatPayable: 0,
-      serviceChargeTotal: 0,
-      serviceChargePending: 0,
-      profitBeforeVAT: 0,
-      realProfitAfterVAT: 0
-    };
+  // Same range shape computePnl/Financial Command use — parseDateKey avoids the UTC-midnight
+  // parse shift that plain `new Date('YYYY-MM-DD')` would introduce.
+  const pnlRange = useMemo(() => ({
+    start: parseDateKey(appliedDateRange.start),
+    end: parseDateKey(appliedDateRange.end)
+  }), [appliedDateRange]);
 
-    // 1. Aggregate from Closures
-    const filteredClosures = closureHistory.filter(c => {
-      const dateStr = safeDateSplit(c.date);
-      return dateStr >= appliedDateRange.start && dateStr <= appliedDateRange.end;
+  const pnl: PnlEngineResult = useMemo(() => computePnl({
+    range: pnlRange,
+    posOrders: liveSalesData.history,
+    rawOrdersForAudit: posOrders,
+    closures: closureHistory,
+    labourShifts,
+    expenseRecords,
+    wasteRecords,
+    stockCountRecords: stockCounts
+  }), [pnlRange, liveSalesData, posOrders, closureHistory, labourShifts, expenseRecords, wasteRecords, stockCounts]);
+
+  const FIXED_COST_KEYWORDS = ['rent', 'rates', 'insurance'];
+
+  // Reports-only enrichments computePnl doesn't return (per-category sales/COGS breakdowns,
+  // service-charge-pending) — sourced from the SAME ClosureType.DAY + date-range subset
+  // computePnl filters to internally, so they describe the exact same closures the P&L
+  // figures above are built from, just at per-category/per-closure detail computePnl's
+  // aggregate-only return type doesn't expose.
+  const pnlSummary = useMemo(() => {
+    const startKey = toDateKey(pnlRange.start);
+    const endKey = toDateKey(pnlRange.end);
+    const dayClosuresInRange = closureHistory.filter(c => {
+      if (c.type !== ClosureType.DAY) return false;
+      const key = toDateKey(new Date(c.date));
+      return key >= startKey && key <= endKey;
     });
 
-    filteredClosures.forEach(c => {
-      summary.totalRevenue += (c.totals.netSales || 0);
-      summary.totalCOGS += (c.totals.cogs || 0);
-      
-      // New detailed metrics
-      summary.vatCollected += (c.totals.vat?.collected || c.totals.vatTotal || 0);
-      summary.vatPayable += (c.totals.vat?.payable || c.totals.vatLiability || 0);
-      summary.serviceChargeTotal += (c.totals.serviceCharge?.collected || c.totals.serviceChargeTotal || 0);
-      summary.serviceChargePending += (c.totals.serviceCharge?.pending || 0);
+    const revenue: Record<string, number> = {};
+    const cogs: Record<string, number> = {};
+    let serviceChargePending = 0;
 
+    dayClosuresInRange.forEach(c => {
+      serviceChargePending += (c.totals.serviceCharge?.pending || 0);
       if (c.totals.salesByCategory) {
         Object.entries(c.totals.salesByCategory).forEach(([cat, val]) => {
-          summary.revenue[cat] = (summary.revenue[cat] || 0) + val;
+          revenue[cat] = (revenue[cat] || 0) + val;
         });
       }
       if (c.totals.cogsByCategory) {
         Object.entries(c.totals.cogsByCategory).forEach(([cat, val]) => {
-          summary.cogs[cat] = (summary.cogs[cat] || 0) + val;
+          cogs[cat] = (cogs[cat] || 0) + val;
         });
       }
     });
 
-    // 2. Aggregate from Clock In Records (Labour)
-    const filteredClocks = clockInRecords.filter(clr => {
-      const dateStr = safeDateSplit(clr.clockIn);
-      return dateStr >= appliedDateRange.start && dateStr <= appliedDateRange.end && (clr.status === 'completed' || clr.status === 'verified');
-    });
-
-    filteredClocks.forEach(clr => {
-      if (clr.totalCost) {
-        summary.labour += clr.totalCost;
-      }
-    });
-
-    // 3. Aggregate from Expenses
-    expenseRecords.forEach(exp => {
-      const dateStr = safeDateSplit(exp.date);
-      if (dateStr >= appliedDateRange.start && dateStr <= appliedDateRange.end && exp.status === 'Approved') {
-        summary.expenses[exp.category] = (summary.expenses[exp.category] || 0) + exp.amount;
-        summary.totalExpenses += exp.amount;
-        summary.vatOnExpenses += (exp.vatAmount || 0);
-        
-        const isLabourExp = exp.category.toLowerCase().includes('labour') || exp.category.toLowerCase().includes('staff') || exp.category.toLowerCase().includes('salary');
-        if (isLabourExp) {
-          summary.labour += exp.amount;
-        }
-
-        if (exp.category.toLowerCase().includes('rent') || exp.category.toLowerCase().includes('rates') || exp.category.toLowerCase().includes('insurance')) {
-          summary.fixedCosts += exp.amount;
-        }
-      }
-    });
-
-    summary.grossProfit = summary.totalRevenue - summary.totalCOGS;
-    
-    // Calculate clocks-only labour to avoid double counting if external
-    const expenseLabour = Object.entries(summary.expenses).reduce((sum, [cat, val]) => {
-        return (cat.toLowerCase().includes('labour') || cat.toLowerCase().includes('staff') || cat.toLowerCase().includes('salary')) ? sum + val : sum;
+    const fixedCosts = Object.entries(pnl.operatingExpensesByCategory).reduce((sum, [cat, val]) => {
+      return FIXED_COST_KEYWORDS.some(k => cat.toLowerCase().includes(k)) ? sum + val : sum;
     }, 0);
-    const clockLabour = summary.labour - expenseLabour;
 
-    summary.profitBeforeVAT = summary.grossProfit - summary.totalExpenses - (clockLabour > 0 ? clockLabour : 0);
-    summary.realProfitAfterVAT = summary.profitBeforeVAT - summary.vatPayable;
-    
-    summary.ebitda = summary.profitBeforeVAT; 
-    summary.netProfit = summary.realProfitAfterVAT;
+    // Matches Financial Command's VAT tab exactly (selectedPnl.cogs * 0.2 / selectedPnl.vat -
+    // vatReclaimableEst) — no real purchase-invoice VAT tracking exists yet on either screen.
+    const vatReclaimableEst = pnl.cogs * 0.2;
 
-    return summary;
-  }, [closureHistory, clockInRecords, expenseRecords, appliedDateRange]);
+    return {
+      revenue,
+      cogs,
+      expenses: pnl.operatingExpensesByCategory,
+      labour: pnl.labour,
+      fixedCosts,
+      totalRevenue: pnl.netRevenue,
+      totalCOGS: pnl.cogs,
+      totalExpenses: pnl.operatingExpenses,
+      grossProfit: pnl.netRevenue - pnl.cogs,
+      ebitda: pnl.netProfit,
+      netProfit: pnl.netProfit,
+      vatCollected: pnl.vat,
+      vatOnExpenses: vatReclaimableEst,
+      vatPayable: pnl.vat - vatReclaimableEst,
+      serviceChargeTotal: pnl.serviceCharge,
+      serviceChargePending
+    };
+  }, [pnl, closureHistory, pnlRange]);
 
   const [showClosurePreview, setShowClosurePreview] = useState(false);
 
@@ -887,8 +866,10 @@ export const Reports: React.FC<ReportsProps> = ({
 
   const filteredOrders = useMemo(() => {
     return liveSalesData.history.filter(order => {
-      // Use reconciled payment timestamp for accurate financial reporting
-      const orderDate = safeDateSplit(order.financials?.paymentTimestamp || order.createdAt);
+      // Business-day (6am London cutoff) bucketing — matches pnlEngine/Financial Command,
+      // so an order placed between midnight and 6am lands on the same date on both screens
+      // instead of the old calendar-day (midnight cutoff) split-brain.
+      const orderDate = resolveOrderBusinessDay(order);
       const matchesDate = orderDate >= appliedDateRange.start && orderDate <= appliedDateRange.end;
       const matchesType = typeFilter === 'All' || order.type === typeFilter;
       const matchesVat = vatCodeFilter === 'All' || (order.items && order.items.some((item: any) => item.vatCode === vatCodeFilter));
@@ -907,106 +888,87 @@ export const Reports: React.FC<ReportsProps> = ({
   }, [posOrders]);
 
     const salesReport = useMemo(() => {
-      const totals = {
-        grossSalesAll: 0,
-        netSalesOnly: 0, // Gross - VAT
-        outputVat: 0,
-        zeroRatedSales: 0,
-        exemptSales: 0,
-        serviceCharge: 0,
-        tips: 0,
-        discounts: 0,
-        profitTakeHome: 0, // Gross - VAT - Service Charge
-        grossSalesBeforeDiscount: 0,
-        netSalesBeforeDiscount: 0,
-        vatBeforeDiscount: 0,
-        serviceChargeBeforeDiscount: 0,
-        discountValueExVat: 0,
-        discountVatImpact: 0,
-        discountServiceChargeImpact: 0,
-        totalPaid: 0,
-        netSalesExVat: 0,
-        orderCount: 0,
-        serviceChargeByType: {
-          'Dine-In': 0,
-          'Takeaway': 0,
-          'Delivery': 0,
-          'Other': 0
-        },
-        salesByPaymentMethod: {} as Record<string, number>
+      // Core totals now come from the same sanity-checked aggregator pnlEngine/Financial
+      // Command use (utils/salesAggregation.ts), instead of an independent inline copy.
+      const core = aggregateOrderSales(filteredOrders);
+
+      // Reports-only breakdowns aggregateOrderSales doesn't produce (VAT-code splits,
+      // discount-impact reconciliation, per-type/per-payment-method breakdowns). These need
+      // per-order figures the shared aggregate return type doesn't expose, so they're
+      // recomputed here from the same per-order recalculation aggregateOrderSales performs
+      // internally — a small, deliberate duplication of that logic (not of its outputs),
+      // needed until/unless the shared function is extended to return per-order detail.
+      let netSalesExVat = 0;
+      let zeroRatedSales = 0;
+      let exemptSales = 0;
+      let discountServiceChargeImpact = 0;
+      const serviceChargeByType = {
+        'Dine-In': 0,
+        'Takeaway': 0,
+        'Delivery': 0,
+        'Other': 0
       };
+      const salesByPaymentMethod: Record<string, number> = {};
 
       filteredOrders.forEach(order => {
-        if (order.status?.toLowerCase() === 'paid') {
-          totals.orderCount++;
-          const fin = order.financials || {};
-          
-          const pTotal = normalizeCurrency(fin.totalPaid || order.total || 0);
-          const tTotal = normalizeCurrency(order.tips || 0);
-          
-          // Source of Truth: Gross Sales = Total Paid - Tips
-          const gSales = Math.max(0, pTotal - tTotal);
-          
-          let vTotal = normalizeCurrency(fin.vatTotal || 0);
-          let sTotal = normalizeCurrency(fin.serviceChargeTotal || 0);
-          
-          // Recalculate VAT if it's missing or suspicious (0 or same as Gross)
-          if ((vTotal <= 0 || vTotal >= gSales) && gSales > 0) {
-            const vatBase = Math.max(0, gSales - sTotal);
-            vTotal = normalizeCurrency(vatBase - (vatBase / 1.2));
-          }
-          
-          const dTotal = normalizeCurrency(fin.discountTotal || 0);
-          const zTotal = normalizeCurrency(fin.zeroRatedSales || 0);
-          const eTotal = normalizeCurrency(fin.exemptSales || 0);
+        if (order.status?.toLowerCase() !== 'paid') return;
+        const fin = order.financials || {};
 
-          // Component Sanity Check: VAT or Service can't exceed Gross per individual order
-          if (vTotal > gSales && vTotal > 0) vTotal /= 100;
-          if (sTotal > gSales && sTotal > 0) sTotal /= 100;
+        const pTotal = normalizeCurrency(fin.totalPaid || order.total || 0);
+        const tTotal = normalizeCurrency(order.tips || 0);
+        const gSales = Math.max(0, pTotal - tTotal);
 
-          totals.grossSalesAll += gSales;
-          totals.outputVat += vTotal;
-          totals.serviceCharge += sTotal;
-          totals.tips += tTotal;
-          totals.discounts += dTotal;
-          totals.totalPaid += pTotal;
-          totals.zeroRatedSales += zTotal;
-          totals.exemptSales += eTotal;
-
-          // Align with POS Definitions (V4 Rule):
-          // Gross Sales = Total Paid - Tips (Includes VAT and Service)
-          // Net Sales = Gross - VAT
-          // Profit (Take Home) = Gross - VAT - Service
-          const currentNetSales = gSales - vTotal;
-          totals.netSalesOnly += currentNetSales;
-          totals.profitTakeHome += (currentNetSales - sTotal);
-          
-          totals.grossSalesBeforeDiscount += (gSales + dTotal);
-          
-          const nSales = normalizeCurrency(fin.netSales || 0);
-          const calculatedNetExVatSrv = (nSales > 0 && nSales < gSales) ? nSales : (gSales - vTotal - sTotal);
-          totals.netSalesExVat += calculatedNetExVatSrv;
-          
-          totals.netSalesBeforeDiscount += (calculatedNetExVatSrv + (dTotal * 0.8));
-          totals.vatBeforeDiscount += (vTotal + (dTotal * 0.2));
-          
-          totals.serviceChargeBeforeDiscount += sTotal;
-          totals.discountValueExVat += (dTotal * 0.8);
-          totals.discountVatImpact += (dTotal * 0.2);
-          totals.discountServiceChargeImpact += (normalizeCurrency(fin.discountServiceChargeImpact) || 0);
-
-          if (order.type === 'Dine-In') totals.serviceChargeByType['Dine-In'] += sTotal;
-          else if (order.type === 'Takeaway') totals.serviceChargeByType['Takeaway'] += sTotal;
-          else if (order.type === 'Delivery') totals.serviceChargeByType['Delivery'] += sTotal;
-          else totals.serviceChargeByType['Other'] += sTotal;
-
-          // Payment method breakdown
-          const method = fin.paymentMethod || 'Other';
-          totals.salesByPaymentMethod[method] = (totals.salesByPaymentMethod[method] || 0) + pTotal;
+        let vTotal = normalizeCurrency(fin.vatTotal || 0);
+        let sTotal = normalizeCurrency(fin.serviceChargeTotal || 0);
+        if ((vTotal <= 0 || vTotal >= gSales) && gSales > 0) {
+          const vatBase = Math.max(0, gSales - sTotal);
+          vTotal = normalizeCurrency(vatBase - (vatBase / 1.2));
         }
+        if (vTotal > gSales && vTotal > 0) vTotal /= 100;
+        if (sTotal > gSales && sTotal > 0) sTotal /= 100;
+
+        const nSales = normalizeCurrency(fin.netSales || 0);
+        const calculatedNetExVatSrv = (nSales > 0 && nSales < gSales) ? nSales : (gSales - vTotal - sTotal);
+        netSalesExVat += calculatedNetExVatSrv;
+
+        zeroRatedSales += normalizeCurrency(fin.zeroRatedSales || 0);
+        exemptSales += normalizeCurrency(fin.exemptSales || 0);
+        discountServiceChargeImpact += (normalizeCurrency(fin.discountServiceChargeImpact) || 0);
+
+        if (order.type === 'Dine-In') serviceChargeByType['Dine-In'] += sTotal;
+        else if (order.type === 'Takeaway') serviceChargeByType['Takeaway'] += sTotal;
+        else if (order.type === 'Delivery') serviceChargeByType['Delivery'] += sTotal;
+        else serviceChargeByType['Other'] += sTotal;
+
+        const method = fin.paymentMethod || 'Other';
+        salesByPaymentMethod[method] = (salesByPaymentMethod[method] || 0) + pTotal;
       });
 
-      return totals;
+      return {
+        grossSalesAll: core.grossSalesAll,
+        netSalesOnly: core.netSalesOnly,
+        outputVat: core.outputVat,
+        serviceCharge: core.serviceCharge,
+        tips: core.tips,
+        discounts: core.discounts,
+        profitTakeHome: core.profitTakeHome,
+        totalPaid: core.totalPaid,
+        orderCount: core.orderCount,
+        zeroRatedSales,
+        exemptSales,
+        // Linear derivations of the core per-order sums — sum(a+b) = sum(a)+sum(b), so these
+        // stay exact without needing their own per-order loop.
+        grossSalesBeforeDiscount: core.grossSalesAll + core.discounts,
+        vatBeforeDiscount: core.outputVat + core.discounts * 0.2,
+        serviceChargeBeforeDiscount: core.serviceCharge,
+        discountValueExVat: core.discounts * 0.8,
+        discountVatImpact: core.discounts * 0.2,
+        netSalesBeforeDiscount: netSalesExVat + core.discounts * 0.8,
+        discountServiceChargeImpact,
+        netSalesExVat,
+        serviceChargeByType,
+        salesByPaymentMethod
+      };
     }, [filteredOrders]);
 
   const itemsReport = useMemo(() => {
@@ -1948,7 +1910,7 @@ export const Reports: React.FC<ReportsProps> = ({
                       <Zap className="w-4 h-4 text-purple-500" />
                       <span className="text-[10px] font-black text-text-muted uppercase tracking-widest">Operational OpEx</span>
                     </div>
-                    <p className="text-2xl font-serif font-black text-text-navy">£{(pnlSummary.totalExpenses - pnlSummary.labour - pnlSummary.fixedCosts).toLocaleString()}</p>
+                    <p className="text-2xl font-serif font-black text-text-navy">£{(pnlSummary.totalExpenses - pnlSummary.fixedCosts).toLocaleString()}</p>
                     <p className="text-[9px] font-bold text-text-muted uppercase">Misc & Marketing</p>
                   </div>
                 </div>
@@ -3436,7 +3398,7 @@ export const Reports: React.FC<ReportsProps> = ({
             vatTrackers={vatTrackers} 
             existingReturns={vatReturns} 
             netSalesTotal={pnlSummary.totalRevenue}
-            netPurchasesTotal={pnlSummary.totalExpenses - pnlSummary.labour}
+            netPurchasesTotal={pnlSummary.totalExpenses}
           />
         </div>
       ) : activeTab === 'closures' ? (

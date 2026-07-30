@@ -3170,6 +3170,7 @@ const today = londonHour < 6
                 recipes={recipes}
                 wasteRecords={wasteRecords}
                 expenseRecords={expenseRecords}
+                labourShifts={labourShifts}
                 onEditRecipe={handleEditRecipeFromReport}
                 onEditInventoryItem={handleEditInventoryItemFromReport}
               />
