@@ -11,7 +11,8 @@ import {
   ClipboardList,
   Send,
   Loader2,
-  Building2
+  Building2,
+  ChevronRight
 } from 'lucide-react';
 import {
   LabourShift,
@@ -21,12 +22,14 @@ import {
   ExpenseRecord,
   WasteRecord,
   StockCountRecord,
-  PayrollAccrualRecord
+  PayrollAccrualRecord,
+  PayrollCentreWeekRecord
 } from '../types';
 import { Button } from './Button';
 import { PageHeader } from './PageHeader';
 import { TimePeriodLegend } from './TimePeriodLegend';
 import { LabourImportPanel } from './LabourImportPanel';
+import { LabourShiftDrilldown } from './LabourShiftDrilldown';
 import { collection, onSnapshot, query, where, orderBy, doc, setDoc } from 'firebase/firestore';
 import { db, LOCATION_ID, auth, handleFirestoreError, OperationType, cleanObject } from '../firebase';
 import {
@@ -39,7 +42,13 @@ import {
   getWeeksStartingInMonth,
   getQuarterWeekStarts
 } from '../utils/fiscalCalendar';
-import { sumLabourCostForWeeks, filterShiftsForCost, normalizeDepartment } from '../services/labourImportService';
+import {
+  sumLabourCostForWeeks,
+  filterShiftsForCost,
+  normalizeDepartment,
+  mergeRealPayrollData,
+  sumPayrollCentreForPeriod
+} from '../services/labourImportService';
 import { computePnl } from '../services/pnlEngine';
 import { pushLabourReviewToWeeklyCostEntries } from '../services/weeklyCostEntryService';
 import { toast } from 'sonner';
@@ -59,6 +68,10 @@ const money = (v: number) => `£${(v || 0).toLocaleString(undefined, { minimumFr
 // Same rollup pattern as Operation Costs' P&L Cost Entry (components/WeeklyCostEntry.tsx):
 // bucket into Monday-Sunday weeks, then sum expected week-starts for a Period/Month/Quarter.
 type ViewMode = 'All Shifts' | 'Weekly' | 'Period' | 'Monthly' | 'Quarterly' | 'Custom Range';
+// Tab order — the time-bucket tabs are the primary entry point (drill down into a bucket to see
+// its shifts); "All Shifts" is the flat, ungrouped view and deliberately listed last since it's
+// no longer the default landing view.
+const VIEW_MODES: ViewMode[] = ['Weekly', 'Period', 'Monthly', 'Quarterly', 'Custom Range', 'All Shifts'];
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
 // Kept available (not wired to any UI) per the redesign brief: don't delete the underlying
@@ -80,6 +93,7 @@ function useStaffProductivity(staff: StaffMember[], shifts: LabourShift[], order
 export const LabourIntelligence: React.FC<LabourIntelligenceProps> = ({ staff, orders, closures, liveSalesData, expenseRecords, wasteRecords, stockCountRecords }) => {
   const [view, setView] = useState<'dashboard' | 'import'>('dashboard');
   const [shifts, setShifts] = useState<LabourShift[]>([]);
+  const [payrollCentreRecords, setPayrollCentreRecords] = useState<PayrollCentreWeekRecord[]>([]);
   const [importLogs, setImportLogs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -98,6 +112,22 @@ export const LabourIntelligence: React.FC<LabourIntelligenceProps> = ({ staff, o
       setLoading(false);
     }, (err) => {
       handleFirestoreError(err, OperationType.LIST, 'labourShifts');
+    });
+  }, []);
+
+  // Real-time Payroll Centre (real weekly payroll) subscription — real data always wins over
+  // the Rota-based estimate for any week it covers, see costEligibleShifts below.
+  useEffect(() => {
+    if (!auth.currentUser) return;
+    const q = query(
+      collection(db, 'payrollCentreWeeks'),
+      where('locationId', '==', LOCATION_ID)
+    );
+
+    return onSnapshot(q, (snapshot) => {
+      setPayrollCentreRecords(snapshot.docs.map(d => ({ ...d.data(), id: d.id } as PayrollCentreWeekRecord)));
+    }, (err) => {
+      handleFirestoreError(err, OperationType.LIST, 'payrollCentreWeeks');
     });
   }, []);
 
@@ -181,14 +211,30 @@ export const LabourIntelligence: React.FC<LabourIntelligenceProps> = ({ staff, o
     setFilterDateTo('');
   };
 
-  const [viewMode, setViewMode] = useState<ViewMode>('All Shifts');
+  const [viewMode, setViewMode] = useState<ViewMode>('Weekly');
+
+  // Drill-down: set when a specific week/period/etc. bucket is clicked, showing that bucket's
+  // individual shifts instead of the summary. Cleared whenever the tab changes.
+  const [drilldownRange, setDrilldownRange] = useState<{ label: string; start: string; end: string } | null>(null);
+  const selectViewMode = (mode: ViewMode) => {
+    setViewMode(mode);
+    setDrilldownRange(null);
+  };
 
   // Salaried staff's real cost is a fixed salary, not hours x rate — their shifts are excluded
   // from every automated Wages/cost total below (Weekly/Period/Monthly/Quarterly/Custom Range),
   // matching what feeds services/pnlEngine.ts and the Dashboard's labour cost card. The raw
   // "All Shifts" table further down deliberately keeps using the unfiltered `shifts`/
   // `filteredShifts` so hours/attendance tracking for Salaried staff is completely unaffected.
-  const costEligibleShifts = useMemo(() => filterShiftsForCost(shifts, staff), [shifts, staff]);
+  //
+  // Real Payroll Centre data then wins over that estimate for any week it covers (see
+  // mergeRealPayrollData()) — a week with real payroll figures no longer uses hours x rate
+  // (or the Salaried exclusion) at all, regardless of employment type, since the real figure
+  // IS the true cost. Weeks with no Payroll Centre import yet keep using the live estimate.
+  const costEligibleShifts = useMemo(
+    () => mergeRealPayrollData(filterShiftsForCost(shifts, staff), payrollCentreRecords),
+    [shifts, staff, payrollCentreRecords]
+  );
 
   // --- Weekly breakdown (Step 1): buckets the already-safe, additive-per-shift storage into
   // Monday-Sunday weeks for viewing only — importing more shifts never touches prior weeks'
@@ -217,6 +263,16 @@ export const LabourIntelligence: React.FC<LabourIntelligenceProps> = ({ staff, o
     () => Array.from(weeklyBuckets.values()).sort((a, b) => b.weekStartDate.localeCompare(a.weekStartDate)),
     [weeklyBuckets]
   );
+
+  // Shift-level detail for whichever bucket was drilled into (see drilldownRange above) — same
+  // cost-eligible shift set the bucket totals themselves are built from, so the drilled-in
+  // shifts always add up to the summary figure the user clicked through from.
+  const drilldownShifts = useMemo(() => {
+    if (!drilldownRange) return [];
+    return costEligibleShifts
+      .filter(s => s.date && s.date >= drilldownRange.start && s.date <= drilldownRange.end)
+      .sort((a, b) => a.date.localeCompare(b.date));
+  }, [costEligibleShifts, drilldownRange]);
 
   // --- Period / Monthly / Quarterly rollups (Step 2) — same expected-week-starts + sum
   // pattern as Operation Costs' P&L Cost Entry, reused rather than rebuilt. ---
@@ -265,30 +321,46 @@ export const LabourIntelligence: React.FC<LabourIntelligenceProps> = ({ staff, o
     const startKey = toDateKey(range.start);
     const endKey = toDateKey(range.end);
 
-    // Wages — Hourly-only shifts (costEligibleShifts already excludes Salaried) whose date
-    // falls inside this specific Period. Department is normalized (see normalizeDepartment())
-    // so raw TTP text like "Foh"/"Kitchen" collapses onto Settings' canonical department list —
+    // Wages — costEligibleShifts already: (1) excludes Salaried staff's ESTIMATE shifts, then
+    // (2) for any week with a real Payroll Centre import, replaces that week's figure with
+    // real Basic Wages for EVERY employee in the import regardless of employment type (real
+    // payroll doesn't distinguish Hourly/Salaried — see mergeRealPayrollData()). So for a
+    // Period with real data, this figure can include Salaried employees' real pay too, not
+    // just Hourly's estimate — the UI label reflects that nuance rather than saying
+    // "Hourly only" unconditionally. Department is normalized (see normalizeDepartment()) so
+    // raw TTP text like "Foh"/"Kitchen" collapses onto Settings' canonical department list —
     // stored data is untouched, this is purely a grouping key for display here.
-    const periodHourlyShifts = costEligibleShifts.filter(s => s.date && s.date >= startKey && s.date <= endKey);
+    const periodCostShifts = costEligibleShifts.filter(s => s.date && s.date >= startKey && s.date <= endKey);
     const wagesByDept = new Map<string, number>();
-    periodHourlyShifts.forEach(s => {
+    periodCostShifts.forEach(s => {
       const key = normalizeDepartment(s.department);
       wagesByDept.set(key, (wagesByDept.get(key) || 0) + (s.totalCost || 0));
     });
-    const wages = periodHourlyShifts.reduce((acc, s) => acc + (s.totalCost || 0), 0);
+    const wages = periodCostShifts.reduce((acc, s) => acc + (s.totalCost || 0), 0);
+    const wagesIncludesRealData = periodCostShifts.some(s => s.source && s.source.includes('Payroll Centre'));
 
-    // Salaries — every Salaried staff member's annual salary prorated to one Period (÷13,
-    // this app's fiscal calendar being 13 four-week Periods/year). Grouped by the SAME
-    // normalizeDepartment() as Wages above, so e.g. a shift department of "Foh" and a
+    // Salaries — same real-data-wins-per-week rule as Wages above, applied per employee per
+    // week so the two figures never overlap: for each Salaried employee, for each of this
+    // Period's 4 weeks, a week with real Payroll Centre data covering them contributes £0
+    // (their real cost for that week is already inside Wages via costEligibleShifts) — only
+    // weeks with NO real data yet contribute their prorated share (annualSalary / 13 Periods
+    // / 4 weeks). Once every week of a Period has real data for an employee, their
+    // contribution here is structurally £0 — not just numerically coincidental. Grouped by
+    // the SAME normalizeDepartment() as Wages, so e.g. a shift department of "Foh" and a
     // StaffMember.department of "Front of the house" merge into one row instead of two.
+    const periodWeekStartKeys = getPeriodWeekStarts(rollupPeriod, rollupFiscalYear).map(toDateKey);
     const salariedStaff = staff.filter(s => s.employmentType === 'Salaried');
     const salariesByDept = new Map<string, number>();
     let salaries = 0;
     salariedStaff.forEach(s => {
-      const prorated = (s.annualSalary || 0) / 13;
-      salaries += prorated;
+      const weeklyShare = (s.annualSalary || 0) / 13 / periodWeekStartKeys.length;
+      const gapWeeks = periodWeekStartKeys.filter(
+        weekKey => !payrollCentreRecords.some(r => r.staffId === s.id && r.weekStartDate === weekKey)
+      );
+      const employeeSalaryForPeriod = weeklyShare * gapWeeks.length;
+      salaries += employeeSalaryForPeriod;
       const key = normalizeDepartment(s.department);
-      salariesByDept.set(key, (salariesByDept.get(key) || 0) + prorated);
+      salariesByDept.set(key, (salariesByDept.get(key) || 0) + employeeSalaryForPeriod);
     });
 
     // Bonus — 1% of this Period's Net Profit, computed BEFORE the bonus is added anywhere
@@ -311,7 +383,7 @@ export const LabourIntelligence: React.FC<LabourIntelligenceProps> = ({ staff, o
 
     return {
       range, wages, salaries, bonus, netProfitBeforeBonus: periodPnl.netProfit,
-      wagesByDept, salariesByDept, departments, salariedStaff
+      wagesByDept, salariesByDept, departments, salariedStaff, wagesIncludesRealData
     };
   }, [rollupPeriod, rollupFiscalYear, costEligibleShifts, staff, liveSalesData, closures, expenseRecords, wasteRecords, stockCountRecords]);
 
@@ -354,21 +426,41 @@ export const LabourIntelligence: React.FC<LabourIntelligenceProps> = ({ staff, o
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'payrollAccruals'));
   }, [showReview, rollupPeriod, rollupFiscalYear]);
 
-  // Reset the draft to what's saved whenever the reviewed Period changes (not on every
-  // snapshot echo, so in-progress typing isn't clobbered by our own writes coming back).
+  // Real Payroll Centre data always wins here too, same principle as Wages: if real Employer
+  // NI/Pension/Holiday Accrual figures exist for any of this Period's weeks, they replace
+  // whatever's manually saved for that employee (self-correcting — even a stray manual edit
+  // gets overwritten by real data again next time this effect runs). Manual entry remains the
+  // fallback for employees/periods with no real data yet. `accrualSource` drives the read-only
+  // badge/disabled state in the table below so it's never ambiguous which rows are real.
+  const [accrualSource, setAccrualSource] = useState<Record<string, 'real' | 'manual'>>({});
+  const [accrualRealWeeksCovered, setAccrualRealWeeksCovered] = useState<Record<string, number>>({});
+
   useEffect(() => {
+    const periodWeekKeys = getPeriodWeekStarts(rollupPeriod, rollupFiscalYear).map(toDateKey);
     const next: Record<string, { ni: number; pension: number; holidayAccrual: number }> = {};
+    const nextSource: Record<string, 'real' | 'manual'> = {};
+    const nextWeeksCovered: Record<string, number> = {};
     staff.forEach(s => {
-      const existing = accrualRecords.find(r => r.staffId === s.id);
-      next[s.id] = {
-        ni: existing?.ni || 0,
-        pension: existing?.pension || 0,
-        holidayAccrual: existing?.holidayAccrual || 0
-      };
+      const real = sumPayrollCentreForPeriod(payrollCentreRecords, s.id, periodWeekKeys);
+      if (real) {
+        next[s.id] = { ni: real.ni, pension: real.pension, holidayAccrual: real.holidayAccrual };
+        nextSource[s.id] = 'real';
+        nextWeeksCovered[s.id] = real.weeksCovered;
+      } else {
+        const existing = accrualRecords.find(r => r.staffId === s.id);
+        next[s.id] = {
+          ni: existing?.ni || 0,
+          pension: existing?.pension || 0,
+          holidayAccrual: existing?.holidayAccrual || 0
+        };
+        nextSource[s.id] = 'manual';
+      }
     });
     setAccrualDraft(next);
+    setAccrualSource(nextSource);
+    setAccrualRealWeeksCovered(nextWeeksCovered);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rollupPeriod, rollupFiscalYear, staff.length]);
+  }, [rollupPeriod, rollupFiscalYear, staff.length, payrollCentreRecords]);
 
   const accrualRollup = useMemo(() => {
     const byDept = new Map<string, { ni: number; pension: number; holidayAccrual: number }>();
@@ -391,7 +483,10 @@ export const LabourIntelligence: React.FC<LabourIntelligenceProps> = ({ staff, o
   const handleSaveAccruals = async () => {
     setSavingAccruals(true);
     try {
-      await Promise.all(staff.map(s => {
+      // Only persist MANUAL entries — real-sourced rows are disabled in the UI and derived
+      // fresh from payrollCentreWeeks every time (see the reset effect above), so writing
+      // them here too would just be a redundant, potentially stale copy.
+      await Promise.all(staff.filter(s => accrualSource[s.id] !== 'real').map(s => {
         const draft = accrualDraft[s.id];
         if (!draft) return Promise.resolve();
         const id = `${LOCATION_ID}-${s.id}-P${rollupPeriod}-FY${rollupFiscalYear}`;
@@ -445,6 +540,7 @@ export const LabourIntelligence: React.FC<LabourIntelligenceProps> = ({ staff, o
           <LabourImportPanel
             staff={staff}
             shifts={shifts}
+            payrollCentreRecords={payrollCentreRecords}
             importLogs={importLogs}
             onImported={() => setView('dashboard')}
           />
@@ -475,12 +571,12 @@ export const LabourIntelligence: React.FC<LabourIntelligenceProps> = ({ staff, o
             {/* View mode toggle — same visual pattern as Operation Costs' P&L Cost Entry */}
             <div className="flex items-center gap-2 flex-wrap mb-6">
               <div className="flex gap-2 flex-wrap">
-                {(['All Shifts', 'Weekly', 'Period', 'Monthly', 'Quarterly', 'Custom Range'] as ViewMode[]).map(mode => (
+                {VIEW_MODES.map(mode => (
                   <Button
                     key={mode}
                     variant={viewMode === mode ? 'secondary' : 'ghost'}
                     size="sm"
-                    onClick={() => setViewMode(mode)}
+                    onClick={() => selectViewMode(mode)}
                   >
                     {mode}
                   </Button>
@@ -489,6 +585,15 @@ export const LabourIntelligence: React.FC<LabourIntelligenceProps> = ({ staff, o
               <TimePeriodLegend />
             </div>
 
+            {drilldownRange ? (
+              <LabourShiftDrilldown
+                label={drilldownRange.label}
+                shifts={drilldownShifts}
+                payrollCentreRecords={payrollCentreRecords}
+                onBack={() => setDrilldownRange(null)}
+              />
+            ) : (
+            <>
             {viewMode === 'Weekly' && (
               <>
                 <div className="border border-border-grey rounded-2xl overflow-hidden">
@@ -499,19 +604,25 @@ export const LabourIntelligence: React.FC<LabourIntelligenceProps> = ({ staff, o
                           <th className="px-4 py-3">Week</th>
                           <th className="px-4 py-3">Shifts</th>
                           <th className="px-4 py-3">Total Labour Cost</th>
+                          <th className="px-4 py-3 w-8"></th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-border-grey">
                         {weeklyBucketsSorted.map(w => (
-                          <tr key={w.weekStartDate} className="hover:bg-secondary-surface/50 transition-colors">
+                          <tr
+                            key={w.weekStartDate}
+                            onClick={() => setDrilldownRange({ label: `Week ${w.weekStartDate} to ${w.weekEndDate}`, start: w.weekStartDate, end: w.weekEndDate })}
+                            className="hover:bg-secondary-surface/50 transition-colors cursor-pointer"
+                          >
                             <td className="px-4 py-2.5 font-bold text-text-navy whitespace-nowrap">{w.weekStartDate} to {w.weekEndDate}</td>
                             <td className="px-4 py-2.5 text-text-muted whitespace-nowrap">{w.shiftCount}</td>
                             <td className="px-4 py-2.5 font-bold text-text-navy whitespace-nowrap">{money(w.totalCostPence / 100)}</td>
+                            <td className="px-4 py-2.5 text-text-muted"><ChevronRight className="w-3.5 h-3.5" /></td>
                           </tr>
                         ))}
                         {weeklyBucketsSorted.length === 0 && (
                           <tr>
-                            <td colSpan={3} className="px-4 py-12 text-center text-text-muted font-bold text-xs">
+                            <td colSpan={4} className="px-4 py-12 text-center text-text-muted font-bold text-xs">
                               No weeks with imported shifts yet.
                             </td>
                           </tr>
@@ -618,7 +729,57 @@ export const LabourIntelligence: React.FC<LabourIntelligenceProps> = ({ staff, o
                     </p>
                     <p className="text-3xl font-black text-white">{money(rollup.totalCost)}</p>
                   </div>
+                  {/* Prominent, top-level Push to P&L — previously only reachable by opening
+                      Review and scrolling to the bottom of that sub-panel, which made it hard
+                      to find. Shown as soon as the Period is review-ready, not gated on Review
+                      being open. */}
+                  {viewMode === 'Period' && rollup.expectedCount > 0 && rollup.weeksWithData === rollup.expectedCount && (
+                    <Button variant="primary" className="gap-2 shrink-0" onClick={handlePushToPnl} disabled={pushingToPnl}>
+                      {pushingToPnl ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                      {pushingToPnl ? 'Pushing...' : 'Push to P&L'}
+                    </Button>
+                  )}
                 </div>
+
+                {/* Constituent weeks — the "summary for this bucket"; click a week to drill into
+                    its individual shifts. */}
+                {expectedWeekStarts.length > 0 && (
+                  <div className="mt-6 border border-border-grey rounded-2xl overflow-hidden">
+                    <table className="w-full text-left text-xs">
+                      <thead className="bg-secondary-surface">
+                        <tr className="text-[9px] font-black text-text-muted uppercase tracking-widest">
+                          <th className="px-4 py-3">Week</th>
+                          <th className="px-4 py-3">Shifts</th>
+                          <th className="px-4 py-3">Total Labour Cost</th>
+                          <th className="px-4 py-3 w-8"></th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-border-grey">
+                        {expectedWeekStarts.map(weekStart => {
+                          const weekStartKey = toDateKey(weekStart);
+                          const bucket = weeklyBuckets.get(weekStartKey);
+                          const weekEnd = new Date(weekStart);
+                          weekEnd.setDate(weekEnd.getDate() + 6);
+                          const weekEndKey = toDateKey(weekEnd);
+                          return (
+                            <tr
+                              key={weekStartKey}
+                              onClick={() => setDrilldownRange({ label: `Week ${weekStartKey} to ${weekEndKey}`, start: weekStartKey, end: weekEndKey })}
+                              className="hover:bg-secondary-surface/50 transition-colors cursor-pointer"
+                            >
+                              <td className="px-4 py-2.5 font-bold text-text-navy whitespace-nowrap">{weekStartKey} to {weekEndKey}</td>
+                              <td className="px-4 py-2.5 text-text-muted whitespace-nowrap">{bucket ? bucket.shiftCount : 0}</td>
+                              <td className="px-4 py-2.5 font-bold text-text-navy whitespace-nowrap">
+                                {bucket ? money(bucket.totalCostPence / 100) : <span className="text-text-muted font-bold italic">No data yet</span>}
+                              </td>
+                              <td className="px-4 py-2.5 text-text-muted"><ChevronRight className="w-3.5 h-3.5" /></td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
 
                 {viewMode === 'Period' && showReview && rollup.expectedCount > 0 && rollup.weeksWithData === rollup.expectedCount && (
                   <div className="mt-6 space-y-4">
@@ -628,13 +789,20 @@ export const LabourIntelligence: React.FC<LabourIntelligenceProps> = ({ staff, o
                       </h4>
                       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
                         <div className="p-4 bg-secondary-surface rounded-xl border border-border-grey">
-                          <p className="text-[9px] font-black text-text-muted uppercase tracking-widest">Wages (Hourly staff, automated)</p>
+                          <p className="text-[9px] font-black text-text-muted uppercase tracking-widest">
+                            Wages ({periodReview.wagesIncludesRealData ? 'real payroll where imported' : 'Hourly staff, estimated'})
+                          </p>
                           <p className="text-xl font-black text-text-navy mt-1">{money(periodReview.wages)}</p>
-                          <p className="text-[9px] text-text-muted font-bold mt-1">Feeds P&amp;L automatically — not pushed manually</p>
+                          <p className="text-[9px] text-text-muted font-bold mt-1">
+                            Feeds P&amp;L automatically — not pushed manually{periodReview.wagesIncludesRealData ? '. Includes real pay for any Salaried staff covered by a Payroll Centre import this Period.' : ''}
+                          </p>
                         </div>
                         <div className="p-4 bg-secondary-surface rounded-xl border border-border-grey">
-                          <p className="text-[9px] font-black text-text-muted uppercase tracking-widest">Salaries ({periodReview.salariedStaff.length} staff, prorated)</p>
+                          <p className="text-[9px] font-black text-text-muted uppercase tracking-widest">Salaries ({periodReview.salariedStaff.length} staff, prorated estimate)</p>
                           <p className="text-xl font-black text-text-navy mt-1">{money(periodReview.salaries)}</p>
+                          <p className="text-[9px] text-text-muted font-bold mt-1">
+                            Only covers weeks without confirmed payroll data for each employee — shrinks automatically as Payroll Centre imports arrive, and reaches £0 once this Period is fully covered.
+                          </p>
                         </div>
                         <div className="p-4 bg-secondary-surface rounded-xl border border-border-grey">
                           <p className="text-[9px] font-black text-text-muted uppercase tracking-widest">Bonus (1% of Net Profit before bonus)</p>
@@ -685,7 +853,9 @@ export const LabourIntelligence: React.FC<LabourIntelligenceProps> = ({ staff, o
                     <div className="p-6 bg-card-bg rounded-2xl border border-border-grey shadow-sm">
                       <h4 className="text-sm font-black text-text-navy uppercase tracking-wide mb-1">NI / Pension / Holiday Accrual</h4>
                       <p className="text-[10px] font-bold text-text-muted uppercase tracking-wide mb-4 normal-case">
-                        Structure only — figures are entered manually (from a real payroll system) and are never calculated by this app. This just stores what you type and rolls it up by department + an All total.
+                        Real figures from Payroll Centre imports fill in automatically (locked — see the "Real" badge) and always
+                        win over manual entry. Employees with no Payroll Centre data yet still take manual entry, from a real payroll
+                        system, until that import exists.
                       </p>
                       <div className="border border-border-grey rounded-2xl overflow-hidden mb-4">
                         <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
@@ -694,21 +864,34 @@ export const LabourIntelligence: React.FC<LabourIntelligenceProps> = ({ staff, o
                               <tr className="text-[9px] font-black text-text-muted uppercase tracking-widest">
                                 <th className="px-4 py-3">Employee</th>
                                 <th className="px-4 py-3">Department</th>
+                                <th className="px-4 py-3">Source</th>
                                 <th className="px-4 py-3">NI (£)</th>
                                 <th className="px-4 py-3">Pension (£)</th>
                                 <th className="px-4 py-3">Holiday Accrual (£)</th>
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-border-grey">
-                              {staff.filter(s => s.active).map(s => (
+                              {staff.filter(s => s.active).map(s => {
+                                const isReal = accrualSource[s.id] === 'real';
+                                return (
                                 <tr key={s.id}>
                                   <td className="px-4 py-2 font-bold text-text-navy whitespace-nowrap">{s.firstName} {s.lastName}</td>
                                   <td className="px-4 py-2 text-text-muted whitespace-nowrap">{normalizeDepartment(s.department)}</td>
+                                  <td className="px-4 py-2 whitespace-nowrap">
+                                    {isReal ? (
+                                      <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded-full bg-success/10 text-success" title={`From ${accrualRealWeeksCovered[s.id] || 0} week(s) of real Payroll Centre data`}>
+                                        Real ({accrualRealWeeksCovered[s.id] || 0}/4 wks)
+                                      </span>
+                                    ) : (
+                                      <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded-full bg-secondary-surface text-text-muted">Manual</span>
+                                    )}
+                                  </td>
                                   {(['ni', 'pension', 'holidayAccrual'] as const).map(field => (
                                     <td key={field} className="px-4 py-2">
                                       <input
                                         type="number"
                                         step="0.01"
+                                        disabled={isReal}
                                         value={accrualDraft[s.id]?.[field] === 0 ? '' : accrualDraft[s.id]?.[field] ?? ''}
                                         onChange={(e) => {
                                           const num = e.target.value === '' ? 0 : Number(e.target.value);
@@ -718,12 +901,12 @@ export const LabourIntelligence: React.FC<LabourIntelligenceProps> = ({ staff, o
                                           }));
                                         }}
                                         placeholder="0.00"
-                                        className="w-24 bg-secondary-surface border-none rounded-md text-xs px-2 py-1 focus:ring-1 focus:ring-accent"
+                                        className="w-24 bg-secondary-surface border-none rounded-md text-xs px-2 py-1 focus:ring-1 focus:ring-accent disabled:opacity-60 disabled:cursor-not-allowed"
                                       />
                                     </td>
                                   ))}
                                 </tr>
-                              ))}
+                              );})}
                             </tbody>
                           </table>
                         </div>
@@ -800,6 +983,14 @@ export const LabourIntelligence: React.FC<LabourIntelligenceProps> = ({ staff, o
                     </p>
                     <p className="text-3xl font-black text-white">{money(customRangeTotal.totalCost)}</p>
                   </div>
+                  <Button
+                    variant="secondary"
+                    className="gap-2 shrink-0"
+                    onClick={() => setDrilldownRange({ label: `${customStart} to ${customEnd}`, start: customStart, end: customEnd })}
+                    disabled={customRangeTotal.shiftCount === 0}
+                  >
+                    View Individual Shifts <ChevronRight className="w-4 h-4" />
+                  </Button>
                 </div>
               </>
             )}
@@ -915,6 +1106,8 @@ export const LabourIntelligence: React.FC<LabourIntelligenceProps> = ({ staff, o
                 Enter this figure manually into Financial Command's P&amp;L labour line.
               </p>
             </div>
+            </>
+            )}
             </>
             )}
           </div>

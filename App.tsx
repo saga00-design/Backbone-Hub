@@ -17,11 +17,11 @@ import { SupplierManager } from './components/SupplierManager';
 import { TableManager } from './components/TableManager';
 import { Settings } from './components/Settings';
 import { Orders } from './components/Orders';
-import { InventoryItem, InventoryCategory, Unit, StockCountRecord, Recipe, SalesImportRecord, Supplier, Order, OrderItem, Invoice, MenuCategory, POSOrder, POSPayment, WasteRecord, ExpenseRecord, MovementType, StockMovement, InventoryType, Table, DailyClosure, ClosureType, Forecast, StaffPerformanceRecord, AppPermissions, StaffCertification, AuditLog, StaffMember, SideAddonItem, ReceivingRecord, ReceivingRecordItem, SupplierPriceHistoryEntry, LabourShift } from './types';
+import { InventoryItem, InventoryCategory, Unit, StockCountRecord, Recipe, SalesImportRecord, Supplier, Order, OrderItem, Invoice, MenuCategory, POSOrder, POSPayment, WasteRecord, ExpenseRecord, MovementType, StockMovement, InventoryType, Table, DailyClosure, ClosureType, Forecast, StaffPerformanceRecord, AppPermissions, StaffCertification, AuditLog, StaffMember, SideAddonItem, ReceivingRecord, ReceivingRecordItem, SupplierPriceHistoryEntry, LabourShift, PayrollCentreWeekRecord } from './types';
 import { logAuditAction } from './services/auditService';
 import { getBusinessDay } from './utils/businessDay';
 import { getCurrentPeriod, getPeriodWeekStarts } from './utils/fiscalCalendar';
-import { buildWeeklyLabourCostPenceMap, sumLabourCostForWeeks, filterShiftsForCost } from './services/labourImportService';
+import { buildWeeklyLabourCostPenceMap, sumLabourCostForWeeks, filterShiftsForCost, mergeRealPayrollData } from './services/labourImportService';
 import { LayoutDashboard, Package, ClipboardCheck, FileInput, Menu, X, ChefHat, TrendingUp, Truck, Settings as SettingsIcon, BookOpen, Sun, Moon, ShoppingCart, AlertCircle, LogIn, LogOut, Trash2, ReceiptPoundSterling, Megaphone, LayoutList, PoundSterling } from 'lucide-react';
 import { Toaster, toast } from 'sonner';
 import { auth, db, googleProvider, signInWithPopup, onAuthStateChanged, collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, onSnapshot, handleFirestoreError, OperationType, User, cleanObject, signOut, increment, query, where, orderBy, limit, testConnection, LOCATION_ID, writeBatch } from './firebase';
@@ -461,6 +461,7 @@ const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [staffMembers, setStaffMembers] = useState<StaffMember[]>([]);
   const [labourShifts, setLabourShifts] = useState<LabourShift[]>([]);
+  const [payrollCentreRecords, setPayrollCentreRecords] = useState<PayrollCentreWeekRecord[]>([]);
   const [livePosSalesSummary, setLivePosSalesSummary] = useState({
     totalPaid: 0,
     grossSales: 0,
@@ -602,10 +603,11 @@ const today = londonHour < 6
   // Salaried staff's real cost is their fixed salary, not hours x rate — their shifts are
   // excluded here (and everywhere else an automated Wages/labour cost total is summed) so
   // Labour Import can keep showing their HOURS unfiltered while the $ total doesn't
-  // double-count alongside their actual salary (see services/labourImportService.ts).
+  // double-count alongside their actual salary (see services/labourImportService.ts). Real
+  // Payroll Centre data then wins over that estimate for any week it covers.
   const labourShiftsForCost = useMemo(
-    () => filterShiftsForCost(labourShifts, staffMembers),
-    [labourShifts, staffMembers]
+    () => mergeRealPayrollData(filterShiftsForCost(labourShifts, staffMembers), payrollCentreRecords),
+    [labourShifts, staffMembers, payrollCentreRecords]
   );
 
   // Dashboard's Period-to-date Labour Cost card — reuses Labour Intelligence's own
@@ -1062,6 +1064,13 @@ const today = londonHour < 6
       setLabourShifts(data);
     }, (err: any) => handleFirestoreError(err, OperationType.LIST, 'labourShifts'));
 
+    // Real Payroll Centre weekly data — wins over the Rota-based estimate for any week it
+    // covers, see filterShiftsForCost/mergeRealPayrollData in labourShiftsForCost below.
+    const unsubPayrollCentre = onSnapshot(query(collection(db, 'payrollCentreWeeks'), where('locationId', '==', LOCATION_ID)), (snapshot: any) => {
+      const data = snapshot.docs.map((doc: any) => ({ ...doc.data(), id: doc.id } as PayrollCentreWeekRecord));
+      setPayrollCentreRecords(data);
+    }, (err: any) => handleFirestoreError(err, OperationType.LIST, 'payrollCentreWeeks'));
+
     return () => {
       unsubPosTransactions();
       unsubInventory();
@@ -1085,6 +1094,7 @@ const today = londonHour < 6
       unsubUser();
       unsubStaff();
       unsubLabourShifts();
+      unsubPayrollCentre();
       unsubForecasts();
       unsubStaffPerf();
       unsubCertifications();

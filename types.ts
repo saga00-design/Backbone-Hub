@@ -600,6 +600,13 @@ export interface StaffMember {
   hourlyRate: number;
   salaryChanges?: SalaryChange[];
 
+  // Stable, unique 4-digit code used to match Labour Import rows to this profile, instead of
+  // fragile name-text matching (typos, name-order variants, capitalization, truncated compound
+  // surnames). Optional because existing staff and older TTP exports predate this field — Labour
+  // Import falls back to name matching whenever a row has no Staff ID. TTP must export this same
+  // ID per employee for the match to work; that's a separate follow-up on the TTP/AI Studio side.
+  staffId?: string;
+
   // Employment type: defaults to 'Hourly' wherever unset (existing staff, existing imports)
   // so nothing changes for anyone not explicitly marked Salaried. Salaried staff still clock
   // in/out and appear in Labour Import for hours/attendance tracking, but their real cost is
@@ -760,11 +767,61 @@ export interface WeeklyCostEntry {
   recruitmentFeesAndRMLarge: number;
 }
 
+// One employee's real weekly payroll figures from TTP's "Payroll Centre" export — the real
+// import this app's payrollAccruals structure was built to eventually receive (see
+// PayrollAccrualRecord below). One record per staff member (or unmatched name) per calendar
+// week. Duplicate CSV rows for the same employee within one file (TTP sometimes splits one
+// employee's week across two rows) are summed into a single record per employee per week
+// before being stored — see services/payrollCentreParsing.ts.
+export interface PayrollCentreWeekRecord {
+  id: string; // `${locationId}-${staffId-or-normalized-name}-W${weekStartDate}`
+  locationId: string;
+  staffId: string | null;
+  employeeName: string;
+  department: string; // normalized via the existing normalizeDepartment()
+  weekStartDate: string; // YYYY-MM-DD Monday — the fiscal week this record ROLLS UP into
+  weekEndDate: string;   // YYYY-MM-DD Sunday
+  // The exact range TTP's Run Type actually covers — equal to weekStartDate/weekEndDate for
+  // a genuine "Week: ..." import, but narrower for a "Daily: ..." (or other partial-week)
+  // import, e.g. a single day. Used as the record's real identity (see
+  // payrollCentreRecordId()) so multiple Daily imports within the same fiscal week create
+  // separate, accumulating records instead of each overwriting the last.
+  coverageStartDate: string;
+  coverageEndDate: string;
+  // Raw "Compliant"/"Excluded" (or whatever TTP sends) — display only. null when the source
+  // file had no Compliance column at all (TTP removed it from the newer Kiosk PIN export
+  // format) — distinct from an empty string, which would mean the column existed but was blank.
+  complianceStatus: string | null;
+  hoursWorked: number;
+  // Real cost fields — see services/payrollCentreParsing.ts's PAYROLL_CENTRE_COST_FIELDS
+  // comment for which of these actually feed labour cost vs. are reference-only.
+  basicWages: number;
+  accruedHolidayPay: number;
+  employerNI: number;
+  employerPension: number;
+  // Reference/display only — deductions from the employee's own pay, already reflected
+  // inside Basic Wages/Gross Pay, or (Tronc) unconfirmed whether it's ever non-zero in
+  // real data. Never summed into any labour cost total.
+  troncTips: number;
+  grossPay: number;
+  payeTax: number;
+  employeeNI: number;
+  employeePension: number;
+  netTakeHome: number;
+  source: string; // 'TTP Payroll Centre CSV'
+  importedAt: string;
+}
+
 // Structure-only, per Labour Import's Review feature — receives NI/Pension/Holiday Accrual
 // figures once a real payroll system import exists (future work, not built yet). One record
 // per staff member per fiscal Period. Values are entered manually (from a real payroll system)
 // and are NEVER calculated/derived by this app — see components/LabourIntelligence.tsx's
 // Review section, which only rolls these up (sums by department + an "All" total) for display.
+// UPDATE: PayrollCentreWeekRecord above is that future import — when real weeks exist for a
+// Period, LabourIntelligence.tsx now pre-fills this record's ni/pension/holidayAccrual from
+// the real summed figures instead of leaving them for manual entry (see
+// sumPayrollCentreForPeriod() in services/payrollCentreParsing.ts). Manual entry remains
+// available for employees/periods with no real data yet.
 export interface PayrollAccrualRecord {
   id: string; // `${locationId}-${staffId}-P${periodNumber}-FY${fiscalYear}`
   locationId: string;

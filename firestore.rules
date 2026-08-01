@@ -193,8 +193,16 @@ service cloud.firestore {
 
     // NI/Pension/Holiday Accrual — structure-only collection for Labour Import's Review
     // feature (components/LabourIntelligence.tsx). Figures are manually entered pending a
-    // future real payroll import.
+    // future real payroll import, or auto-filled from payrollCentreWeeks below once real
+    // Payroll Centre data exists for that employee/Period.
     match /payrollAccruals/{docId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    // TTP "Payroll Centre" real weekly payroll import — one doc per employee per week. Real
+    // cost source of truth that wins over the Rota-based hours x rate estimate for any week
+    // it covers (see services/labourImportService.ts's mergeRealPayrollData()).
+    match /payrollCentreWeeks/{docId} {
       allow read, write: if isAuthenticated();
     }
 

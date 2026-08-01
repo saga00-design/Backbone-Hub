@@ -21,6 +21,9 @@ export interface RotaCsvRow {
   'Hours Scheduled': string;
   'Hourly Wage': string;
   'Estimated Labor Cost': string;
+  // Not yet exported by TTP — forward-compatible optional column. When present, Labour Import
+  // matches on this instead of the (fragile) Employee Name text. See matchStaffById().
+  'Staff ID'?: string;
 }
 
 export interface RowFlag {
@@ -77,10 +80,29 @@ function firstToken(name: string): string {
   return normalizeName(name).split(' ')[0] || '';
 }
 
+// Primary matching method when imported data includes it (see StaffMember.staffId in types.ts).
+// Stable and unambiguous — unlike name matching, which is inherently fragile against typos,
+// name-order variants, and truncated/inconsistent compound-name exports.
+export function matchStaffById(staffId: string | null | undefined, staff: StaffMember[]): StaffMember | null {
+  const target = (staffId || '').trim();
+  if (!target) return null;
+  return staff.find(s => (s.staffId || '').trim() === target) || null;
+}
+
+// Kiosk PIN match — TTP's real Payroll Centre export now includes each employee's 4-digit
+// kiosk PIN (the same StaffMember.pin used for POS clock-in/login, see POSPINModal.tsx). Exact
+// match only: a PIN either belongs to one staff member or it doesn't, so no fuzzy fallback.
+export function matchStaffByPin(pin: string | null | undefined, staff: StaffMember[]): StaffMember | null {
+  const target = (pin || '').trim();
+  if (!target) return null;
+  return staff.find(s => (s.pin || '').trim() === target) || null;
+}
+
 export function matchStaffByName(name: string, staff: StaffMember[]): StaffMember | null {
   const target = normalizeName(name);
   if (!target) return null;
-  const targetTokens = target.split(' ').sort().join(' ');
+  const targetTokenList = target.split(' ');
+  const targetTokens = [...targetTokenList].sort().join(' ');
 
   for (const s of staff) {
     const full = normalizeName(`${s.firstName} ${s.lastName}`);
@@ -92,6 +114,17 @@ export function matchStaffByName(name: string, staff: StaffMember[]): StaffMembe
     const fullTokens = full.split(' ').sort().join(' ');
     if (fullTokens === targetTokens) return s;
   }
+  // Partial/truncated-name match: export systems don't always emit the full compound name
+  // (e.g. double surnames like "Rodriguez Frias" show up as just "Elliott Rodriguez" in one
+  // export context and "Elliott Frias" in another). Match when every token in the imported
+  // name appears somewhere in a profile's full name — but only when exactly one profile
+  // qualifies, so two different people are never silently merged.
+  const partialCandidates = staff.filter(s => {
+    const profileTokens = new Set(normalizeName(`${s.firstName} ${s.lastName}`).split(' '));
+    return targetTokenList.includes(normalizeName(s.firstName)) &&
+      targetTokenList.every(t => profileTokens.has(t));
+  });
+  if (partialCandidates.length === 1) return partialCandidates[0];
   return null;
 }
 
@@ -209,6 +242,7 @@ export function buildRotaImportPreview(
   return csvRows.map((raw, rowIndex): ParsedShiftRow => {
     const flags: RowFlag[] = [];
     const employeeNameRaw = (raw['Employee Name'] || '').trim();
+    const staffIdRaw = (raw['Staff ID'] || '').trim();
     const role = (raw.Role || '').trim();
     const department = (raw.Department || '').trim();
 
@@ -263,12 +297,16 @@ export function buildRotaImportPreview(
       });
     }
 
-    const matchedStaff = matchStaffByName(employeeNameRaw, staff);
+    // Staff ID (when the export includes it) is the primary, unambiguous match key. Name
+    // matching is only a fallback for exports that predate this field.
+    const matchedStaff = staffIdRaw ? matchStaffById(staffIdRaw, staff) : matchStaffByName(employeeNameRaw, staff);
     if (!matchedStaff && employeeNameRaw) {
       flags.push({
         code: 'UNMATCHED_STAFF',
         severity: 'warning',
-        message: `"${employeeNameRaw}" doesn't match an existing staff profile. Will import unlinked — no profile will be auto-created.`
+        message: staffIdRaw
+          ? `Staff ID "${staffIdRaw}" doesn't match an existing staff profile. Will import unlinked — no profile will be auto-created.`
+          : `"${employeeNameRaw}" doesn't match an existing staff profile. Will import unlinked — no profile will be auto-created.`
       });
     }
 

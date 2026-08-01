@@ -16,7 +16,7 @@ import { TimePeriodLegend } from './TimePeriodLegend';
 import {
   DailyClosure, POSOrder, StaffMember,
   Liability, AIAction,
-  InventoryItem, Recipe, LabourShift, ExpenseRecord, WasteRecord, StockCountRecord
+  InventoryItem, Recipe, LabourShift, ExpenseRecord, WasteRecord, StockCountRecord, PayrollCentreWeekRecord
 } from '../types';
 import { db, LOCATION_ID } from '../firebase';
 import { collection, query, where, orderBy, limit, onSnapshot, updateDoc, doc } from 'firebase/firestore';
@@ -24,7 +24,7 @@ import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'motion/react';
 import { generateFinancialPackPDF } from '../services/pdfService';
 import { computePnl, PnlEngineResult } from '../services/pnlEngine';
-import { filterShiftsForCost } from '../services/labourImportService';
+import { filterShiftsForCost, mergeRealPayrollData } from '../services/labourImportService';
 import {
   DateRange, getCurrentPeriod, getWeekStart, getWeekRange, getFiscalWeek,
   getPeriodWeekStarts, getWeeksStartingInMonth, getQuarterWeekStarts,
@@ -129,6 +129,7 @@ export const FinancialCommandCenter: React.FC<FinancialCommandCenterProps> = ({
 
   // Labour Intelligence Shifts
   const [labourShifts, setLabourShifts] = useState<LabourShift[]>([]);
+  const [payrollCentreRecords, setPayrollCentreRecords] = useState<PayrollCentreWeekRecord[]>([]);
 
   useEffect(() => {
     const unsubLabour = onSnapshot(
@@ -136,6 +137,16 @@ export const FinancialCommandCenter: React.FC<FinancialCommandCenterProps> = ({
       (snap) => setLabourShifts(snap.docs.map(d => ({ id: d.id, ...d.data() } as LabourShift)))
     );
     return () => unsubLabour();
+  }, []);
+
+  // Real Payroll Centre weekly data — wins over the Rota-based estimate for any week it
+  // covers, see labourShiftsForCost below.
+  useEffect(() => {
+    const unsubPayrollCentre = onSnapshot(
+      query(collection(db, 'payrollCentreWeeks'), where('locationId', '==', LOCATION_ID)),
+      (snap) => setPayrollCentreRecords(snap.docs.map(d => ({ id: d.id, ...d.data() } as PayrollCentreWeekRecord)))
+    );
+    return () => unsubPayrollCentre();
   }, []);
 
   // --- Single source of truth: pnlEngine, computed ONCE for the globally selected range ---
@@ -170,9 +181,13 @@ export const FinancialCommandCenter: React.FC<FinancialCommandCenterProps> = ({
 
   // Salaried staff's real cost is a fixed salary, not hours x rate — excluded here (matching
   // App.tsx's Dashboard card and Labour Import's own totals) so the P&L's Wages figure doesn't
-  // double-count alongside their actual salary. Only affects the pnlEngine feed below —
-  // `labourShifts` itself (used elsewhere, e.g. generateFinancialInsights) is untouched.
-  const labourShiftsForCost = useMemo(() => filterShiftsForCost(labourShifts, staff), [labourShifts, staff]);
+  // double-count alongside their actual salary. Real Payroll Centre data then wins over that
+  // estimate for any week it covers. Only affects the pnlEngine feed below — `labourShifts`
+  // itself (used elsewhere, e.g. generateFinancialInsights) is untouched.
+  const labourShiftsForCost = useMemo(
+    () => mergeRealPayrollData(filterShiftsForCost(labourShifts, staff), payrollCentreRecords),
+    [labourShifts, staff, payrollCentreRecords]
+  );
 
   const pnlInputs = { closures, labourShifts: labourShiftsForCost, expenseRecords, wasteRecords, stockCountRecords };
 

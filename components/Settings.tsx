@@ -27,6 +27,17 @@ interface UserData {
 
 const LOCATION_ID = 'loc_camden';
 
+// Stable, unique 4-digit code — the primary key Labour Import matches against once TTP exports
+// it too (see types.ts StaffMember.staffId). Retries on collision against the current staff list.
+function generateUniqueStaffId(existing: StaffMember[]): string {
+  const taken = new Set(existing.map(s => s.staffId).filter(Boolean));
+  let candidate: string;
+  do {
+    candidate = String(Math.floor(1000 + Math.random() * 9000));
+  } while (taken.has(candidate));
+  return candidate;
+}
+
 interface SettingsProps {
   auditLogs?: AuditLog[];
 }
@@ -106,6 +117,12 @@ export const Settings: React.FC<SettingsProps> = ({ auditLogs = [] }) => {
       return;
     }
 
+    const staffIdTrimmed = (newStaff.staffId || '').trim();
+    if (staffIdTrimmed && staffMembers.some(s => s.staffId === staffIdTrimmed && s.id !== editingStaffId)) {
+      toast.error(`Staff ID "${staffIdTrimmed}" is already in use by another staff member.`);
+      return;
+    }
+
     try {
       const timestamp = new Date().toISOString();
       const completed = newStaff.trainingSummary?.completedModules || 0;
@@ -116,6 +133,7 @@ export const Settings: React.FC<SettingsProps> = ({ auditLogs = [] }) => {
         lastName: newStaff.lastName,
         name: `${newStaff.firstName} ${newStaff.lastName}`.trim(),
         email: newStaff.email || '',
+        staffId: staffIdTrimmed || undefined,
         role: newStaff.role,
         pin: newStaff.pin,
         active: newStaff.active ?? true,
@@ -963,6 +981,7 @@ export const Settings: React.FC<SettingsProps> = ({ auditLogs = [] }) => {
                       <p className="text-xs text-text-muted">
                         {s.email} • {s.role}
                         {userRole === 'Admin' && ` • PIN: ••••`}
+                        {userRole === 'Admin' && s.staffId && ` • ID: ${s.staffId}`}
                         {s.department && ` • ${departments.find(d => d.id === s.department)?.name || s.department}`}
                       </p>
                     </div>
@@ -1069,6 +1088,31 @@ export const Settings: React.FC<SettingsProps> = ({ auditLogs = [] }) => {
                         onChange={(e) => setNewStaff({ ...newStaff, email: e.target.value })}
                         className="w-full bg-main-bg border border-border-grey rounded-xl px-4 py-3 text-text-navy focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent transition-all"
                       />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2 block">Staff ID</label>
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          maxLength={4}
+                          placeholder="e.g. 4821"
+                          value={newStaff.staffId || ''}
+                          onChange={(e) => setNewStaff({ ...newStaff, staffId: e.target.value.replace(/\D/g, '').slice(0, 4) })}
+                          className="w-full bg-main-bg border border-border-grey rounded-xl px-4 py-3 text-text-navy focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent transition-all"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setNewStaff({ ...newStaff, staffId: generateUniqueStaffId(staffMembers) })}
+                          title="Generate a unique Staff ID"
+                          className="shrink-0 flex items-center gap-1.5 px-4 rounded-xl border border-border-grey text-text-muted hover:text-text-navy hover:border-accent transition-all"
+                        >
+                          <RefreshCw className="w-4 h-4" />
+                        </button>
+                      </div>
+                      <p className="text-[9px] font-bold text-text-muted uppercase tracking-wide mt-1.5 normal-case">
+                        Stable ID used to match Labour Import rows to this profile — more reliable than matching by name text. Optional for now; leave blank if not needed yet.
+                      </p>
                     </div>
                     <div>
                       <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2 block">Department</label>
