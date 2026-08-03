@@ -1,6 +1,7 @@
 
 import React, { useMemo, useState } from 'react';
 import { InventoryItem, DailyClosure } from '../types';
+import { CategorySalesSplit } from '../utils/recipeUtils';
 import { TrendingUp, AlertTriangle, PoundSterling, Brain, RefreshCw, ArrowRight, Banknote, ShoppingCart, Clock, Bot, Wifi, WifiOff, ChevronDown, ChevronUp, HardHat, LayoutDashboard } from 'lucide-react';
 import { Button } from './Button';
 import { PageHeader } from './PageHeader';
@@ -34,6 +35,7 @@ interface DashboardProps {
   livePosSalesSummary: LivePosSalesSummary;
   todayCovers: number;
   todaysClosure: DailyClosure | null;
+  todayCategorySalesSplit: CategorySalesSplit;
   labourCostPeriodToDate: LabourCostPeriodToDate;
   setCurrentView?: (view: any) => void;
   onAddToCart?: (item: InventoryItem, quantity: number) => void;
@@ -61,6 +63,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
   livePosSalesSummary,
   todayCovers,
   todaysClosure,
+  todayCategorySalesSplit,
   labourCostPeriodToDate,
   setCurrentView,
   onAddToCart
@@ -198,6 +201,13 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const [grossDetailOpen, setGrossDetailOpen] = useState(false);
   const sph = todayCovers > 0 ? totalRevenue / todayCovers : 0;
 
+  // Food/Beverage/Uncategorized % of today's live categorized sales — Uncategorized is only
+  // shown when it's actually non-zero, so a fully-categorized menu just shows Food/Beverage.
+  const categoryPercentEntries = Object.entries(todayCategorySalesSplit.percentByCategory)
+    .filter(([category, percent]) => percent > 0 && category !== 'Uncategorized')
+    .sort(([, a], [, b]) => b - a);
+  const uncategorizedPercent = todayCategorySalesSplit.percentByCategory['Uncategorized'] || 0;
+
   // System connectivity compact indicator — driven by the app-wide Firestore heartbeat
   // signal (App.tsx: useConnectionStatus), the same source as OfflineBanner and the
   // reconnect toast, so all three always agree. Previously this used `posPaymentsCount > 0`,
@@ -308,8 +318,25 @@ export const Dashboard: React.FC<DashboardProps> = ({
                   <span className="text-text-muted font-bold uppercase">Spend Per Head</span>
                   <span className="font-bold text-text-navy">{todayCovers > 0 ? money(sph) : '—'}</span>
                 </div>
-                <div className="col-span-2 pt-2 border-t border-border-grey text-[9px] text-text-muted italic">
-                  Food % / Beverage % split isn't tracked live yet — only available after tonight's closure report.
+                <div className="col-span-2 pt-2 border-t border-border-grey">
+                  {todayCategorySalesSplit.totalGross > 0 ? (
+                    <>
+                      {categoryPercentEntries.map(([category, percent]) => (
+                        <div key={category} className="flex justify-between">
+                          <span className="text-text-muted font-bold uppercase">{category} %</span>
+                          <span className="font-bold text-text-navy">{percent.toFixed(1)}%</span>
+                        </div>
+                      ))}
+                      {uncategorizedPercent > 0 && (
+                        <div className="flex justify-between">
+                          <span className="text-text-muted font-bold uppercase">Uncategorized %</span>
+                          <span className="font-bold text-text-navy">{uncategorizedPercent.toFixed(1)}%</span>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <span className="text-[9px] text-text-muted italic">No categorized sales yet today.</span>
+                  )}
                 </div>
               </div>
             </div>

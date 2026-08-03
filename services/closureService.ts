@@ -28,6 +28,7 @@ import { processStaffPerformance } from './staffPerformanceService';
 import { runMenuEngineering } from './menuEngineeringService';
 import { Recipe, InventoryItem } from '../types';
 import { getAiClient, handleAiError } from './geminiService';
+import { buildRecipeIndexes, resolveOrderItem } from '../utils/recipeUtils';
 
 /**
  * Calculates and saves a daily or shift closure.
@@ -97,9 +98,10 @@ export async function performClosure(params: {
     // Fetch Recipes and Inventory for COGS calculation
     const [recipesSnap, inventorySnap] = await Promise.all([
       getDocs(collection(db, 'recipes')),
-      getDocs(collection(db, 'inventoryItems'))
+      getDocs(collection(db, 'inventory'))
     ]);
-    const recipesMap = new Map(recipesSnap.docs.map(d => [d.id, { id: d.id, ...d.data() } as any]));
+    const recipesForMatching = recipesSnap.docs.map(d => ({ id: d.id, ...d.data() } as Recipe));
+    const recipeIndexes = buildRecipeIndexes(recipesForMatching);
     const inventoryMap = new Map(inventorySnap.docs.map(d => [d.id, { id: d.id, ...d.data() } as any]));
     
     const staffById = Object.fromEntries(staffDocs.map(s => [s.id, s]));
@@ -277,10 +279,14 @@ export async function performClosure(params: {
 
           const net = normalizeCurrency((order as any).netSales || (order as any).net_total || (rawGross - finalVat - finalSCharge));
 
-          // CALCULATE COGS FOR THIS ORDER
+          // CALCULATE COGS FOR THIS ORDER — recipe resolution goes through the shared resolver
+          // (utils/recipeUtils.ts) since real order items come in multiple shapes and a plain
+          // item.recipeId lookup only ever matched one of them, leaving COGS at 0 on every
+          // historical closure regardless of real sales volume.
           let orderCOGS = 0;
           order.items?.forEach(item => {
-            const recipe = recipesMap.get(item.recipeId);
+            const resolved = resolveOrderItem(item, recipeIndexes);
+            const recipe = resolved.recipe;
             if (recipe) {
               let itemUnitCost = 0;
               recipe.ingredients?.forEach((ing: any) => {
@@ -289,7 +295,7 @@ export async function performClosure(params: {
                   itemUnitCost += (invItem.pricePerUnit || 0) * (ing.baseQuantity || 0);
                 }
               });
-              
+
               // Modifiers cost
               item.modifiers?.forEach((mod: any) => {
                 if (mod.inventoryItemId) {
@@ -299,21 +305,21 @@ export async function performClosure(params: {
                   }
                 }
               });
-              
-              orderCOGS += itemUnitCost * (item.quantity || 1);
-              
-              const cat = recipe.category || recipe.type || 'Other';
-              salesByCategory[cat] = (salesByCategory[cat] || 0) + normalizeCurrency((item.price || 0) * (item.quantity || 1));
-              cogsByCategory[cat] = (cogsByCategory[cat] || 0) + (itemUnitCost * (item.quantity || 1));
+
+              orderCOGS += itemUnitCost * resolved.quantity;
+
+              const cat = resolved.category;
+              salesByCategory[cat] = (salesByCategory[cat] || 0) + resolved.revenue;
+              cogsByCategory[cat] = (cogsByCategory[cat] || 0) + (itemUnitCost * resolved.quantity);
 
               // track for insights
-              const itemKey = item.name || item.id || 'Unknown';
+              const itemKey = resolved.name;
               if (!itemAnalysis[itemKey]) {
                 itemAnalysis[itemKey] = { name: itemKey, revenue: 0, cogs: 0, volume: 0 };
               }
-              itemAnalysis[itemKey].revenue += normalizeCurrency((item.price || 0) * (item.quantity || 1));
-              itemAnalysis[itemKey].cogs += itemUnitCost * (item.quantity || 1);
-              itemAnalysis[itemKey].volume += (item.quantity || 1);
+              itemAnalysis[itemKey].revenue += resolved.revenue;
+              itemAnalysis[itemKey].cogs += itemUnitCost * resolved.quantity;
+              itemAnalysis[itemKey].volume += resolved.quantity;
             }
           });
           totalCOGS += orderCOGS;

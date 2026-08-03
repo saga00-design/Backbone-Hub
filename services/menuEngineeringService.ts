@@ -1,7 +1,7 @@
 import { db, cleanObject, LOCATION_ID } from '../firebase';
 import { doc, collection, writeBatch, query, where, getDocs, limit, orderBy } from 'firebase/firestore';
 import { InventoryItem, POSOrder, Recipe, MenuEngineeringRecord } from '../types';
-import { calculateTotalCost } from '../utils/recipeUtils';
+import { calculateTotalCost, buildRecipeIndexes, resolveOrderItem, cleanNameKey } from '../utils/recipeUtils';
 
 /**
  * Menu Engineering Service
@@ -37,7 +37,7 @@ export async function runMenuEngineering(days = 30) {
 
     // 2. Fetch Inventory, Recipes & Menu Items
     const [invSnap, recSnap, menuSnap] = await Promise.all([
-      getDocs(collection(db, 'inventoryItems')),
+      getDocs(collection(db, 'inventory')),
       getDocs(collection(db, 'recipes')),
       getDocs(collection(db, 'menuItems'))
     ]);
@@ -50,34 +50,34 @@ export async function runMenuEngineering(days = 30) {
 
     console.log(`Fetched ${menuItems.length} menu items, ${recipes.length} recipes, and ${inventory.length} inventory items.`);
 
-    // 3. Aggregate sales by name and ID for matching
-    const salesStats: Record<string, { qty: number; revenue: number }> = {};
+    // 3. Aggregate sales by resolved recipe id and by cleaned name, via the shared resolver
+    // (utils/recipeUtils.ts) — real order items come in multiple shapes (recipeId+name vs.
+    // menuItemId+POS snapshot), and the old id/name-only matching here silently missed the
+    // snapshot shape entirely (which skews toward beverages), undercounting those items.
+    const recipeIndexes = buildRecipeIndexes(recipes);
+    const salesByRecipeId: Record<string, { qty: number; revenue: number }> = {};
     const salesByName: Record<string, { qty: number; revenue: number }> = {};
     let totalQty = 0;
 
     orders.forEach(order => {
       (order.items || []).forEach(item => {
-        const qty = Number(item.quantity) || 1;
-        const price = Number(item.price) || 0;
-        const rev = price * qty;
+        const resolved = resolveOrderItem(item, recipeIndexes);
 
-        // By ID (recipeId, itemId, or id)
-        const targetId = item.itemId || item.recipeId || item.id;
-        if (targetId) {
-          if (!salesStats[targetId]) salesStats[targetId] = { qty: 0, revenue: 0 };
-          salesStats[targetId].qty += qty;
-          salesStats[targetId].revenue += rev;
+        if (resolved.recipe) {
+          const key = resolved.recipe.id;
+          if (!salesByRecipeId[key]) salesByRecipeId[key] = { qty: 0, revenue: 0 };
+          salesByRecipeId[key].qty += resolved.quantity;
+          salesByRecipeId[key].revenue += resolved.revenue;
         }
 
-        // By Name (fallback) - aggressive cleaning
-        if (item.name) {
-          const nameKey = item.name.toLowerCase().replace(/[^a-z0-9]/g, "").trim();
+        const nameKey = cleanNameKey(resolved.name);
+        if (nameKey) {
           if (!salesByName[nameKey]) salesByName[nameKey] = { qty: 0, revenue: 0 };
-          salesByName[nameKey].qty += qty;
-          salesByName[nameKey].revenue += rev;
+          salesByName[nameKey].qty += resolved.quantity;
+          salesByName[nameKey].revenue += resolved.revenue;
         }
 
-        totalQty += qty;
+        totalQty += resolved.quantity;
       });
     });
 
@@ -136,14 +136,16 @@ export async function runMenuEngineering(days = 30) {
         fallbackCostCount++;
       }
 
-      let stats = salesStats[menuItem.id];
+      // Primary lookup via the same recipe already resolved above for costing — keeps sales
+      // and cost tied to the identical recipe rather than two independently-guessed matches.
+      let stats = recipe ? salesByRecipeId[recipe.id] : undefined;
+      if (!stats) stats = salesByRecipeId[menuItem.id];
       if (!stats && menuItem.slug) {
         // Match by slug if present in stats (unlikely but safe)
-        stats = salesStats[menuItem.slug];
+        stats = salesByRecipeId[menuItem.slug];
       }
       if (!stats && menuItem.name) {
-        const nameKey = menuItem.name.toLowerCase().replace(/[^a-z0-9]/g, "").trim();
-        stats = salesByName[nameKey];
+        stats = salesByName[cleanNameKey(menuItem.name)];
       }
 
       const qtySold = stats?.qty || 0;

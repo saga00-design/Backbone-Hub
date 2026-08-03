@@ -19,14 +19,14 @@ import { Settings } from './components/Settings';
 import { Orders } from './components/Orders';
 import { InventoryItem, InventoryCategory, Unit, StockCountRecord, Recipe, SalesImportRecord, Supplier, Order, OrderItem, Invoice, MenuCategory, POSOrder, POSPayment, WasteRecord, ExpenseRecord, MovementType, StockMovement, InventoryType, Table, DailyClosure, ClosureType, Forecast, StaffPerformanceRecord, AppPermissions, StaffCertification, AuditLog, StaffMember, SideAddonItem, ReceivingRecord, ReceivingRecordItem, SupplierPriceHistoryEntry, LabourShift, PayrollCentreWeekRecord } from './types';
 import { logAuditAction } from './services/auditService';
-import { getBusinessDay } from './utils/businessDay';
+import { getBusinessDay, getBusinessDayFor } from './utils/businessDay';
 import { getCurrentPeriod, getPeriodWeekStarts } from './utils/fiscalCalendar';
 import { buildWeeklyLabourCostPenceMap, sumLabourCostForWeeks, filterShiftsForCost, mergeRealPayrollData } from './services/labourImportService';
 import { LayoutDashboard, Package, ClipboardCheck, FileInput, Menu, X, ChefHat, TrendingUp, Truck, Settings as SettingsIcon, BookOpen, Sun, Moon, ShoppingCart, AlertCircle, LogIn, LogOut, Trash2, ReceiptPoundSterling, Megaphone, LayoutList, PoundSterling } from 'lucide-react';
 import { Toaster, toast } from 'sonner';
 import { auth, db, googleProvider, signInWithPopup, onAuthStateChanged, collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, onSnapshot, handleFirestoreError, OperationType, User, cleanObject, signOut, increment, query, where, orderBy, limit, testConnection, LOCATION_ID, writeBatch } from './firebase';
 import { DEFAULT_PERMISSIONS } from './constants';
-import { calculateTotalCost, mapCategoryId } from './utils/recipeUtils';
+import { calculateTotalCost, mapCategoryId, computeCategorySalesSplit } from './utils/recipeUtils';
 import { CONVERSION_FACTORS, toSafeNumber, resolveInvoiceLine } from './utils/unitConversions';
 import { normalizeCurrency, normalizeTimestamp, normalizeStatus } from './utils/currencyUtils';
 import { OfflineBanner } from './components/OfflineBanner';
@@ -599,6 +599,18 @@ const today = londonHour < 6
     // Return TODAY'S sales specifically for high-visibility dashboard cards to match POS Shift Total
     return liveSalesData.aggregate.todayPaid;
   }, [liveSalesData.aggregate.todayPaid]);
+
+  // Live Food %/Beverage % split for the Gross Sales popover — same recipe-category bucketing
+  // logic as the post-closure salesByCategory report (services/closureService.ts), applied to
+  // today's Paid posOrders instead of a closed period, using the same 6am London business-day
+  // cutoff as everywhere else.
+  const todayCategorySalesSplit = useMemo(() => {
+    const businessDay = getBusinessDay();
+    const todaysOrders = posOrders.filter(o =>
+      normalizeStatus(o.status) === 'Paid' && getBusinessDayFor(new Date(o.paidAt || o.createdAt)) === businessDay
+    );
+    return computeCategorySalesSplit(todaysOrders, recipes);
+  }, [posOrders, recipes]);
 
   // Salaried staff's real cost is their fixed salary, not hours x rate — their shifts are
   // excluded here (and everywhere else an automated Wages/labour cost total is summed) so
@@ -2997,6 +3009,7 @@ const today = londonHour < 6
                   livePosSalesSummary={livePosSalesSummary}
                   todayCovers={liveSalesData.aggregate.todayCovers}
                   todaysClosure={closures.find(c => c.type === ClosureType.DAY && c.date === getBusinessDay()) || null}
+                  todayCategorySalesSplit={todayCategorySalesSplit}
                   labourCostPeriodToDate={labourCostPeriodToDate}
                   setCurrentView={setCurrentView}
                   onAddToCart={handleAddToCart}
