@@ -3230,6 +3230,19 @@ export const Reports: React.FC<ReportsProps> = ({
         </div>
       ) : activeTab === 'inventory' ? (
         <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+          <button
+            onClick={() => setActiveTab('weekly_reconciliation')}
+            className="w-full flex items-center justify-between p-5 bg-card-bg border border-border-grey rounded-2xl shadow-sm hover:border-accent transition-colors text-left group"
+          >
+            <div className="flex items-center gap-3">
+              <Scale className="w-5 h-5 text-accent" />
+              <div>
+                <p className="text-sm font-bold text-text-navy">View Weekly Stock Reconciliation</p>
+                <p className="text-xs text-text-muted mt-0.5">Opening + purchases vs. sales, waste, and actual stock counts</p>
+              </div>
+            </div>
+            <ArrowUpRight className="w-5 h-5 text-text-muted group-hover:text-accent transition-colors" />
+          </button>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
             <div className="p-6 bg-card-bg border border-border-grey rounded-2xl shadow-sm">
               <p className="text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2">Inventory Items</p>
