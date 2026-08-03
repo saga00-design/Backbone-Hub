@@ -1055,6 +1055,12 @@ export const InventoryList: React.FC<InventoryListProps> = ({
                             {item.subCategory && (
                                 <span className="text-[10px] font-bold text-text-muted uppercase tracking-widest mt-2 ml-1">{item.subCategory}</span>
                             )}
+                            {item.needsCategoryReview && (
+                                <div className="flex items-center text-[10px] font-bold text-warning uppercase tracking-widest mt-2 ml-1" title="Auto-created from an unmatched invoice line — confirm the real category">
+                                    <Receipt className="h-3 w-3 mr-1" />
+                                    Needs Review
+                                </div>
+                            )}
                             {item.allergies && item.allergies.length > 0 && (
                                 <div className="flex items-center text-[10px] font-bold text-cta uppercase tracking-widest mt-2 ml-1" title={item.allergies.join(', ')}>
                                     <AlertCircle className="h-3 w-3 mr-1" />

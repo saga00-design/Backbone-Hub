@@ -2089,8 +2089,11 @@ const today = londonHour < 6
         const newItem: InventoryItem = {
           id: `inv-${timestamp}-${idx}`,
           name: item.name,
-          category: 'Ingredient',
-          department: 'Food',
+          // Unknown until a human confirms it — never guess Food/Ingredient for an unmatched
+          // line, since it may just as easily be a cleaning product, packaging, or anything else.
+          category: 'Other',
+          needsCategoryReview: true,
+          description: `Auto-created from invoice ${invoice.invoiceNumber || invoice.id} — category not yet confirmed.`,
           inventoryType,
           baseUnit,
           // Catalogued, not stocked — the physical delivery still has to go through Receive

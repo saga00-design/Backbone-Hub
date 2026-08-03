@@ -62,6 +62,7 @@ export interface InventoryItem {
   priceHistory?: { date: string; price: number }[];
   storageLocation?: string;
   isActive: boolean;
+  needsCategoryReview?: boolean; // true when auto-created from an unmatched invoice line with no known category
 }
 
 export interface StockReceipt {
