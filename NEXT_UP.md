@@ -1,5 +1,18 @@
 # Next Up
 
+---
+
+## ⚠️ HIGHEST PRIORITY — pnlEngine.ts COGS bug (confirmed, not yet fixed)
+
+pnlEngine.ts:123 reads dailyClosures.totals.cogs directly instead of computing COGS itself. Since totals.cogs has been £0 on every historical closure (root cause now fixed at the closure level, but historical data predates the fix), Financial Command and Reports' P&L have been showing wrong COGS/margin/profit for their entire existence this session. Fix required: either (a) make pnlEngine.ts compute its own COGS the same correct way closureService.ts now does, or (b) wait for enough NEW closures to run with the fixed matching so totals.cogs starts being real, then confirm pnlEngine reads correctly from that point forward — Elliott should decide which approach once back. This affects every P&L figure shown anywhere in Financial Command/Reports until fixed.
+
+---
+
+- Forecast tab (Reports.tsx) — cogs/profit/margin display should be conditionally hidden/flagged until pnlEngine fix above is confirmed working and at least one new closure has run with real COGS data. Not yet implemented — revenue/order forecasts are fine to show as-is.
+- Ingredient pricing data quality — found at least one item with pricePerUnit: 0.000006 during COGS testing (implausibly small), suggests the same pricing-corruption pattern found and mostly fixed earlier this session may have a few remaining stragglers. Worth a fresh audit pass similar to the earlier 74-item correction.
+
+---
+
 - **Allergy Matrix QR code (blocked, needs a decision first)** — asked to add a QR code on the Allergy Matrix export linking to a customer-facing, read-only, no-login-required view of the same allergy data. Checked thoroughly: no such public/customer-facing view exists anywhere in the app today — no unauthenticated route in App.tsx, no "public" component, and no Firestore rule allowing unauthenticated reads of anything (checked `firestore.rules` directly, only `allow read` rules gated behind auth exist). `qrcode.react` is already an installed dependency but isn't used anywhere yet, so there's no existing pattern to follow either. Building a new public, no-login page is a real product decision (what data exactly is customer-safe to expose, whether it needs its own Firestore security rule carve-out, hosting/routing approach for an unauthenticated page in an otherwise fully-authenticated app) — bigger than "add a QR code," so this wasn't guessed at or built with a placeholder URL. Needs: (1) confirm you actually want a new public page built, (2) decide what it should show (presumably a read-only version of the same allergy matrix table, scoped to just allergy data, nothing else), (3) then the QR code itself is trivial to add on top using the already-installed `qrcode.react`.
 
 - "Shift Quiz" submissions (the `quizSubmissions` collection, shown in Training's "Shift Quiz Analytics" panel) — confirmed the quiz-taking flow lives in Backbone-POS (`QuizChallengeModal.tsx`, triggered after a staff member acknowledges their shift briefing on the POS terminal), not Hub. Hub only displays the results. Not a bug, just noting where it actually lives since it wasn't obvious from Hub's side alone.
