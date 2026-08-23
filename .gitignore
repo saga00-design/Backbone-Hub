@@ -26,3 +26,6 @@ Thumbs.db
 # MemPalace per-project files (issue #185)
 mempalace.yaml
 entities.json
+
+# Stray folder from Windows PowerShell not expanding ~ like bash does
+~/
