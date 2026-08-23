@@ -3,7 +3,7 @@ import { Receipt, Plus, Search, Calendar, User, FileText, Download, Filter, Arro
 import { ExpenseRecord } from '../types';
 import { toast } from 'sonner';
 import { jsPDF } from 'jspdf';
-import 'jspdf-autotable';
+import { autoTable } from 'jspdf-autotable';
 import { motion, AnimatePresence } from 'framer-motion';
 
 interface ExpenseManagerProps {
@@ -119,7 +119,7 @@ export const ExpenseManager: React.FC<ExpenseManagerProps> = ({
       r.paymentMethod
     ]);
 
-    doc.autoTable({
+    autoTable(doc, {
       startY: 40,
       head: [['Date', 'Vendor', 'Category', 'Description', 'Amount', 'Method']],
       body: tableData,

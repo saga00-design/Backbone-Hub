@@ -8,7 +8,7 @@ import { PageHeader } from './PageHeader';
 import { analyzeDiscrepancies } from '../services/geminiService';
 import { convertToBaseUnit, convertFromBaseUnit, CONVERSION_FACTORS, roundTo, getQtyDecimals, getQtyStep } from '../utils/unitConversions';
 import { jsPDF } from "jspdf";
-import autoTable from 'jspdf-autotable';
+import { autoTable } from 'jspdf-autotable';
 import { Save, FileText, CheckCircle, Clock, History as HistoryIcon, ChevronDown, ChevronUp, ScanBarcode, Camera, ClipboardCheck } from 'lucide-react';
 import { BarcodeScanner } from './BarcodeScanner';
 import { ItemSpecsTooltip } from './ItemSpecsTooltip';

@@ -1,4 +1,4 @@
-
+﻿
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { InventoryItem, Recipe, RecipeIngredient, ALLERGIES_LIST, RecipeType, MenuCategory, Unit, RecipeSide, RecipeAddon, SideAddonItem, SetMenu, SetMenuCourse, SetMenuCourseItem } from '../types';
 import { Button } from './Button';
@@ -8,13 +8,24 @@ import { Plus, Trash2, Calculator, ChefHat, PoundSterling, Edit2, AlertCircle, I
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
 import { jsPDF } from 'jspdf';
+import { autoTable } from 'jspdf-autotable';
 import { GoogleGenAI, Type } from "@google/genai";
 import { getAiClient, handleAiError } from '../services/geminiService';
 import html2canvas from 'html2canvas';
 import { getIngredientDetails as getIngredientDetailsShared, calculateTotalCost as calculateTotalCostShared, calculateGP, mapCategoryId } from '../utils/recipeUtils';
 import { convertToBaseUnit, convertFromBaseUnit, formatDisplayValue, areUnitsCompatible, UNIT_TYPES, BASE_UNITS, CONVERSION_FACTORS } from '../utils/unitConversions';
 import { MovementType } from '../types';
-import { db, collection, doc, setDoc, updateDoc, deleteDoc, onSnapshot, handleFirestoreError, OperationType, query, where, LOCATION_ID, cleanObject, writeBatch } from '../firebase';
+import { db, collection, doc, setDoc, updateDoc, deleteDoc, onSnapshot, handleFirestoreError, OperationType, query, where, LOCATION_ID, cleanObject, writeBatch, callGemini } from '../firebase';
+
+interface GeneratedRecipeIdea {
+  dishName: string;
+  description: string;
+  servings: number;
+  ingredients: { name: string; quantity: number; unit: string }[];
+  steps: string[];
+  costSavingTips: string[];
+  pairingSuggestions: string[];
+}
 
 interface MenuRecipesProps {
   inventoryItems: InventoryItem[];
@@ -102,7 +113,8 @@ export const MenuRecipes: React.FC<MenuRecipesProps> = ({
   const [dismissedAllergies, setDismissedAllergies] = useState<Set<string>>(new Set());
   const [imageStyle, setImageStyle] = useState<string>('studio lighting');
   const [recipeIdeaPrompt, setRecipeIdeaPrompt] = useState('');
-  const [recipeIdeaResult, setRecipeIdeaResult] = useState('');
+  const [recipeIdeaResult, setRecipeIdeaResult] = useState<GeneratedRecipeIdea | null>(null);
+  const [recipeIdeaError, setRecipeIdeaError] = useState('');
   const [isGeneratingIdea, setIsGeneratingIdea] = useState(false);
   const [isGeneratingTraining, setIsGeneratingTraining] = useState(false);
   const [isCalculatingCalories, setIsCalculatingCalories] = useState(false);
@@ -298,8 +310,9 @@ export const MenuRecipes: React.FC<MenuRecipesProps> = ({
 
     const detect = async () => {
       try {
-        const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
-        const response = await ai.models.generateContent({
+        // Routed through the callGemini Cloud Function (functions/index.js) so the
+        // Gemini API key stays server-side instead of exposed in the browser bundle.
+        const result = await callGemini({
           model: "gemini-3.1-flash-lite-preview",
           contents: `Given these ingredients: ${ingredientNames.join(', ')}. Which of the following allergies might be present? ${ALLERGIES_LIST.join(', ')}. Return a JSON object where the keys are the allergy names and the values are arrays of ingredient names that contain that allergy. Only include allergies that are present.`,
           config: {
@@ -316,7 +329,8 @@ export const MenuRecipes: React.FC<MenuRecipesProps> = ({
             }
           }
         });
-        const text = response.text || '{}';
+        const callData = result.data as { text: string; images: any[] };
+        const text = callData.text || '{}';
         const detectedMap = JSON.parse(text);
         
         setEditingRecipe(prev => {
@@ -373,8 +387,9 @@ export const MenuRecipes: React.FC<MenuRecipesProps> = ({
           return;
         }
 
-        const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
-        const response = await ai.models.generateContent({
+        // Routed through the callGemini Cloud Function (functions/index.js) so the
+        // Gemini API key stays server-side instead of exposed in the browser bundle.
+        const result = await callGemini({
           model: "gemini-3.1-flash-lite-preview",
           contents: `Given these ingredients: ${allIngredientNames.join(', ')}. Which of the following allergies might be present in each ingredient? ${ALLERGIES_LIST.join(', ')}. Return a JSON object where the keys are the ingredient names and the values are arrays of allergy names present in that ingredient. If an ingredient has no allergies, it can be omitted or have an empty array.`,
           config: {
@@ -382,7 +397,8 @@ export const MenuRecipes: React.FC<MenuRecipesProps> = ({
           }
         });
 
-        const text = response.text || '{}';
+        const callData = result.data as { text: string; images: any[] };
+        const text = callData.text || '{}';
         const detected = JSON.parse(text);
         
         setIngredientAllergies(detected);
@@ -928,11 +944,13 @@ export const MenuRecipes: React.FC<MenuRecipesProps> = ({
         return item ? `${ing.quantity} ${ing.unit || item.unit} of ${item.name}` : '';
       }).filter(Boolean);
 
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
-      const response = await ai.models.generateContent({
+      // Routed through the callGemini Cloud Function (functions/index.js) so the
+      // Gemini API key stays server-side instead of exposed in the browser bundle.
+      const result = await callGemini({
         model: "gemini-3.1-flash-lite-preview",
         contents: `Estimate the total calories for a recipe with these ingredients: ${ingredientDetails.join(', ')}. Return ONLY a JSON object with a single key "calories" containing the estimated integer value. Example: {"calories": 450}`,
         config: {
+          temperature: 0,
           responseMimeType: "application/json",
           responseSchema: {
             type: Type.OBJECT,
@@ -942,8 +960,9 @@ export const MenuRecipes: React.FC<MenuRecipesProps> = ({
           }
         }
       });
-      
-      const text = response.text || '{}';
+
+      const callData = result.data as { text: string; images: any[] };
+      const text = callData.text || '{}';
       const data = JSON.parse(text);
       if (data.calories) {
         setEditingRecipe(prev => ({ ...prev, calories: data.calories }));
@@ -957,7 +976,7 @@ export const MenuRecipes: React.FC<MenuRecipesProps> = ({
     }
   };
 
-const handleSave = async () => {
+  const handleSave = async () => {
   if (!editingRecipe.name || editingRecipe.sellingPrice === undefined) return;
 
   try {
@@ -1044,8 +1063,6 @@ const handleSave = async () => {
     setIsAnalyzingCost(true);
     setCostAnalysisResult(null);
     try {
-      const ai = getAiClient();
-      
       const totalCost = calculateTotalCost(editingRecipe.ingredients);
       const recipeData = editingRecipe.ingredients.map(ing => {
         const item = inventoryItems.find(i => i.id === ing.inventoryItemId);
@@ -1089,12 +1106,15 @@ const handleSave = async () => {
         Keep it conversational, helpful, and actionable. No corporate speak, just real kitchen wisdom.
       `;
 
-      const response = await ai.models.generateContent({
+      // Routed through the callGemini Cloud Function (functions/index.js) so the
+      // Gemini API key stays server-side instead of exposed in the browser bundle.
+      const result = await callGemini({
         model: 'gemini-3.1-flash-lite-preview',
         contents: prompt,
       });
       
-      setCostAnalysisResult(response.text || "No analysis generated.");
+      const callData = result.data as { text: string; images: any[] };
+      setCostAnalysisResult(callData.text || "No analysis generated.");
     } catch (error) {
       const message = handleAiError(error);
       setCostAnalysisResult(message);
@@ -1108,8 +1128,6 @@ const handleSave = async () => {
     setIsAnalyzingSustainability(true);
     setSustainabilityResult(null);
     try {
-      const ai = getAiClient();
-      
       const ingredientDetails = editingRecipe.ingredients.map(ing => {
         const item = inventoryItems.find(i => i.id === ing.inventoryItemId);
         return item ? `${ing.quantity} ${ing.unit || item.unit} of ${item.name}` : '';
@@ -1132,7 +1150,9 @@ const handleSave = async () => {
         }
       `;
 
-      const response = await ai.models.generateContent({
+      // Routed through the callGemini Cloud Function (functions/index.js) so the
+      // Gemini API key stays server-side instead of exposed in the browser bundle.
+      const result = await callGemini({
         model: 'gemini-3.1-flash-lite-preview',
         contents: prompt,
         config: {
@@ -1149,7 +1169,8 @@ const handleSave = async () => {
         }
       });
       
-      const data = JSON.parse(response.text || '{}');
+      const callData = result.data as { text: string; images: any[] };
+      const data = JSON.parse(callData.text || '{}');
       setEditingRecipe(prev => ({
         ...prev,
         sustainabilityScore: data.score,
@@ -1236,7 +1257,6 @@ const handleSave = async () => {
     }
     setIsGeneratingTraining(true);
     try {
-      const ai = getAiClient();
       const ingredientsList = (editingRecipe.ingredients || []).map(ing => {
         const item = inventoryItems.find(i => i.id === ing.inventoryItemId);
         return item ? `${ing.quantity} ${item.unit} ${item.name}` : '';
@@ -1323,7 +1343,9 @@ const handleSave = async () => {
         required: ["name", "nose", "palate", "finish", "aromas"]
       };
 
-      const response = await ai.models.generateContent({
+      // Routed through the callGemini Cloud Function (functions/index.js) so the
+      // Gemini API key stays server-side instead of exposed in the browser bundle.
+      const result = await callGemini({
         model: "gemini-3.1-flash-lite-preview",
         contents: prompt,
         config: {
@@ -1360,7 +1382,8 @@ const handleSave = async () => {
         }
       });
 
-      const text = response.text || '{}';
+      const callData = result.data as { text: string; images: any[] };
+      const text = callData.text || '{}';
       const cleanText = text.replace(/```json/g, '').replace(/```/g, '').trim();
       const data = JSON.parse(cleanText);
       
@@ -1442,8 +1465,9 @@ const handleSave = async () => {
       const base64Data = compressedBase64.split(',')[1];
       const mimeType = 'image/jpeg'; // We compressed to jpeg
 
-      const ai = getAiClient();
-      const response = await ai.models.generateContent({
+      // Routed through the callGemini Cloud Function (functions/index.js) so the
+      // Gemini API key stays server-side instead of exposed in the browser bundle.
+      const result = await callGemini({
         model: 'gemini-2.5-flash-image',
         contents: {
           parts: [
@@ -1460,14 +1484,12 @@ const handleSave = async () => {
         },
       });
 
+      const callData = result.data as { text: string; images: { data: string; mimeType: string }[] };
       let enhancedImageUrl = compressedBase64; // fallback
-      for (const part of response.candidates?.[0]?.content?.parts || []) {
-        if (part.inlineData) {
-          enhancedImageUrl = `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
-          break;
-        }
+      if (callData.images && callData.images.length > 0) {
+        const img = callData.images[0];
+        enhancedImageUrl = `data:${img.mimeType};base64,${img.data}`;
       }
-
       // Compress the enhanced image too
       const finalImageUrl = await compressImage(enhancedImageUrl);
       setEditingRecipe(prev => ({ ...prev, imageUrl: finalImageUrl }));
@@ -1494,8 +1516,9 @@ const handleSave = async () => {
       const base64Data = currentImageBase64.split(',')[1];
       const mimeType = 'image/jpeg';
 
-      const ai = getAiClient();
-      const response = await ai.models.generateContent({
+      // Routed through the callGemini Cloud Function (functions/index.js) so the
+      // Gemini API key stays server-side instead of exposed in the browser bundle.
+      const result = await callGemini({
         model: 'gemini-2.5-flash-image',
         contents: {
           parts: [
@@ -1512,12 +1535,11 @@ const handleSave = async () => {
         },
       });
 
+      const callData = result.data as { text: string; images: { data: string; mimeType: string }[] };
       let editedImageUrl = currentImageBase64; // fallback
-      for (const part of response.candidates?.[0]?.content?.parts || []) {
-        if (part.inlineData) {
-          editedImageUrl = `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
-          break;
-        }
+      if (callData.images && callData.images.length > 0) {
+        const img = callData.images[0];
+        editedImageUrl = `data:${img.mimeType};base64,${img.data}`;
       }
 
       const finalImageUrl = await compressImage(editedImageUrl);
@@ -1893,7 +1915,7 @@ const handleSave = async () => {
         return [item?.name || 'Unknown', `${Number(display.value.toFixed(3))} ${display.unit}`];
       });
 
-      (doc as any).autoTable({
+      autoTable(doc, {
         startY: yPos,
         head: [['Ingredient Name', 'Measurement']],
         body: ingredientRows,
@@ -2044,36 +2066,157 @@ const handleSave = async () => {
     }
   };
 
+  const handleDownloadRecipeIdeaPdf = () => {
+    if (!recipeIdeaResult) return;
+    const doc = new jsPDF();
+
+    doc.setFontSize(20);
+    doc.setFont("helvetica", "bold");
+    doc.text(recipeIdeaResult.dishName, 14, 20);
+
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "normal");
+    const descLines = doc.splitTextToSize(recipeIdeaResult.description, 180);
+    doc.text(descLines, 14, 28);
+
+    let currentY = 28 + (descLines.length * 5) + 6;
+    doc.setFontSize(9);
+    doc.text(`Servings: ${recipeIdeaResult.servings}`, 14, currentY);
+    currentY += 8;
+
+    autoTable(doc, {
+      startY: currentY,
+      head: [['Ingredient', 'Quantity', 'Unit']],
+      body: recipeIdeaResult.ingredients.map(ing => [ing.name, String(ing.quantity), ing.unit]),
+      theme: 'grid',
+      headStyles: { fillColor: [41, 128, 185], textColor: 255 },
+      alternateRowStyles: { fillColor: [245, 245, 245] },
+    });
+
+    currentY = (doc as any).lastAutoTable.finalY + 12;
+    doc.setFontSize(13);
+    doc.setFont("helvetica", "bold");
+    doc.text("Method", 14, currentY);
+    currentY += 7;
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "normal");
+    recipeIdeaResult.steps.forEach((step, idx) => {
+      const stepLines = doc.splitTextToSize(`${idx + 1}. ${step}`, 180);
+      if (currentY + (stepLines.length * 5) > 280) {
+        doc.addPage();
+        currentY = 20;
+      }
+      doc.text(stepLines, 14, currentY);
+      currentY += (stepLines.length * 5) + 3;
+    });
+
+    if (recipeIdeaResult.costSavingTips?.length) {
+      currentY += 5;
+      if (currentY > 260) { doc.addPage(); currentY = 20; }
+      doc.setFontSize(13);
+      doc.setFont("helvetica", "bold");
+      doc.text("Cost-Saving Tips", 14, currentY);
+      currentY += 7;
+      doc.setFontSize(10);
+      doc.setFont("helvetica", "normal");
+      recipeIdeaResult.costSavingTips.forEach(tip => {
+        const lines = doc.splitTextToSize(`- ${tip}`, 180);
+        if (currentY + (lines.length * 5) > 280) { doc.addPage(); currentY = 20; }
+        doc.text(lines, 14, currentY);
+        currentY += (lines.length * 5) + 3;
+      });
+    }
+
+    if (recipeIdeaResult.pairingSuggestions?.length) {
+      currentY += 5;
+      if (currentY > 260) { doc.addPage(); currentY = 20; }
+      doc.setFontSize(13);
+      doc.setFont("helvetica", "bold");
+      doc.text("Pairing Suggestions", 14, currentY);
+      currentY += 7;
+      doc.setFontSize(10);
+      doc.setFont("helvetica", "normal");
+      recipeIdeaResult.pairingSuggestions.forEach(pair => {
+        const lines = doc.splitTextToSize(`- ${pair}`, 180);
+        if (currentY + (lines.length * 5) > 280) { doc.addPage(); currentY = 20; }
+        doc.text(lines, 14, currentY);
+        currentY += (lines.length * 5) + 3;
+      });
+    }
+
+    const safeName = recipeIdeaResult.dishName.replace(/[^a-z0-9]+/gi, '_').toLowerCase();
+    doc.save(`recipe_${safeName}.pdf`);
+  };
+
   const handleGenerateRecipeIdea = async () => {
     if (!recipeIdeaPrompt) return;
     setIsGeneratingIdea(true);
+    setRecipeIdeaError('');
     try {
-      const ai = getAiClient();
       const prompt = `
-        Hi! I'm working on a new idea and I'd love your expert culinary input. 
-        I'm looking for some creative recipe ideas, cost-saving tips, and perfect pairings.
-        
-        Context: ${recipeIdeaPrompt}
+        You are a passionate, expert head chef. Based on the brief below, invent ONE complete,
+        original dish that could realistically be added to the menu using ingredients already
+        in stock wherever possible.
+
+        Brief: ${recipeIdeaPrompt}
         Current Inventory: ${inventoryItems.map(i => `${i.name} (${i.quantity} ${i.unit})`).join(', ')}
-        
-        Could you give me a detailed, friendly, and actionable response? 
-        Think like a passionate head chef sharing their knowledge. 
-        I'd love to hear about:
-        - Some exciting recipe concepts we could try.
-        - How we can keep things cost-effective using what we have.
-        - What drinks or sides would really make these dishes shine.
-        
-        Use a warm, encouraging tone and format it clearly so it's easy to read. Thanks a lot!
+
+        Rules for the ingredient list:
+        - Every solid/dry ingredient quantity MUST be in grams (g).
+        - Every liquid ingredient quantity MUST be in millilitres (ml).
+        - Whole/countable items (e.g. eggs, limes) may use "pcs" as the unit.
+        - Be precise and realistic with quantities for a single restaurant portion,
+          then state servings separately.
       `;
-      
-      const response = await ai.models.generateContent({
+
+      // Routed through the callGemini Cloud Function (functions/index.js) so the
+      // Gemini API key stays server-side instead of exposed in the browser bundle.
+      const result = await callGemini({
         model: 'gemini-3-flash-preview',
         contents: prompt,
+        config: {
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              dishName: { type: Type.STRING },
+              description: { type: Type.STRING, description: 'One or two sentence appetising description.' },
+              servings: { type: Type.INTEGER },
+              ingredients: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    name: { type: Type.STRING },
+                    quantity: { type: Type.NUMBER },
+                    unit: { type: Type.STRING, enum: ['g', 'ml', 'pcs'] },
+                  },
+                },
+              },
+              steps: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING },
+                description: 'Numbered method steps, one instruction per array entry, no numbering prefix.',
+              },
+              costSavingTips: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING },
+              },
+              pairingSuggestions: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING },
+              },
+            },
+          },
+        },
       });
-      setRecipeIdeaResult(response.text || 'No suggestions generated.');
+      const callData = result.data as { text: string; images: any[] };
+      const parsed: GeneratedRecipeIdea = JSON.parse(callData.text || '{}');
+      setRecipeIdeaResult(parsed);
     } catch (error) {
       const message = handleAiError(error);
-      setRecipeIdeaResult(message);
+      setRecipeIdeaError(message);
+      setRecipeIdeaResult(null);
     } finally {
       setIsGeneratingIdea(false);
     }
@@ -3031,9 +3174,70 @@ const handleSave = async () => {
                   Generate Analysis
                 </Button>
                 
+                {recipeIdeaError && (
+                  <div className="mt-6 p-4 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700">
+                    {recipeIdeaError}
+                  </div>
+                )}
+
                 {recipeIdeaResult && (
-                  <div className="mt-6 p-6 bg-main-bg rounded-2xl border border-border-grey prose prose-invert prose-sm max-w-none overflow-auto max-h-[400px] shadow-inner">
-                    <div className="text-text-navy" dangerouslySetInnerHTML={{ __html: recipeIdeaResult.replace(/\n/g, '<br/>') }} />
+                  <div className="mt-6 p-6 bg-main-bg rounded-2xl border border-border-grey shadow-inner space-y-5 max-h-[500px] overflow-auto">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <h4 className="text-lg font-bold text-text-navy">{recipeIdeaResult.dishName}</h4>
+                        <p className="text-xs text-text-muted mt-1">{recipeIdeaResult.description}</p>
+                        <p className="text-[10px] text-text-muted mt-1 uppercase tracking-widest font-bold">Serves {recipeIdeaResult.servings}</p>
+                      </div>
+                      <Button
+                        onClick={handleDownloadRecipeIdeaPdf}
+                        className="shrink-0 bg-accent hover:opacity-90 text-white rounded-xl px-3 py-2 text-[10px] font-bold uppercase tracking-widest flex items-center gap-1.5"
+                      >
+                        <Download className="w-3.5 h-3.5" /> PDF
+                      </Button>
+                    </div>
+
+                    <div>
+                      <h5 className="text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2">Ingredients</h5>
+                      <ul className="space-y-1">
+                        {recipeIdeaResult.ingredients.map((ing, idx) => (
+                          <li key={idx} className="flex justify-between text-sm text-text-navy border-b border-border-grey/50 pb-1">
+                            <span>{ing.name}</span>
+                            <span className="font-mono text-text-muted">{ing.quantity}{ing.unit}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+
+                    <div>
+                      <h5 className="text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2">Method</h5>
+                      <ol className="space-y-2 list-decimal list-inside">
+                        {recipeIdeaResult.steps.map((step, idx) => (
+                          <li key={idx} className="text-sm text-text-navy">{step}</li>
+                        ))}
+                      </ol>
+                    </div>
+
+                    {recipeIdeaResult.costSavingTips?.length > 0 && (
+                      <div>
+                        <h5 className="text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2">Cost-Saving Tips</h5>
+                        <ul className="space-y-1 list-disc list-inside">
+                          {recipeIdeaResult.costSavingTips.map((tip, idx) => (
+                            <li key={idx} className="text-sm text-text-navy">{tip}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {recipeIdeaResult.pairingSuggestions?.length > 0 && (
+                      <div>
+                        <h5 className="text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2">Pairing Suggestions</h5>
+                        <ul className="space-y-1 list-disc list-inside">
+                          {recipeIdeaResult.pairingSuggestions.map((pair, idx) => (
+                            <li key={idx} className="text-sm text-text-navy">{pair}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

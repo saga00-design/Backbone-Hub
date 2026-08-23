@@ -21,6 +21,15 @@ service cloud.firestore {
       return data.locationId == "loc_camden" || data.siteId == "loc_camden";
     }
 
+    // FIX: staff editing their own profile can no longer change their own role,
+    // permissions, or PIN. Only a manager/admin can change those fields.
+    function isSelfEditWithoutPrivilegeEscalation() {
+      let unchanged = ['role', 'permissions', 'pin', 'isManager', 'isAdmin'];
+      return isAuthenticated() &&
+        request.auth.uid == resource.id &&
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny(unchanged);
+    }
+
     // ── User profiles ─────────────────────────────────────────
     match /users/{userId} {
       allow read, write: if isAuthenticated() && request.auth.uid == userId;
@@ -30,9 +39,14 @@ service cloud.firestore {
     }
 
     // ── Staff Profiles ────────────────────────────────────────
+    // FIX (CN-002/CN-003): staff can only read their own record; managers can
+    // read everyone. Staff can update their own non-privileged fields (name,
+    // phone, availability etc.) but cannot touch role/permissions/pin.
     match /staffProfiles/{staffId} {
-      allow read: if isAuthenticated();
-      allow write: if isManager() || (isAuthenticated() && request.auth.uid == staffId);
+      allow read: if isAuthenticated() && (request.auth.uid == staffId || isManager());
+      allow create: if isManager();
+      allow update: if isManager() || isSelfEditWithoutPrivilegeEscalation();
+      allow delete: if isManager();
     }
 
     // ── POS Orders ────────────────────────────────────────────
@@ -92,7 +106,7 @@ service cloud.firestore {
       allow read, write: if isAuthenticated();
     }
 
-    // ── HUB collections ───────────────────────────────────────
+    // ── HUB collections (operational — left open for staff use) ─
     match /inventory/{docId} {
       allow read, write: if isAuthenticated();
     }
@@ -109,8 +123,10 @@ service cloud.firestore {
       allow read, write: if isAuthenticated();
     }
 
+    // FIX: supplier records + pricing are commercially sensitive — manager only.
     match /suppliers/{docId} {
-      allow read, write: if isAuthenticated();
+      allow read: if isManager();
+      allow write: if isManager();
     }
 
     match /staff/{docId} {
@@ -123,19 +139,23 @@ service cloud.firestore {
     }
 
     match /salesImports/{docId} {
-      allow read, write: if isAuthenticated();
+      allow read: if isManager();
+      allow write: if isManager();
     }
 
     match /waste/{docId} {
       allow read, write: if isAuthenticated();
     }
 
+    // FIX (CN-001): financial data — manager only, both read and write.
     match /expenses/{docId} {
-      allow read, write: if isAuthenticated();
+      allow read: if isManager();
+      allow write: if isManager();
     }
 
     match /invoices/{docId} {
-      allow read, write: if isAuthenticated();
+      allow read: if isManager();
+      allow write: if isManager();
     }
 
     match /orders/{docId} {
@@ -147,7 +167,8 @@ service cloud.firestore {
     }
 
     match /supplierPriceHistory/{docId} {
-      allow read, write: if isAuthenticated();
+      allow read: if isManager();
+      allow write: if isManager();
     }
 
     match /stockMovements/{docId} {
@@ -155,35 +176,42 @@ service cloud.firestore {
       allow update, delete: if isManager();
     }
 
-    // ── Financial ─────────────────────────────────────────────
+    // ── Financial (CN-001 fix: manager only) ───────────────────
     match /monthlyTargets/{docId} {
-      allow read, write: if isAuthenticated();
+      allow read: if isManager();
+      allow write: if isManager();
     }
 
     match /cashflow/{docId} {
-      allow read, write: if isAuthenticated();
+      allow read: if isManager();
+      allow write: if isManager();
     }
 
     match /liabilities/{docId} {
-      allow read, write: if isAuthenticated();
+      allow read: if isManager();
+      allow write: if isManager();
     }
 
     match /weeklyCostEntries/{docId} {
-      allow read, write: if isAuthenticated();
+      allow read: if isManager();
+      allow write: if isManager();
     }
 
-    // ── VAT ───────────────────────────────────────────────────
+    // ── VAT (manager only) ──────────────────────────────────────
     match /vatTracker/{docId} {
-      allow read, write: if isAuthenticated();
+      allow read: if isManager();
+      allow write: if isManager();
     }
 
     match /vatReturns/{docId} {
-      allow read, write: if isAuthenticated();
+      allow read: if isManager();
+      allow write: if isManager();
     }
 
     // ── Menu Engineering ──────────────────────────────────────
     match /menuEngineering/{docId} {
-      allow read, write: if isAuthenticated();
+      allow read: if isManager();
+      allow write: if isManager();
     }
 
     // ── Labour & Staffing ─────────────────────────────────────
@@ -191,23 +219,20 @@ service cloud.firestore {
       allow read, write: if isAuthenticated();
     }
 
-    // NI/Pension/Holiday Accrual — structure-only collection for Labour Import's Review
-    // feature (components/LabourIntelligence.tsx). Figures are manually entered pending a
-    // future real payroll import, or auto-filled from payrollCentreWeeks below once real
-    // Payroll Centre data exists for that employee/Period.
+    // FIX: payroll figures — manager only. Staff should not see wage cost data.
     match /payrollAccruals/{docId} {
-      allow read, write: if isAuthenticated();
+      allow read: if isManager();
+      allow write: if isManager();
     }
 
-    // TTP "Payroll Centre" real weekly payroll import — one doc per employee per week. Real
-    // cost source of truth that wins over the Rota-based hours x rate estimate for any week
-    // it covers (see services/labourImportService.ts's mergeRealPayrollData()).
     match /payrollCentreWeeks/{docId} {
-      allow read, write: if isAuthenticated();
+      allow read: if isManager();
+      allow write: if isManager();
     }
 
     match /labourBudgets/{docId} {
-      allow read, write: if isAuthenticated();
+      allow read: if isManager();
+      allow write: if isManager();
     }
 
     match /rotas/{docId} {
@@ -219,7 +244,8 @@ service cloud.firestore {
     }
 
     match /staffingForecasts/{docId} {
-      allow read, write: if isAuthenticated();
+      allow read: if isManager();
+      allow write: if isManager();
     }
 
     match /clockInRecords/{docId} {
@@ -227,12 +253,15 @@ service cloud.firestore {
     }
 
     // ── Staff Performance & Training ──────────────────────────
+    // FIX: staff can see their own performance/certs; manager sees everyone.
     match /staffPerformance/{docId} {
-      allow read, write: if isAuthenticated();
+      allow read: if isManager() || (isAuthenticated() && resource.data.staffId == request.auth.uid);
+      allow write: if isManager();
     }
 
     match /staffCertifications/{docId} {
-      allow read, write: if isAuthenticated();
+      allow read: if isManager() || (isAuthenticated() && resource.data.staffId == request.auth.uid);
+      allow write: if isManager();
     }
 
     // ── Quiz Bank (HUB-managed, POS-consumed) ─────────────────
@@ -363,9 +392,10 @@ service cloud.firestore {
     }
 
     // ── Settings & Diagnostics ────────────────────────────────
+    // FIX: settings were writable by any authenticated staff member.
     match /settings/{docId} {
       allow read: if isAuthenticated();
-      allow write: if isAuthenticated();
+      allow write: if isManager();
     }
 
     match /diagnostics/{docId} {

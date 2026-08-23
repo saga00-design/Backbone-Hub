@@ -12,7 +12,7 @@ import { doc, setDoc, collection } from 'firebase/firestore';
 import { toast } from 'sonner';
 
 import { jsPDF } from 'jspdf';
-import autoTable from 'jspdf-autotable';
+import { autoTable } from 'jspdf-autotable';
 
 interface VATReturnExportProps {
   vatTrackers: VATTracker[];

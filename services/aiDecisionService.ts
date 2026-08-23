@@ -3,10 +3,8 @@ import {
   DailyClosure, POSOrder, InventoryItem,
   Liability, Forecast, LabourShift
 } from "../types";
-import { db, LOCATION_ID } from "../firebase";
+import { db, LOCATION_ID, callGemini } from "../firebase";
 import { collection, addDoc } from "firebase/firestore";
-
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY as string });
 
 // Grounding context computed by services/pnlEngine.ts — passed in so recommendations are based
 // on the same correctly-scoped, deduplicated figures shown on screen, not the model's own
@@ -50,7 +48,9 @@ export const generateFinancialInsights = async (
       inventoryHealth: inventory.filter(i => i.quantity <= i.minStockLevel).map(i => ({ name: i.name, stock: i.quantity, min: i.minStockLevel }))
     };
 
-    const response = await ai.models.generateContent({
+    // Routed through the callGemini Cloud Function (functions/index.js) so the
+    // Gemini API key stays server-side instead of exposed in the browser bundle.
+    const callResult = await callGemini({
       model: "gemini-3.1-flash-lite-preview",
       contents: `Analyze the provided financial and operational data for ${date}: ${JSON.stringify(context)}. Generate concrete, actionable recommendations grounded strictly in the numbers given — do not invent figures not present in the context.`,
       config: {
@@ -91,7 +91,8 @@ export const generateFinancialInsights = async (
       }
     });
 
-    const result = JSON.parse(response.text || '{"actions":[]}');
+    const callData = callResult.data as { text: string; images: any[] };
+    const result = JSON.parse(callData.text || '{"actions":[]}');
 
     // Save to Firestore — cached there until the next "Run AI Diagnostic" click adds more.
     if (result.actions) {

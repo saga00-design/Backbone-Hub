@@ -1,5 +1,5 @@
 import { jsPDF } from 'jspdf';
-import 'jspdf-autotable';
+import { autoTable } from 'jspdf-autotable';
 import { DailyClosure } from '../types';
 
 export const generateFinancialPackPDF = (
@@ -37,7 +37,7 @@ export const generateFinancialPackPDF = (
     ['POS vs HUB Variance', `£${metrics.variance.toFixed(2)}`]
   ];
 
-  doc.autoTable({
+  autoTable(doc, {
     startY: 50,
     head: [kpiData[0]],
     body: kpiData.slice(1),
@@ -56,7 +56,7 @@ export const generateFinancialPackPDF = (
     `${((c.totals?.labour || 0) / (c.totals?.netSales || 1) * 100).toFixed(1)}%`
   ]);
 
-  doc.autoTable({
+  autoTable(doc, {
     startY: lastY + 5,
     head: [['Date', 'Gross Sales', 'Net Revenue', 'Labour %']],
     body: closureData,

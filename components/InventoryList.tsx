@@ -1,10 +1,10 @@
-
+﻿
 import React, { useState, useEffect, useRef } from 'react';
 import { InventoryItem, InventoryCategory, OrderItem, Unit, InventoryType, Recipe } from '../types';
 import {
   Search, Filter, Plus, Calendar, AlertTriangle, Pencil, Clock, Tag,
   HeartCrack, TrendingUp, AlertCircle, Minus, Building, Settings2, Check, X, Receipt,
-  Download, Upload, FileText, Trash2, Package
+  Download, Upload, FileText, Trash2, Package, Sparkles, Loader2, PackageX, CalendarClock
 } from 'lucide-react';
 import Papa from 'papaparse';
 import { Button } from './Button';
@@ -14,6 +14,8 @@ import { toast } from 'sonner';
 import { DEFAULT_DEPARTMENTS } from '../constants';
 import { formatPricePerUnit, convertToBaseUnit, formatPacksLabel, formatPackSize, formatPriceItem, formatCaseBoxSackLabel, toSafeNumber } from '../utils/unitConversions';
 import { ItemSpecsTooltip } from './ItemSpecsTooltip';
+import { generateInventoryInsights } from '../services/geminiService';
+import { AiInsight } from '../types';
 
 interface InventoryListProps {
   items: InventoryItem[];
@@ -49,7 +51,25 @@ export const InventoryList: React.FC<InventoryListProps> = ({
   const [expiryFilter, setExpiryFilter] = useState('All');
   const [stockLevelFilter, setStockLevelFilter] = useState<'All' | 'Low Stock' | 'Out of Stock' | 'Healthy'>('All');
   const [vatFilter, setVatFilter] = useState<'All' | 'Has VAT' | 'No VAT' | 'Missing'>('All');
-  const [activeTab, setActiveTab] = useState<'List' | 'Restock'>('List');
+  const [activeTab, setActiveTab] = useState<'List' | 'Restock' | 'Insights'>('List');
+  const [aiInsights, setAiInsights] = useState<AiInsight[]>([]);
+  const [isLoadingInsights, setIsLoadingInsights] = useState(false);
+  const [insightsError, setInsightsError] = useState('');
+  const [hasRunInsights, setHasRunInsights] = useState(false);
+
+  const handleRunAiInsights = async () => {
+    setIsLoadingInsights(true);
+    setInsightsError('');
+    try {
+      const insights = await generateInventoryInsights(items);
+      setAiInsights(insights);
+      setHasRunInsights(true);
+    } catch (error) {
+      setInsightsError('Could not generate insights. Please try again.');
+    } finally {
+      setIsLoadingInsights(false);
+    }
+  };
   const [sortField, setSortField] = useState<string>('Item');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
@@ -506,6 +526,13 @@ export const InventoryList: React.FC<InventoryListProps> = ({
             </span>
           )}
         </button>
+        <button 
+          onClick={() => setActiveTab('Insights')}
+          className={`flex items-center gap-2 px-4 py-2 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all ${activeTab === 'Insights' ? 'bg-accent text-white shadow-lg' : 'text-text-muted hover:bg-gray-100'}`}
+        >
+          <Sparkles className="w-3 h-3" />
+          AI Insights
+        </button>
         {activeTab === 'Restock' && filteredItems.length > 0 && (
           <Button 
             onClick={() => {
@@ -535,6 +562,72 @@ export const InventoryList: React.FC<InventoryListProps> = ({
         )}
       </div>
 
+      {activeTab === 'Insights' ? (
+        <div className="p-8">
+          <div className="flex items-center justify-between mb-6">
+            <div>
+              <h3 className="text-lg font-bold text-text-navy flex items-center gap-2"><Sparkles className="w-4 h-4 text-accent" /> AI Inventory Insights</h3>
+              <p className="text-xs text-text-muted mt-1">AI review of stock levels, reorder needs, slow movers, and upcoming expiries.</p>
+            </div>
+            <Button
+              onClick={handleRunAiInsights}
+              isLoading={isLoadingInsights}
+              className="bg-accent hover:opacity-90 text-white rounded-xl px-5 py-2.5 text-[10px] font-bold uppercase tracking-widest flex items-center gap-2"
+            >
+              <Sparkles className="w-3.5 h-3.5" /> {hasRunInsights ? "Refresh Insights" : "Run AI Insights"}
+            </Button>
+          </div>
+
+          {insightsError && (
+            <div className="p-4 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700 mb-4">{insightsError}</div>
+          )}
+
+          {isLoadingInsights && (
+            <div className="flex items-center justify-center py-16 text-text-muted">
+              <Loader2 className="w-5 h-5 animate-spin mr-2" /> Analyzing inventory...
+            </div>
+          )}
+
+          {!isLoadingInsights && hasRunInsights && aiInsights.length === 0 && !insightsError && (
+            <div className="text-center py-16">
+              <Check className="w-10 h-10 text-green-500 mx-auto mb-3" />
+              <p className="text-sm font-bold text-text-navy">All clear — nothing needs attention right now.</p>
+            </div>
+          )}
+
+          {!isLoadingInsights && !hasRunInsights && (
+            <div className="text-center py-16">
+              <Sparkles className="w-10 h-10 text-accent/30 mx-auto mb-3" />
+              <p className="text-sm text-text-muted">Click "Run AI Insights" to analyze your current stock.</p>
+            </div>
+          )}
+
+          {!isLoadingInsights && aiInsights.length > 0 && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {aiInsights.map((insight, idx) => {
+                const iconMap = { reorder: AlertCircle, expiry: CalendarClock, slow_moving: PackageX, anomaly: AlertTriangle };
+                const colorMap = { high: "border-red-300 bg-red-50", medium: "border-amber-300 bg-amber-50", low: "border-border-grey bg-main-bg" };
+                const Icon = iconMap[insight.type] || AlertCircle;
+                return (
+                  <div key={idx} className={`p-4 rounded-xl border ${colorMap[insight.priority] || colorMap.low}`}>
+                    <div className="flex items-start gap-3">
+                      <Icon className="w-4 h-4 mt-0.5 shrink-0 text-text-navy" />
+                      <div>
+                        <p className="text-sm font-bold text-text-navy">{insight.item}</p>
+                        <p className="text-xs text-text-muted mt-1">{insight.message}</p>
+                        {insight.action && (
+                          <p className="text-[10px] font-bold text-accent uppercase tracking-widest mt-2">{insight.action}</p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      ) : (
+      <>
       <div className="p-6 border-b border-border-grey bg-secondary-surface flex flex-col lg:flex-row gap-6">
         <SearchInput
           value={searchTerm}
@@ -1338,6 +1431,8 @@ export const InventoryList: React.FC<InventoryListProps> = ({
           </div>
         )}
       </div>
+      </>
+      )}
     </div>
   );
 };

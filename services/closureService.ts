@@ -1,4 +1,4 @@
-import { 
+﻿import { 
   Timestamp
 } from 'firebase/firestore';
 import { 
@@ -27,7 +27,8 @@ import { generateForecast } from './predictionService';
 import { processStaffPerformance } from './staffPerformanceService';
 import { runMenuEngineering } from './menuEngineeringService';
 import { Recipe, InventoryItem } from '../types';
-import { getAiClient, handleAiError } from './geminiService';
+import { handleAiError } from './geminiService';
+import { callGemini } from '../firebase';
 import { buildRecipeIndexes, resolveOrderItem } from '../utils/recipeUtils';
 
 /**
@@ -736,7 +737,6 @@ async function generateDailyAiInsight(
   lowStockItems: { name: string; qty: number; min: number; supplier?: string }[]
 ): Promise<string> {
   try {
-    const ai = getAiClient();
     const { totals, insights, date } = closure;
 
     const prompt = `Act as an expert Restaurant Operations & Supply Chain Manager.
@@ -760,12 +760,15 @@ async function generateDailyAiInsight(
 
     Format with bold headers and clear bullet points. Be ruthless about operational efficiency.`;
 
-    const response = await ai.models.generateContent({
+    // Routed through the callGemini Cloud Function (functions/index.js) so the
+    // Gemini API key stays server-side instead of exposed in the browser bundle.
+    const result = await callGemini({
       model: 'gemini-3.1-flash-lite-preview',
       contents: prompt,
     });
+    const data = result.data as { text: string; images: any[] };
 
-    return response.text || '';
+    return data.text || '';
   } catch (error) {
     console.warn("[Closure] AI insight generation failed:", handleAiError(error));
     return '';

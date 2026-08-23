@@ -9,6 +9,19 @@
       "database": "ai-studio-ed2c0f12-89cb-43e1-8002-769e61587403"
     }
   ],
+  "functions": [
+    {
+      "source": "functions",
+      "codebase": "default",
+      "ignore": [
+        "node_modules",
+        ".git",
+        "firebase-debug.log",
+        "firebase-debug.*.log",
+        "*.local"
+      ]
+    }
+  ],
   "hosting": {
     "public": "dist",
     "ignore": [

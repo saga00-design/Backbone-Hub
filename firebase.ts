@@ -1,4 +1,5 @@
 import { initializeApp } from 'firebase/app';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 import { 
   getAuth, 
   GoogleAuthProvider, 
@@ -80,6 +81,9 @@ try {
 export const auth = getAuth(app);
 setPersistence(auth, browserLocalPersistence).catch(console.error);
 export const googleProvider = new GoogleAuthProvider();
+
+export const functions = getFunctions(app, 'us-central1');
+export const callGemini = httpsCallable(functions, 'callGemini');
 
 // ─────────────────────────────────────────────────────────────
 // Identity constants

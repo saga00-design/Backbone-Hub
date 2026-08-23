@@ -1,5 +1,5 @@
 import { jsPDF } from 'jspdf';
-import 'jspdf-autotable';
+import { autoTable } from 'jspdf-autotable';
 import { DailyClosure } from '../types';
 
 // Extend jsPDF with autotable types
@@ -73,7 +73,7 @@ export const generateClosurePDF = (closure: DailyClosure) => {
     summaryData.push(['Gross Margin', `${(closure.profitReport.grossMargin || 0).toFixed(1)}%`]);
   }
 
-  doc.autoTable({
+  autoTable(doc, {
     startY: 70,
     head: [['Description', 'Amount']],
     body: summaryData,
@@ -96,7 +96,7 @@ export const generateClosurePDF = (closure: DailyClosure) => {
     `£${(amount || 0).toFixed(2)}`
   ]);
 
-  doc.autoTable({
+  autoTable(doc, {
     startY: currentY + 5,
     head: [['Method', 'Amount']],
     body: paymentData,
@@ -125,7 +125,7 @@ export const generateClosurePDF = (closure: DailyClosure) => {
       `£${(s.averageOrderValue || 0).toFixed(2)}`
     ]);
 
-    doc.autoTable({
+    autoTable(doc, {
       startY: currentY + 5,
       head: [['Name', 'Orders', 'Sales', 'Service', 'Avg Order']],
       body: staffData,
@@ -156,7 +156,7 @@ export const generateClosurePDF = (closure: DailyClosure) => {
       h.orderCount
     ]);
 
-    doc.autoTable({
+    autoTable(doc, {
       startY: currentY + 5,
       head: [['Hour', 'Sales', 'Orders']],
       body: hourlyData,

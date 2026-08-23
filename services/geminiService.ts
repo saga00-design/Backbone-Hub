@@ -1,5 +1,6 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
+import { callGemini } from '../firebase';
 import { AiInsight, InventoryItem } from '../types';
 
 export const getAiClient = () => {
@@ -76,8 +77,6 @@ export const handleAiError = (error: any) => {
 };
 
 export const parseInvoiceImage = async (base64Image: string, mimeType: string, retries = 2) => {
-  const ai = getAiClient();
-  
   const prompt = `
     Analyze this invoice image and extract the line items.
     Return a JSON object with a list of items. 
@@ -95,7 +94,9 @@ export const parseInvoiceImage = async (base64Image: string, mimeType: string, r
   let lastError: any;
   for (let i = 0; i <= retries; i++) {
     try {
-      const response = await ai.models.generateContent({
+      // Routed through the callGemini Cloud Function (functions/index.js) so the
+      // Gemini API key stays server-side instead of exposed in the browser bundle.
+      const result = await callGemini({
         model: 'gemini-3.1-flash-lite-preview',
         contents: {
           parts: [
@@ -127,7 +128,8 @@ export const parseInvoiceImage = async (base64Image: string, mimeType: string, r
         }
       });
 
-      return JSON.parse(response.text || '{}');
+      const data = result.data as { text: string; images: any[] };
+      return JSON.parse(data.text || '{}');
     } catch (error) {
       lastError = error;
       console.warn(`AI analysis attempt ${i + 1} failed:`, error);
@@ -150,10 +152,7 @@ export const parseInvoiceImage = async (base64Image: string, mimeType: string, r
 
   throw new Error(handleAiError(lastError));
 };
-
 export const analyzeDiscrepancies = async (items: {name: string, expected: number, actual: number, unit: string}[]) => {
-  const ai = getAiClient();
-  
   const prompt = `
     Analyze the following stock discrepancies and write a conversational, human-like summary. 
     Imagine you are an experienced, helpful operations manager talking directly to your team. 
@@ -171,16 +170,18 @@ export const analyzeDiscrepancies = async (items: {name: string, expected: numbe
   `;
 
   try {
-    const response = await ai.models.generateContent({
+    // Routed through the callGemini Cloud Function (functions/index.js) so the
+    // Gemini API key stays server-side instead of exposed in the browser bundle.
+    const result = await callGemini({
       model: 'gemini-3.1-flash-lite-preview',
       contents: prompt,
     });
-    return response.text || "No analysis generated.";
+    const data = result.data as { text: string; images: any[] };
+    return data.text || "No analysis generated.";
   } catch (error) {
     return handleAiError(error);
   }
 };
-
 export const getChatSession = (systemInstruction: string) => {
   const ai = getAiClient();
   return ai.chats.create({
@@ -192,8 +193,6 @@ export const getChatSession = (systemInstruction: string) => {
 };
 
 export const generateInventoryInsights = async (items: InventoryItem[]): Promise<AiInsight[]> => {
-  const ai = getAiClient();
-  
   const prompt = `
     Analyze this inventory data to optimize stock levels and ordering.
     
@@ -238,7 +237,9 @@ export const generateInventoryInsights = async (items: InventoryItem[]): Promise
   `;
 
   try {
-    const response = await ai.models.generateContent({
+    // Routed through the callGemini Cloud Function (functions/index.js) so the
+    // Gemini API key stays server-side instead of exposed in the browser bundle.
+    const result = await callGemini({
       model: 'gemini-3.1-flash-lite-preview',
       contents: prompt,
       config: {
@@ -258,19 +259,19 @@ export const generateInventoryInsights = async (items: InventoryItem[]): Promise
         }
       }
     });
-    
-    return JSON.parse(response.text || '[]');
+
+    const data = result.data as { text: string; images: any[] };
+    return JSON.parse(data.text || '[]');
   } catch (error) {
     console.error("Error generating insights:", handleAiError(error));
     return [];
   }
 };
-
 export const editInventoryImage = async (base64Image: string, mimeType: string, prompt: string): Promise<string | null> => {
-  const ai = getAiClient();
-
   try {
-    const response = await ai.models.generateContent({
+    // Routed through the callGemini Cloud Function (functions/index.js) so the
+    // Gemini API key stays server-side instead of exposed in the browser bundle.
+    const result = await callGemini({
       model: 'gemini-2.5-flash-image',
       contents: {
         parts: [
@@ -287,12 +288,10 @@ export const editInventoryImage = async (base64Image: string, mimeType: string, 
       },
     });
 
-    if (response.candidates?.[0]?.content?.parts) {
-      for (const part of response.candidates[0].content.parts) {
-        if (part.inlineData && part.inlineData.data) {
-          return `data:image/png;base64,${part.inlineData.data}`;
-        }
-      }
+    const data = result.data as { text: string; images: { data: string; mimeType: string }[] };
+    if (data.images && data.images.length > 0) {
+      const img = data.images[0];
+      return `data:${img.mimeType};base64,${img.data}`;
     }
     return null;
   } catch (error) {

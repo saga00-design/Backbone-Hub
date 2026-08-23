@@ -1,9 +1,8 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import { InventoryItem, Recipe } from '../types';
 import { MessageCircle, X, Send, Bot, Loader2, Sparkles, TrendingDown, AlertCircle, ShoppingBag } from 'lucide-react';
-import { getChatSession, handleAiError } from '../services/geminiService';
-import { Chat } from "@google/genai";
+import { handleAiError } from '../services/geminiService';
+import { callGemini } from '../firebase';
 import Markdown from 'react-markdown';
 
 interface ChatBotProps {
@@ -24,7 +23,12 @@ export const ChatBot: React.FC<ChatBotProps> = ({ items, recipes = [] }) => {
   const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [pendingMessage, setPendingMessage] = useState<string | null>(null);
-  const chatSessionRef = useRef<Chat | null>(null);
+  // Cloud Functions are stateless, so there's no persistent SDK "session" object
+  // any more (that used to live in chatSessionRef). Instead, the system prompt
+  // is captured once when the chat opens (systemInstructionRef), and the full
+  // message history (messages state) is resent with every turn - see handleSend.
+  const [isInitialized, setIsInitialized] = useState(false);
+  const systemInstructionRef = useRef<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Listen for external chat triggers
@@ -33,7 +37,7 @@ export const ChatBot: React.FC<ChatBotProps> = ({ items, recipes = [] }) => {
       const { message } = event.detail;
       if (message) {
         setIsOpen(true);
-        if (chatSessionRef.current) {
+        if (isInitialized) {
             setInputValue(message);
             setTimeout(() => {
                 const sendBtn = document.querySelector('button[title="Send"]') as HTMLButtonElement;
@@ -47,11 +51,11 @@ export const ChatBot: React.FC<ChatBotProps> = ({ items, recipes = [] }) => {
 
     window.addEventListener('inventory-ai-chat', handleExternalChat);
     return () => window.removeEventListener('inventory-ai-chat', handleExternalChat);
-  }, []);
+  }, [isInitialized]);
 
   // Handle pending message after initialization
   useEffect(() => {
-    if (chatSessionRef.current && pendingMessage) {
+    if (isInitialized && pendingMessage) {
         setInputValue(pendingMessage);
         setPendingMessage(null);
         setTimeout(() => {
@@ -59,7 +63,7 @@ export const ChatBot: React.FC<ChatBotProps> = ({ items, recipes = [] }) => {
             if (sendBtn) sendBtn.click();
         }, 100);
     }
-  }, [pendingMessage, chatSessionRef.current]);
+  }, [pendingMessage, isInitialized]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -84,7 +88,7 @@ export const ChatBot: React.FC<ChatBotProps> = ({ items, recipes = [] }) => {
 
   // Initialize chat when opened for the first time
   useEffect(() => {
-    if (isOpen && !chatSessionRef.current) {
+    if (isOpen && !isInitialized) {
         const inventoryContext = items.map(item => 
             `- ${item.name}: ${item.quantity} ${item.unit} (${item.category}${item.subCategory ? ` / ${item.subCategory}` : ''}, £${item.pricePerUnit}/unit). ` +
             `Supplier: ${item.supplier || 'N/A'}. ` +
@@ -128,26 +132,46 @@ export const ChatBot: React.FC<ChatBotProps> = ({ items, recipes = [] }) => {
 
         Keep responses concise but helpful. Use Markdown for formatting (bolding, lists).`;
 
-        chatSessionRef.current = getChatSession(systemInstruction);
+        systemInstructionRef.current = systemInstruction;
+        setIsInitialized(true);
         
         setMessages([
             { role: 'model', text: 'Hey there! I\'m Chef AI, your operational partner. I\'ve been keeping an eye on the stock and margins—how can I help you today?' }
         ]);
     }
-  }, [isOpen, items, recipes]);
+  }, [isOpen, items, recipes, isInitialized]);
 
   const handleSend = async (text?: string) => {
     const messageToSend = text || inputValue;
-    if (!messageToSend.trim() || !chatSessionRef.current) return;
+    if (!messageToSend.trim() || !isInitialized) return;
 
     const userMessage = messageToSend.trim();
     setInputValue('');
-    setMessages(prev => [...prev, { role: 'user', text: userMessage }]);
+    const nextMessages = [...messages, { role: 'user' as const, text: userMessage }];
+    setMessages(nextMessages);
     setIsLoading(true);
 
     try {
-      const response = await chatSessionRef.current.sendMessage({ message: userMessage });
-      setMessages(prev => [...prev, { role: 'model', text: response.text || "I'm not quite sure how to answer that. Could you rephrase?" }]);
+      // Routed through the callGemini Cloud Function (functions/index.js) so the
+      // Gemini API key stays server-side instead of exposed in the browser bundle.
+      // The function is stateless, so we resend the full conversation history
+      // (nextMessages, which includes the greeting) on every turn instead of
+      // relying on a persistent SDK chat session.
+      const contents = nextMessages.map(m => ({
+        role: m.role,
+        parts: [{ text: m.text }],
+      }));
+
+      const result = await callGemini({
+        model: 'gemini-3.1-flash-lite-preview',
+        contents,
+        config: {
+          systemInstruction: systemInstructionRef.current || undefined,
+        },
+      });
+
+      const data = result.data as { text: string; images: any[] };
+      setMessages(prev => [...prev, { role: 'model', text: data.text || "I'm not quite sure how to answer that. Could you rephrase?" }]);
     } catch (error) {
       const message = handleAiError(error);
       setMessages(prev => [...prev, { role: 'model', text: message }]);

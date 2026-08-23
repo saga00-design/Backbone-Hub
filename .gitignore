@@ -22,3 +22,7 @@ Thumbs.db
 
 # Claude Code session data
 .claude/
+
+# MemPalace per-project files (issue #185)
+mempalace.yaml
+entities.json

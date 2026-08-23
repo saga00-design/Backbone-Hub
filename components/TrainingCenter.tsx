@@ -3,7 +3,7 @@ import { Recipe, ALLERGIES_LIST, InventoryItem, StaffCertification } from '../ty
 import { Search, Wine, GlassWater, BookOpen, Info, Flame, List, FileText, Download, X, HelpCircle, ChevronRight, CheckCircle2, AlertCircle, ChevronDown, Trophy } from 'lucide-react';
 import { Wheat, Shell, Egg, Fish, Flower2, Milk, Snail, Droplet, Bean, CircleDot, Sprout, FlaskConical, Nut, Leaf } from 'lucide-react';
 import jsPDF from 'jspdf';
-import 'jspdf-autotable';
+import { autoTable } from 'jspdf-autotable';
 import { motion } from 'motion/react';
 import { db, collection, addDoc, LOCATION_ID, handleFirestoreError, OperationType } from '../firebase';
 import { PageHeader } from './PageHeader';

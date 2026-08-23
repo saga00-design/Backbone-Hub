@@ -5,7 +5,7 @@ import { PageHeader } from './PageHeader';
 import { toast } from 'sonner';
 import { convertToBaseUnit } from '../utils/unitConversions';
 import { jsPDF } from 'jspdf';
-import 'jspdf-autotable';
+import { autoTable } from 'jspdf-autotable';
 import { motion, AnimatePresence } from 'framer-motion';
 
 interface WasteManagerProps {
@@ -107,7 +107,7 @@ export const WasteManager: React.FC<WasteManagerProps> = ({
       r.staffName || 'N/A'
     ]);
 
-    doc.autoTable({
+    autoTable(doc, {
       startY: 40,
       head: [['Date', 'Item', 'Quantity', 'Reason', 'Cost', 'Staff']],
       body: tableData,
