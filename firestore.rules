@@ -30,6 +30,14 @@ service cloud.firestore {
         !request.resource.data.diff(resource.data).affectedKeys().hasAny(unchanged);
     }
 
+    // ── Connection Heartbeat ─────────────────────────────────────
+    // Read by useConnectionStatus.ts every 8s to detect real connectivity
+    // (navigator.onLine is unreliable on Windows). Any authenticated user/
+    // terminal needs this, including a future low-privilege terminal account.
+    match /connectionHeartbeat/{docId} {
+      allow read: if isAuthenticated();
+    }
+
     // ── User profiles ─────────────────────────────────────────
     match /users/{userId} {
       allow read, write: if isAuthenticated() && request.auth.uid == userId;
