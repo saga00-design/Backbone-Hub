@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite';
+﻿import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 
@@ -98,10 +98,12 @@ export default defineConfig({
     host: '0.0.0.0',
     port: 3000,
     strictPort: true,
-    allowedHosts: true,
-    hmr: {
-      protocol: 'wss',
-      clientPort: 443
-    }
+    allowedHosts: true
+    // hmr intentionally left on Vite's default auto-detection - it infers
+    // the correct protocol/port from how the page was actually loaded.
+    // A hardcoded { protocol: 'wss', clientPort: 443 } here previously
+    // forced every local dev session (plain http on :3000) to try
+    // reconnecting over wss on :443, which always failed and caused
+    // constant "server connection lost" / ERR_CONNECTION_REFUSED noise.
   }
 });
