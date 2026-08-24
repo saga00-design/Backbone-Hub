@@ -58,6 +58,7 @@ export const Settings: React.FC<SettingsProps> = ({ auditLogs = [] }) => {
   const [loading, setLoading] = useState(true);
   const [selectedModule, setSelectedModule] = useState<keyof AppPermissions>('inventory');
   const [isAddingStaff, setIsAddingStaff] = useState(false);
+
   const [editingStaffId, setEditingStaffId] = useState<string | null>(null);
   const [isAddingDept, setIsAddingDept] = useState(false);
   const [editingDeptId, setEditingDeptId] = useState<string | null>(null);
