@@ -144,6 +144,48 @@ exports.callGemini = onCall(
  * The client should call this instead of comparing PINs locally. See
  * POSPINModal.tsx (Hub) and PinLoginScreen.tsx (POS) for the call sites.
  */
+const PIN_MAX_ATTEMPTS = 5;
+const PIN_LOCKOUT_MS = 2 * 60 * 1000; // 2 minutes
+
+// Rate limiting is keyed on request.auth.uid - the CALLER's verified auth
+// identity (e.g. the terminal/shared-login account signed into a POS
+// station), not on the PIN or the staffId being guessed. This stops a
+// single compromised or malicious session from brute-forcing all 10,000
+// possible 4-digit PINs, regardless of which staff member it is trying
+// to impersonate. Stored server-side in Firestore via the Admin SDK,
+// which bypasses firestore.rules entirely - no client rule is needed or
+// added for this collection, since only this function ever touches it.
+async function checkPinLockout(callerUid) {
+  const snap = await db.collection("pinAttempts").doc(callerUid).get();
+  if (!snap.exists) return { lockedOut: false };
+  const data = snap.data();
+  const now = Date.now();
+  if (data.lockedUntil && data.lockedUntil > now) {
+    return { lockedOut: true, secondsLeft: Math.ceil((data.lockedUntil - now) / 1000) };
+  }
+  return { lockedOut: false };
+}
+
+async function recordPinOutcome(callerUid, succeeded) {
+  const attemptRef = db.collection("pinAttempts").doc(callerUid);
+  const now = Date.now();
+  await db.runTransaction(async (tx) => {
+    const snap = await tx.get(attemptRef);
+    const data = snap.exists ? snap.data() : { count: 0, lockedUntil: 0 };
+
+    if (succeeded) {
+      tx.set(attemptRef, { count: 0, lockedUntil: 0, updatedAt: now });
+      return;
+    }
+
+    // A previous lockout that has already expired starts the count fresh.
+    const expired = data.lockedUntil && data.lockedUntil <= now;
+    const newCount = (expired ? 0 : data.count) + 1;
+    const lockedUntil = newCount >= PIN_MAX_ATTEMPTS ? now + PIN_LOCKOUT_MS : 0;
+    tx.set(attemptRef, { count: newCount, lockedUntil, updatedAt: now });
+  });
+}
+
 exports.verifyStaffPin = onCall(
   { region: "us-central1", timeoutSeconds: 15 },
   async (request) => {
@@ -163,12 +205,24 @@ exports.verifyStaffPin = onCall(
       throw new HttpsError("invalid-argument", "locationId is required.");
     }
 
+    // Check lockout FIRST, read-only - before doing any PIN comparison work
+    // and before recording anything, so this check never itself counts as
+    // an attempt.
+    const lockCheck = await checkPinLockout(request.auth.uid);
+    if (lockCheck.lockedOut) {
+      throw new HttpsError(
+        "resource-exhausted",
+        `Too many failed attempts. Try again in ${lockCheck.secondsLeft}s.`
+      );
+    }
+
     try {
       // Fast path: caller already knows which staff member this probably is
       // (e.g. matched by email in POSPINModal) - verify against just them.
       if (staffId) {
         const secretDoc = await db.collection("staffSecrets").doc(staffId).get();
         if (secretDoc.exists && secretDoc.data().pin === pin) {
+          await recordPinOutcome(request.auth.uid, true);
           const profileDoc = await db.collection("staffProfiles").doc(staffId).get();
           const profile = profileDoc.data();
           return {
@@ -177,6 +231,7 @@ exports.verifyStaffPin = onCall(
             staffName: profile ? `${profile.firstName} ${profile.lastName}` : undefined,
           };
         }
+        await recordPinOutcome(request.auth.uid, false);
         return { verified: false };
       }
 
@@ -192,6 +247,7 @@ exports.verifyStaffPin = onCall(
       for (const profileDoc of profilesSnapshot.docs) {
         const secretDoc = await db.collection("staffSecrets").doc(profileDoc.id).get();
         if (secretDoc.exists && secretDoc.data().pin === pin) {
+          await recordPinOutcome(request.auth.uid, true);
           const profile = profileDoc.data();
           return {
             verified: true,
@@ -201,6 +257,7 @@ exports.verifyStaffPin = onCall(
         }
       }
 
+      await recordPinOutcome(request.auth.uid, false);
       return { verified: false };
     } catch (error) {
       console.error("verifyStaffPin error:", error);
