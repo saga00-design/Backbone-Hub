@@ -1,5 +1,6 @@
-import { StaffMember, PayrollCentreWeekRecord } from '../types';
+﻿import { StaffMember, PayrollCentreWeekRecord } from '../types';
 import { matchStaffById, matchStaffByPin, matchStaffByName, detectDuplicateIdentities, RowFlag } from './labourImportParsing';
+import { StaffSecret } from '../types';
 import { normalizeDepartment } from './labourImportService';
 import { getWeekStart, getPeriodRange, toDateKey } from '../utils/fiscalCalendar';
 
@@ -243,7 +244,8 @@ const TOLERANCE = 0.02; // pence-level rounding across many summed rows
 export function buildPayrollCentreImportPreview(
   csvRows: PayrollCentreCsvRow[],
   staff: StaffMember[],
-  existingRecords: PayrollCentreWeekRecord[] = []
+  existingRecords: PayrollCentreWeekRecord[] = [],
+  staffSecretsByStaffId: Record<string, Partial<StaffSecret>> = {}
 ): PayrollCentreImportPreview {
   const totalsRow = csvRows.find(r => !((r['Employee Name'] || '').trim()) || (r['Run Type'] || '').trim().toUpperCase() === 'TOTALS');
   const employeeCsvRows = csvRows.filter(r => (r['Employee Name'] || '').trim() && (r['Run Type'] || '').trim().toUpperCase() !== 'TOTALS');
@@ -365,7 +367,7 @@ export function buildPayrollCentreImportPreview(
     const matchedStaff = row.staffIdRaw
       ? matchStaffById(row.staffIdRaw, staff)
       : row.kioskPinRaw
-        ? (matchStaffByPin(row.kioskPinRaw, staff) || matchStaffByName(row.employeeNameRaw, staff))
+        ? (matchStaffByPin(row.kioskPinRaw, staff, staffSecretsByStaffId) || matchStaffByName(row.employeeNameRaw, staff))
         : matchStaffByName(row.employeeNameRaw, staff);
     row.matchedStaffId = matchedStaff?.id || null;
     row.autoMatchedStaffId = matchedStaff?.id || null;

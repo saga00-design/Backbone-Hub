@@ -1,9 +1,9 @@
-import React, { useRef, useState } from 'react';
+﻿import React, { useRef, useState, useEffect } from 'react';
 import Papa from 'papaparse';
 import { toast } from 'sonner';
 import { Upload, AlertTriangle, AlertCircle, CheckCircle2, History, UserPlus, HelpCircle } from 'lucide-react';
 import { Button } from './Button';
-import { StaffMember, LabourShift, PayrollCentreWeekRecord } from '../types';
+import { StaffMember, StaffSecret, LabourShift, PayrollCentreWeekRecord } from '../types';
 import {
   RotaCsvRow,
   ParsedShiftRow,
@@ -18,6 +18,8 @@ import {
   commitPayrollCentreImport
 } from '../services/labourImportService';
 import { toDateKey } from '../utils/fiscalCalendar';
+import { collection, onSnapshot } from 'firebase/firestore';
+import { db, auth, handleFirestoreError, OperationType } from '../firebase';
 
 interface LabourImportPanelProps {
   staff: StaffMember[];
@@ -56,6 +58,20 @@ export const LabourImportPanel: React.FC<LabourImportPanelProps> = ({ staff, shi
   const [pcSelectedKeys, setPcSelectedKeys] = useState<Set<string>>(new Set());
   const [pcStaffOverrides, setPcStaffOverrides] = useState<Map<string, string | null>>(new Map());
   const [pcCommitting, setPcCommitting] = useState(false);
+
+  // pin/hourlyRate live in the separate manager-only staffSecrets collection now
+  // (see types.ts StaffSecret) - this panel is already manager-only content, so
+  // fetching it here directly is fine and matches firestore.rules.
+  const [staffSecretsByStaffId, setStaffSecretsByStaffId] = useState<Record<string, Partial<StaffSecret>>>({});
+
+  useEffect(() => {
+    if (!auth.currentUser) return;
+    return onSnapshot(collection(db, 'staffSecrets'), (snapshot) => {
+      const map: Record<string, Partial<StaffSecret>> = {};
+      snapshot.docs.forEach(d => { map[d.id] = d.data() as Partial<StaffSecret>; });
+      setStaffSecretsByStaffId(map);
+    }, (err) => { handleFirestoreError(err, OperationType.LIST, 'staffSecrets'); });
+  }, []);
 
   const resetToUpload = () => {
     setStep('upload');
@@ -99,7 +115,7 @@ export const LabourImportPanel: React.FC<LabourImportPanelProps> = ({ staff, shi
                 setParseError('No valid rows found in this file.');
                 return;
               }
-              const rows = buildRotaImportPreview(results.data as RotaCsvRow[], staff, shifts);
+              const rows = buildRotaImportPreview(results.data as RotaCsvRow[], staff, shifts, staffSecretsByStaffId);
               setPreviewRows(rows);
               setSelectedRowIndexes(new Set(rows.filter(r => r.includeByDefault).map(r => r.rowIndex)));
               setStep('preview');
@@ -111,7 +127,7 @@ export const LabourImportPanel: React.FC<LabourImportPanelProps> = ({ staff, shi
                 setParseError('No valid rows found in this file.');
                 return;
               }
-              const preview = buildPayrollCentreImportPreview(results.data as PayrollCentreCsvRow[], staff, payrollCentreRecords);
+              const preview = buildPayrollCentreImportPreview(results.data as PayrollCentreCsvRow[], staff, payrollCentreRecords, staffSecretsByStaffId);
               if (preview.weekParseError) {
                 setParseError(preview.weekParseError);
                 return;

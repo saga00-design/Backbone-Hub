@@ -1,4 +1,4 @@
-
+﻿
 export type InventoryCategory = string;
 export type InventoryType = string;
 export type Unit = 'kg' | 'g' | 'gr' | 'L' | 'ml' | 'cl' | 'pcs' | 'box' | 'bottles' | 'bags' | 'portions' | 'cans' | 'kegs' | 'servings' | 'cases' | 'packs' | 'tray' | 'vacuum pack' | 'sack' | 'tin' | 'jar' | 'tub' | 'sachet' | 'loose' | 'custom';
@@ -594,12 +594,14 @@ export interface StaffMember {
   lastName: string;
   email: string;
   role: 'Admin' | 'Manager' | 'Waiter' | 'Chef' | 'Bartender';
-  pin: string; // 4 digits
+  // pin, hourlyRate, salaryChanges, and annualSalary moved to the separate
+  // staffSecrets/{staffId} collection (manager-only Firestore access, never
+  // fetched by the general staffProfiles listener). PIN verification happens
+  // server-side via the verifyStaffPin Cloud Function - the raw pin value is
+  // never sent to the browser. See StaffSecret interface below this one.
   active: boolean;
   locationId: string;
   department?: string;
-  hourlyRate: number;
-  salaryChanges?: SalaryChange[];
 
   // Stable, unique 4-digit code used to match Labour Import rows to this profile, instead of
   // fragile name-text matching (typos, name-order variants, capitalization, truncated compound
@@ -614,9 +616,7 @@ export interface StaffMember {
   // this fixed salary, not hours x rate — see services/labourImportService.ts's
   // filterShiftsForCost(), which excludes their shifts from the automated Wages cost total.
   employmentType?: 'Hourly' | 'Salaried';
-  // Annual salary for Salaried staff, prorated per fiscal Period as annualSalary / 13 (this
-  // app's fiscal calendar is 13 four-week Periods per year — see utils/fiscalCalendar.ts).
-  annualSalary?: number;
+  // annualSalary moved to staffSecrets/{staffId} - see note above.
 
   permissions: AppPermissions;
 
@@ -646,6 +646,17 @@ export interface StaffMember {
   completedModules?: string[];
   salaryHistory?: SalaryChange[];
   trainingProgress?: Record<string, number>;
+}
+
+// Sensitive staff fields, split out of StaffMember (see note there). Lives at
+// staffSecrets/{staffId} in Firestore - manager-only read/write. The client
+// should never fetch this collection directly for PIN checks; PIN verification
+// goes through the verifyStaffPin Cloud Function instead.
+export interface StaffSecret {
+  pin: string; // 4 digits
+  hourlyRate: number;
+  salaryChanges?: SalaryChange[];
+  annualSalary?: number;
 }
 
 export interface ClockInRecord {

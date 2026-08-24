@@ -1,11 +1,11 @@
-
+﻿
 import React, { useState, useEffect } from 'react';
 import { Button } from './Button';
 import { Download, Upload, Trash2, Cloud, LogOut, User, Shield, Users, Building, Check, X, Plus, ChevronRight, ChevronDown, Clock, Package, Copy, Pencil, RefreshCw, AlertTriangle, ClipboardCheck, Settings as SettingsIcon } from 'lucide-react';
 import { PageHeader } from './PageHeader';
 import { auth, db, collection, doc, getDoc, getDocs, setDoc, updateDoc, onSnapshot, cleanObject, handleFirestoreError, OperationType, query, where } from '../firebase';
 import { APP_SECTIONS, DEFAULT_ROLES, DEFAULT_DEPARTMENTS, DEFAULT_PERMISSIONS } from '../constants';
-import { StaffMember, AppPermissions, AuditLog } from '../types';
+import { StaffMember, StaffSecret, AppPermissions, AuditLog } from '../types';
 import { motion, AnimatePresence } from 'framer-motion';
 import { addDoc, deleteDoc } from 'firebase/firestore';
 import { toast } from 'sonner';
@@ -62,7 +62,7 @@ export const Settings: React.FC<SettingsProps> = ({ auditLogs = [] }) => {
   const [isAddingDept, setIsAddingDept] = useState(false);
   const [editingDeptId, setEditingDeptId] = useState<string | null>(null);
   const [newDept, setNewDept] = useState({ name: '' });
-  const [newStaff, setNewStaff] = useState<Partial<StaffMember>>({
+  const [newStaff, setNewStaff] = useState<Partial<StaffMember> & Partial<StaffSecret>>({
     firstName: '',
     lastName: '',
     email: '',
@@ -128,6 +128,11 @@ export const Settings: React.FC<SettingsProps> = ({ auditLogs = [] }) => {
       const completed = newStaff.trainingSummary?.completedModules || 0;
       const total = newStaff.trainingSummary?.totalModules || 0;
 
+      // pin, hourlyRate, and annualSalary are NOT written to staffProfiles -
+      // that collection is broadly readable (any authenticated user, for the
+      // PIN-pad UI to show names) so those fields live in the separate
+      // manager-only staffSecrets/{staffId} collection instead. See
+      // types.ts's StaffSecret interface and firestore.rules.
       const staffPayload = {
         firstName: newStaff.firstName,
         lastName: newStaff.lastName,
@@ -135,13 +140,10 @@ export const Settings: React.FC<SettingsProps> = ({ auditLogs = [] }) => {
         email: newStaff.email || '',
         staffId: staffIdTrimmed || undefined,
         role: newStaff.role,
-        pin: newStaff.pin,
         active: newStaff.active ?? true,
         locationId: LOCATION_ID,
         department: newStaff.department || 'foh',
-        hourlyRate: newStaff.hourlyRate || 12.5,
         employmentType: newStaff.employmentType || 'Hourly',
-        annualSalary: newStaff.employmentType === 'Salaried' ? (newStaff.annualSalary || 0) : undefined,
 
         permissions: newStaff.permissions || {},
         allowedStations: newStaff.allowedStations || [],
@@ -157,11 +159,20 @@ export const Settings: React.FC<SettingsProps> = ({ auditLogs = [] }) => {
         ...(editingStaffId ? {} : { createdAt: timestamp })
       };
 
+      const secretPayload = {
+        pin: newStaff.pin,
+        hourlyRate: newStaff.hourlyRate || 12.5,
+        annualSalary: newStaff.employmentType === 'Salaried' ? (newStaff.annualSalary || 0) : undefined,
+      };
+
       if (editingStaffId) {
         await updateDoc(doc(db, 'staffProfiles', editingStaffId), cleanObject(staffPayload));
+        await setDoc(doc(db, 'staffSecrets', editingStaffId), cleanObject(secretPayload), { merge: true });
         toast.success('Staff member updated');
       } else {
-        await addDoc(collection(db, 'staffProfiles'), cleanObject(staffPayload));
+        const newDocRef = doc(collection(db, 'staffProfiles'));
+        await setDoc(newDocRef, cleanObject(staffPayload));
+        await setDoc(doc(db, 'staffSecrets', newDocRef.id), cleanObject(secretPayload));
         toast.success('Staff member added');
       }
 
@@ -196,14 +207,29 @@ export const Settings: React.FC<SettingsProps> = ({ auditLogs = [] }) => {
   }
 };
 
-  const handleEditStaff = (staff: StaffMember) => {
+  const handleEditStaff = async (staff: StaffMember) => {
     let permissions = JSON.parse(JSON.stringify(staff.permissions || {}));
     if (Array.isArray(permissions)) {
       permissions = getRolePermissions(staff.role);
     }
 
+    // pin/hourlyRate/annualSalary live in the separate staffSecrets/{id}
+    // doc now, not on the staffProfiles object passed in here - fetch it
+    // so the edit form actually shows the existing PIN/pay instead of
+    // silently blanking them out.
+    let secretData: Partial<StaffSecret> = {};
+    try {
+      const secretSnap = await getDoc(doc(db, 'staffSecrets', staff.id));
+      if (secretSnap.exists()) {
+        secretData = secretSnap.data() as StaffSecret;
+      }
+    } catch (err) {
+      console.error('Failed to load staff secret data:', err);
+    }
+
     setNewStaff({
       ...staff,
+      ...secretData,
       permissions,
       allowedStations: staff.allowedStations || [],
       trainingSummary: staff.trainingSummary || {
@@ -422,7 +448,7 @@ export const Settings: React.FC<SettingsProps> = ({ auditLogs = [] }) => {
 
   // Security Guard: Prevent non-admins from accessing sensitive tabs via state manipulation
   useEffect(() => {
-    if (activeTab !== 'profile' && !loading && userRole !== 'Admin' && userRole !== 'Manager') {
+    if (activeTab !== 'profile' && !loading && userRole !== 'admin' && userRole !== 'backoffice' && userRole !== 'manager' && userRole !== 'Admin' && userRole !== 'Manager') {
       setActiveTab('profile');
     }
   }, [activeTab, userRole, loading]);

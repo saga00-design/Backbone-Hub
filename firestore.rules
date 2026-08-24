@@ -1,4 +1,4 @@
-rules_version = '2';
+﻿rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -47,6 +47,15 @@ service cloud.firestore {
       allow create: if isManager();
       allow update: if isManager() || isSelfEditWithoutPrivilegeEscalation();
       allow delete: if isManager();
+    }
+
+    // ── Staff Secrets (PIN, pay data - manager only) ───────────
+    // Split out of staffProfiles so PINs/pay are never sent to every
+    // logged-in browser. Client should never read this directly - PIN
+    // checks go through the verifyStaffPin Cloud Function instead, which
+    // uses the Admin SDK (bypasses these rules) to compare server-side.
+    match /staffSecrets/{staffId} {
+      allow read, write: if isManager();
     }
 
     // ── POS Orders ────────────────────────────────────────────

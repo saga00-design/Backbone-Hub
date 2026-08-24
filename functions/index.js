@@ -29,8 +29,18 @@
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { defineSecret } = require("firebase-functions/params");
 const { GoogleGenAI } = require("@google/genai");
+const { initializeApp } = require("firebase-admin/app");
+const { getFirestore, FieldValue } = require("firebase-admin/firestore");
 
 const GEMINI_API_KEY = defineSecret("GEMINI_API_KEY");
+
+// Same non-default Firestore database Hub/POS both use (see firebase.ts / firebase-applet-config.json
+// in either project - NOT the '(default)' database. Pointing at the wrong one
+// silently returns empty results instead of an error, so this matters a lot here.
+const FIRESTORE_DATABASE_ID = "ai-studio-ed2c0f12-89cb-43e1-8002-769e61587403";
+
+const adminApp = initializeApp();
+const db = getFirestore(adminApp, FIRESTORE_DATABASE_ID);
 
 // Only these models are reachable through the proxy. This isn't a general-
 // purpose "call any Google API" function — if the app starts using a new
@@ -116,3 +126,86 @@ exports.callGemini = onCall(
     }
   }
 );
+
+
+/**
+ * Backbone Hub / POS — server-side staff PIN verification
+ *
+ * WHY THIS EXISTS:
+ * Previously, staff PINs lived directly on staffProfiles documents, which
+ * any authenticated user could read in full (needed so the PIN pad UI could
+ * show names) - meaning every staff member's 4-digit PIN, hourly rate, and
+ * salary history was downloaded into every logged-in browser session. This
+ * function moves PIN checking here, server-side, using the Admin SDK (which
+ * bypasses Firestore rules entirely and is never exposed to the browser).
+ * The raw PIN value is never sent back to the client - only a yes/no plus
+ * which staff member matched.
+ *
+ * The client should call this instead of comparing PINs locally. See
+ * POSPINModal.tsx (Hub) and PinLoginScreen.tsx (POS) for the call sites.
+ */
+exports.verifyStaffPin = onCall(
+  { region: "us-central1", timeoutSeconds: 15 },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError(
+        "unauthenticated",
+        "You must be signed in to verify a staff PIN."
+      );
+    }
+
+    const { pin, locationId, staffId } = request.data || {};
+
+    if (!pin || typeof pin !== "string" || pin.length !== 4) {
+      throw new HttpsError("invalid-argument", "A 4-digit pin is required.");
+    }
+    if (!locationId) {
+      throw new HttpsError("invalid-argument", "locationId is required.");
+    }
+
+    try {
+      // Fast path: caller already knows which staff member this probably is
+      // (e.g. matched by email in POSPINModal) - verify against just them.
+      if (staffId) {
+        const secretDoc = await db.collection("staffSecrets").doc(staffId).get();
+        if (secretDoc.exists && secretDoc.data().pin === pin) {
+          const profileDoc = await db.collection("staffProfiles").doc(staffId).get();
+          const profile = profileDoc.data();
+          return {
+            verified: true,
+            staffId,
+            staffName: profile ? `${profile.firstName} ${profile.lastName}` : undefined,
+          };
+        }
+        return { verified: false };
+      }
+
+      // Fallback path: search every active staff member at this location for
+      // a matching PIN (mirrors POSPINModal.tsx's existing "search all active
+      // staff" behavior, just moved server-side).
+      const profilesSnapshot = await db
+        .collection("staffProfiles")
+        .where("locationId", "==", locationId)
+        .where("active", "==", true)
+        .get();
+
+      for (const profileDoc of profilesSnapshot.docs) {
+        const secretDoc = await db.collection("staffSecrets").doc(profileDoc.id).get();
+        if (secretDoc.exists && secretDoc.data().pin === pin) {
+          const profile = profileDoc.data();
+          return {
+            verified: true,
+            staffId: profileDoc.id,
+            staffName: `${profile.firstName} ${profile.lastName}`,
+          };
+        }
+      }
+
+      return { verified: false };
+    } catch (error) {
+      console.error("verifyStaffPin error:", error);
+      throw new HttpsError("internal", "PIN verification failed.");
+    }
+  }
+);
+

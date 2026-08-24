@@ -1,4 +1,4 @@
-import { StaffMember, LabourShift } from '../types';
+﻿import { StaffMember, StaffSecret, LabourShift } from '../types';
 import { getShiftWindowForHour } from '../constants';
 import { getBusinessDayFor } from '../utils/businessDay';
 
@@ -92,10 +92,14 @@ export function matchStaffById(staffId: string | null | undefined, staff: StaffM
 // Kiosk PIN match — TTP's real Payroll Centre export now includes each employee's 4-digit
 // kiosk PIN (the same StaffMember.pin used for POS clock-in/login, see POSPINModal.tsx). Exact
 // match only: a PIN either belongs to one staff member or it doesn't, so no fuzzy fallback.
-export function matchStaffByPin(pin: string | null | undefined, staff: StaffMember[]): StaffMember | null {
+export function matchStaffByPin(
+  pin: string | null | undefined,
+  staff: StaffMember[],
+  staffSecretsByStaffId: Record<string, Partial<StaffSecret>> = {}
+): StaffMember | null {
   const target = (pin || '').trim();
   if (!target) return null;
-  return staff.find(s => (s.pin || '').trim() === target) || null;
+  return staff.find(s => ((staffSecretsByStaffId[s.id]?.pin) || '').trim() === target) || null;
 }
 
 export function matchStaffByName(name: string, staff: StaffMember[]): StaffMember | null {
@@ -234,7 +238,8 @@ function buildExistingShiftKeySet(existingShifts: LabourShift[]): Set<string> {
 export function buildRotaImportPreview(
   csvRows: RotaCsvRow[],
   staff: StaffMember[],
-  existingShifts: LabourShift[] = []
+  existingShifts: LabourShift[] = [],
+  staffSecretsByStaffId: Record<string, Partial<StaffSecret>> = {}
 ): ParsedShiftRow[] {
   const duplicateIdentities = detectDuplicateIdentities(csvRows.map(r => r['Employee Name']));
   const existingShiftKeys = buildExistingShiftKeySet(existingShifts);
@@ -310,13 +315,13 @@ export function buildRotaImportPreview(
       });
     }
 
-    const existingProfileRate = matchedStaff ? matchedStaff.hourlyRate : null;
-    const rateDiffersFromProfile = matchedStaff != null && Math.abs((matchedStaff.hourlyRate || 0) - hourlyWage) > TOLERANCE_COST;
+    const existingProfileRate = matchedStaff ? (staffSecretsByStaffId[matchedStaff.id]?.hourlyRate ?? null) : null;
+    const rateDiffersFromProfile = matchedStaff != null && Math.abs((staffSecretsByStaffId[matchedStaff.id]?.hourlyRate || 0) - hourlyWage) > TOLERANCE_COST;
     if (rateDiffersFromProfile) {
       flags.push({
         code: 'RATE_DIFFERS_FROM_PROFILE',
         severity: 'warning',
-        message: `This row's rate (£${hourlyWage.toFixed(2)}/hr) differs from ${matchedStaff!.firstName}'s profile rate (£${(matchedStaff!.hourlyRate || 0).toFixed(2)}/hr). Could be a legitimate different-role rate — confirm before import.`
+        message: `This row's rate (£${hourlyWage.toFixed(2)}/hr) differs from ${matchedStaff!.firstName}'s profile rate (£${(staffSecretsByStaffId[matchedStaff!.id]?.hourlyRate || 0).toFixed(2)}/hr). Could be a legitimate different-role rate — confirm before import.`
       });
     }
 

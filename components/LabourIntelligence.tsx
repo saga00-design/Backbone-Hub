@@ -1,4 +1,4 @@
-
+﻿
 import React, { useState, useMemo, useEffect } from 'react';
 import {
   Upload,
@@ -96,6 +96,18 @@ export const LabourIntelligence: React.FC<LabourIntelligenceProps> = ({ staff, o
   const [payrollCentreRecords, setPayrollCentreRecords] = useState<PayrollCentreWeekRecord[]>([]);
   const [importLogs, setImportLogs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  // annualSalary lives in the separate manager-only staffSecrets collection now
+  // (see types.ts StaffSecret) - fetched here rather than off StaffMember directly.
+  const [annualSalaryByStaffId, setAnnualSalaryByStaffId] = useState<Record<string, number>>({});
+
+  useEffect(() => {
+    if (!auth.currentUser) return;
+    return onSnapshot(collection(db, 'staffSecrets'), (snapshot) => {
+      const map: Record<string, number> = {};
+      snapshot.docs.forEach(d => { map[d.id] = d.data().annualSalary || 0; });
+      setAnnualSalaryByStaffId(map);
+    }, (err) => { handleFirestoreError(err, OperationType.LIST, 'staffSecrets'); });
+  }, []);
 
   // Real-time shifts subscription
   useEffect(() => {
@@ -353,7 +365,7 @@ export const LabourIntelligence: React.FC<LabourIntelligenceProps> = ({ staff, o
     const salariesByDept = new Map<string, number>();
     let salaries = 0;
     salariedStaff.forEach(s => {
-      const weeklyShare = (s.annualSalary || 0) / 13 / periodWeekStartKeys.length;
+      const weeklyShare = (annualSalaryByStaffId[s.id] || 0) / 13 / periodWeekStartKeys.length;
       const gapWeeks = periodWeekStartKeys.filter(
         weekKey => !payrollCentreRecords.some(r => r.staffId === s.id && r.weekStartDate === weekKey)
       );
