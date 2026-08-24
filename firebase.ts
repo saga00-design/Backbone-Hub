@@ -32,7 +32,8 @@ import {
   getDocFromServer,
   increment,
   initializeFirestore,
-  enableIndexedDbPersistence,
+  persistentLocalCache,
+  persistentMultipleTabManager,
   writeBatch,
   FieldValue
 } from 'firebase/firestore';
@@ -60,23 +61,16 @@ if (!firebaseConfig.apiKey) {
 // ─────────────────────────────────────────────────────────────
 const app = initializeApp(firebaseConfig);
 
+// Modern replacement for the deprecated enableIndexedDbPersistence() call -
+// persistentMultipleTabManager lets multiple open tabs (e.g. Hub + POS, or
+// two Hub tabs) share the same local cache instead of each tab fighting for
+// exclusive IndexedDB access and silently falling back to memory-only cache.
 export const db = initializeFirestore(app, {
   experimentalForceLongPolling: true,
+  localCache: persistentLocalCache({
+    tabManager: persistentMultipleTabManager(),
+  }),
 }, databaseId);
-
-try {
-  enableIndexedDbPersistence(db).catch((err) => {
-    if (err.code === 'failed-precondition') {
-      console.warn('[Firebase] IndexedDB persistence unavailable: multiple tabs open.');
-    } else if (err.code === 'unimplemented') {
-      console.warn('[Firebase] IndexedDB persistence not supported in this browser.');
-    } else {
-      console.warn('[Firebase] IndexedDB persistence error:', err);
-    }
-  });
-} catch (err) {
-  console.warn('[Firebase] IndexedDB persistence threw synchronously:', err);
-}
 
 export const auth = getAuth(app);
 setPersistence(auth, browserLocalPersistence).catch(console.error);
