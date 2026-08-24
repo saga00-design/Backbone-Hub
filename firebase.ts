@@ -65,8 +65,16 @@ const app = initializeApp(firebaseConfig);
 // persistentMultipleTabManager lets multiple open tabs (e.g. Hub + POS, or
 // two Hub tabs) share the same local cache instead of each tab fighting for
 // exclusive IndexedDB access and silently falling back to memory-only cache.
+//
+// experimentalForceLongPolling only in production builds (AI Studios
+// hosted/published environment, which needs it - restrictive sandbox
+// network that can block WebSockets). Forcing it on local `npm run dev`
+// added multi-second latency to every getDocFromServer() call (e.g. the
+// connection heartbeat), causing it to time out and falsely mark the app
+// offline every ~8 seconds. import.meta.env.DEV is true only for the local
+// dev server, false for any production build - including AI Studios.
 export const db = initializeFirestore(app, {
-  experimentalForceLongPolling: true,
+  ...(import.meta.env.DEV ? {} : { experimentalForceLongPolling: true }),
   localCache: persistentLocalCache({
     tabManager: persistentMultipleTabManager(),
   }),

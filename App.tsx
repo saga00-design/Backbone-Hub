@@ -1,4 +1,4 @@
-
+﻿
 import React, { useState, useEffect, useMemo, useRef, Component, ReactNode } from 'react';
 import { initializeSystem } from './services/restaurantService';
 import { Dashboard } from './components/Dashboard';
@@ -387,6 +387,50 @@ type View = 'dashboard' | 'inventory' | 'stocktake' | 'invoices' | 'recipes' | '
 // stay fully intact for Reports.tsx and any future re-enable — flip to true to bring it back.
 const SHOW_FINANCIAL_COMMAND = false;
 
+// Role Guard Component - hoisted to module scope (was previously defined
+// inside App()'s render body, which meant it was a brand-new component
+// definition on every single App render. Since a component's TYPE identity
+// changing between renders makes React treat it as a different component
+// entirely, that defeated any internal state (like a debounce timer) and,
+// more importantly, meant its children (e.g. Settings) were liable to be
+// unmounted/remounted more than the role-check logic alone would suggest.
+//
+// FIX: userRole is recomputed from user (Firebase Auth state) on every
+// App render. If Firebase Auth ever emits a transient null for user -
+// even for a single render - userRole falls through to Unlinked and this
+// guard used to immediately unmount its children, silently resetting all of
+// that component's local state (closed modals, active tab reset to its
+// default) with no error or log line, since nothing actually failed. This
+// debounces the check: a mismatch has to persist for ROLE_GRACE_MS before
+// Access Denied actually shows / children actually unmount, so a one-render
+// auth blip no longer kicks the user out of whatever they were doing.
+const ROLE_GRACE_MS = 1500;
+
+const RoleGuard: React.FC<{ userRole: string; allowedRoles: string[]; children: React.ReactNode }> = ({ userRole, allowedRoles, children }) => {
+  const isAllowed = allowedRoles.includes(userRole);
+  const [showDenied, setShowDenied] = useState(!isAllowed);
+
+  useEffect(() => {
+    if (isAllowed) {
+      setShowDenied(false);
+      return;
+    }
+    const timer = setTimeout(() => setShowDenied(true), ROLE_GRACE_MS);
+    return () => clearTimeout(timer);
+  }, [isAllowed]);
+
+  if (showDenied) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full p-12 text-center">
+        <AlertCircle className="h-16 w-16 text-error mb-4 opacity-20" />
+        <h2 className="text-2xl font-bold text-text-navy mb-2">Access Denied</h2>
+        <p className="text-text-muted max-w-md">You do not have the required permissions to access this section. Please contact your administrator.</p>
+      </div>
+    );
+  }
+  return <>{children}</>;
+};
+
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [currentView, setCurrentView] = useState<View>('dashboard');
@@ -696,19 +740,6 @@ const today = londonHour < 6
     lowStockAlertThreshold: 20
   });
 
-  // Role Guard Component
-  const RoleGuard: React.FC<{ allowedRoles: string[]; children: React.ReactNode }> = ({ allowedRoles, children }) => {
-    if (!allowedRoles.includes(userRole)) {
-      return (
-        <div className="flex flex-col items-center justify-center h-full p-12 text-center">
-          <AlertCircle className="h-16 w-16 text-error mb-4 opacity-20" />
-          <h2 className="text-2xl font-bold text-text-navy mb-2">Access Denied</h2>
-          <p className="text-text-muted max-w-md">You do not have the required permissions to access this section. Please contact your administrator.</p>
-        </div>
-      );
-    }
-    return <>{children}</>;
-  };
   const [isAuthenticating, setIsAuthenticating] = useState(false);
   const [isMigrating, setIsMigrating] = useState(false);
 
@@ -3210,7 +3241,7 @@ const today = londonHour < 6
             )}
 
             {currentView === 'settings' && (
-              <RoleGuard allowedRoles={['Admin', 'Manager']}>
+              <RoleGuard userRole={userRole} allowedRoles={['Admin', 'Manager']}>
                 <Settings auditLogs={auditLogs} />
               </RoleGuard>
             )}
