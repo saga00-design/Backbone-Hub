@@ -89,8 +89,33 @@ export const Settings: React.FC<SettingsProps> = ({ auditLogs = [] }) => {
     return JSON.parse(JSON.stringify(DEFAULT_PERMISSIONS[role] || DEFAULT_PERMISSIONS.Waiter));
   };
 
+  // Backbone POS reads a SEPARATE, flat set of permission fields (canVoid,
+  // canDiscount, canRefund, canManageFloor, canVoidItem, canApplyDiscount) -
+  // different from Hub's own nested AppPermissions structure above. Hub used
+  // to never set these at all, meaning any Hub-created staff member had them
+  // all undefined/falsy in Firestore - the nav sidebar bug (case-sensitive role
+  // matching) has already been fixed in POS's App.tsx, but that only restored
+  // *navigation*; these specific feature flags (void/discount/refund/floor)
+  // still needed to be set from Hub's side too. This mirrors POS's own
+  // role->permission mapping (src/App.tsx / StaffManagement.tsx) exactly, so
+  // both apps agree regardless of which one created the staff member.
+  const getPosPermissionsForRole = (role: string) => {
+    const r = (role || '').toLowerCase();
+    return {
+      canVoid: ['manager', 'admin', 'supervisor'].includes(r),
+      canDiscount: ['manager', 'admin', 'supervisor'].includes(r),
+      canRefund: ['manager', 'admin'].includes(r),
+      canManageFloor: ['waiter', 'bartender', 'supervisor', 'manager', 'admin'].includes(r),
+      canVoidItem: ['manager', 'admin', 'supervisor'].includes(r),
+      canApplyDiscount: ['manager', 'admin', 'supervisor'].includes(r),
+    };
+  };
+
   const handleRoleChange = (role: StaffMember['role']) => {
-    const permissions = getRolePermissions(role);
+    // Merge Hub's own nested permissions with POS's flat fields into the SAME
+    // object - Firestore has no schema, and the key names don't collide, so
+    // both apps can read the subset they each care about from one document.
+    const permissions = { ...getRolePermissions(role), ...getPosPermissionsForRole(role) };
     setNewStaff(prev => ({
       ...prev,
       role,
@@ -186,7 +211,7 @@ export const Settings: React.FC<SettingsProps> = ({ auditLogs = [] }) => {
         email: '',
         role: 'Waiter',
         department: 'foh',
-        permissions: getRolePermissions('Waiter'),
+        permissions: { ...getRolePermissions('Waiter'), ...getPosPermissionsForRole('Waiter') },
         allowedStations: [],
         trainingSummary: {
           level: 1,
@@ -212,6 +237,13 @@ export const Settings: React.FC<SettingsProps> = ({ auditLogs = [] }) => {
     let permissions = JSON.parse(JSON.stringify(staff.permissions || {}));
     if (Array.isArray(permissions)) {
       permissions = getRolePermissions(staff.role);
+    }
+    // Backfill POS-specific fields (canVoid/canDiscount/canRefund/
+    // canManageFloor/canVoidItem/canApplyDiscount) if any are missing -
+    // self-heals staff records created before Hub knew about POS's
+    // separate permission schema, the moment someone opens them to edit.
+    if (permissions.canVoid === undefined || permissions.canManageFloor === undefined) {
+      permissions = { ...getPosPermissionsForRole(staff.role), ...permissions };
     }
 
     // pin/hourlyRate/annualSalary live in the separate staffSecrets/{id}
