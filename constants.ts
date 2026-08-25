@@ -1,5 +1,17 @@
-
+﻿
 import { AppPermissions } from './types';
+
+// Single source of truth for hardcoded bootstrap/fallback admin emails.
+// These bypass the normal staffProfiles.role check entirely - kept for
+// initial system access before any staff records exist, and as a safety
+// net. The real, ongoing source of truth for access should be
+// staffProfiles.role once staff records exist.
+//
+// IMPORTANT: firestore.rules' isManager() function and Backbone POS's own
+// copy of this list (src/app/config.ts) CANNOT import from here - Firestore
+// rules can't import application code, and POS is a separate repo. If this
+// list ever changes, update those two places by hand to match.
+export const ADMIN_EMAILS = ['saga00@gmail.com', 'famrokha@gmail.com'] as const;
 
 export const APP_SECTIONS = [
   { id: 'dashboard', name: 'Dashboard' },

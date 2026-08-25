@@ -6,6 +6,10 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    // IMPORTANT: this hardcoded email list is the source of truth Firestore
+    // rules can actually use (rules can't import application code). It must
+    // be kept in sync BY HAND with Hub's constants.ts ADMIN_EMAILS and POS's
+    // own copy in src/app/config.ts if this list ever changes.
     function isManager() {
       return isAuthenticated() && (
         request.auth.token.email == "saga00@gmail.com" ||

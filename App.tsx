@@ -25,7 +25,7 @@ import { buildWeeklyLabourCostPenceMap, sumLabourCostForWeeks, filterShiftsForCo
 import { LayoutDashboard, Package, ClipboardCheck, FileInput, Menu, X, ChefHat, TrendingUp, Truck, Settings as SettingsIcon, BookOpen, Sun, Moon, ShoppingCart, AlertCircle, LogIn, LogOut, Trash2, ReceiptPoundSterling, Megaphone, LayoutList, PoundSterling } from 'lucide-react';
 import { Toaster, toast } from 'sonner';
 import { auth, db, googleProvider, signInWithPopup, onAuthStateChanged, collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, onSnapshot, handleFirestoreError, OperationType, User, cleanObject, signOut, increment, query, where, orderBy, limit, testConnection, LOCATION_ID, writeBatch } from './firebase';
-import { DEFAULT_PERMISSIONS } from './constants';
+import { DEFAULT_PERMISSIONS, ADMIN_EMAILS } from './constants';
 import { calculateTotalCost, mapCategoryId, computeCategorySalesSplit } from './utils/recipeUtils';
 import { CONVERSION_FACTORS, toSafeNumber, resolveInvoiceLine } from './utils/unitConversions';
 import { normalizeCurrency, normalizeTimestamp, normalizeStatus } from './utils/currencyUtils';
@@ -703,7 +703,7 @@ const today = londonHour < 6
 
   // System Permissions Helper
   const userRole = useMemo(() => {
-    const isAdminEmail = user?.email === 'saga00@gmail.com' || user?.email === 'saga00@live.com' || user?.email === 'famrokha@gmail.com';
+    const isAdminEmail = !!user?.email && (ADMIN_EMAILS as readonly string[]).includes(user.email);
     if (isAdminEmail) return 'Admin';
 
     const staffMember = staffMembers.find(s => s.email?.toLowerCase() === user?.email?.toLowerCase());
@@ -1066,7 +1066,7 @@ const today = londonHour < 6
       const data = snapshot.data();
       if (data) {
         if (data.isDarkMode !== undefined) setIsDarkMode(data.isDarkMode);
-        if ((user.email === 'saga00@gmail.com' || user.email === 'famrokha@gmail.com') && data.role !== 'Admin') {
+        if (user.email && (ADMIN_EMAILS as readonly string[]).includes(user.email) && data.role !== 'Admin') {
           setDoc(doc(db, `users/${userId}`), { role: 'Admin' }, { merge: true }).catch(console.error);
         }
       } else {
@@ -1076,7 +1076,7 @@ const today = londonHour < 6
           displayName: user.displayName || '',
           photoURL: user.photoURL || '',
           isDarkMode: false,
-          role: (user.email === 'saga00@gmail.com' || user.email === 'famrokha@gmail.com') ? 'Admin' : 'Waiter'
+          role: (user.email && (ADMIN_EMAILS as readonly string[]).includes(user.email)) ? 'Admin' : 'Waiter'
         })).catch((err: any) => handleFirestoreError(err, OperationType.WRITE, `users/${userId}`));
       }
     }, (err: any) => handleFirestoreError(err, OperationType.GET, `users/${userId}`));
@@ -1092,7 +1092,7 @@ const today = londonHour < 6
 
       snapshot.docs.forEach((d: any) => {
         const staffData = d.data();
-        if (staffData.email && (staffData.email.toLowerCase() === 'saga00@gmail.com' || staffData.email.toLowerCase() === 'saga00@live.com' || staffData.email.toLowerCase() === 'famrokha@gmail.com')) {
+        if (staffData.email && (ADMIN_EMAILS as readonly string[]).includes(staffData.email.toLowerCase())) {
           if (staffData.role !== 'Admin') {
             updateDoc(doc(db, 'staffProfiles', d.id), { role: 'Admin' }).catch(console.error);
           }
