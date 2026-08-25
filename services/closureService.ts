@@ -76,9 +76,18 @@ export async function performClosure(params: {
 
     console.log(`[Close Day] payments loaded (filtered in memory): ${payments.length}`);
 
-    // Fetch Staff Profiles for enrichment
+    // Fetch Staff Profiles for enrichment. pin now lives in the separate
+    // manager-only staffSecrets collection (moved there for security -
+    // staffProfiles is broadly readable so any staff PIN used to be
+    // downloaded to every logged-in browser). Fetched alongside so the
+    // staffByPin lookup below still works correctly instead of silently
+    // collapsing to one bogus entry keyed on undefined. Safe to read here -
+    // this runs as part of closing a business day, an isManager()-gated
+    // operation per firestore.rules, matching staffSecrets' own access rule.
     const staffSnap = await getDocs(collection(db, 'staffProfiles'));
     const staffDocs = staffSnap.docs.map(d => ({ id: d.id, ...d.data() as any }));
+    const staffSecretsSnap = await getDocs(collection(db, 'staffSecrets'));
+    const staffSecretsById = Object.fromEntries(staffSecretsSnap.docs.map(d => [d.id, d.data() as any]));
 
     // Fetch Expenses for the period
     const expensesSnap = await getDocs(query(collection(db, 'expenses'), where('locationId', '==', LOCATION_ID)));
@@ -106,7 +115,11 @@ export async function performClosure(params: {
     const inventoryMap = new Map(inventorySnap.docs.map(d => [d.id, { id: d.id, ...d.data() } as any]));
     
     const staffById = Object.fromEntries(staffDocs.map(s => [s.id, s]));
-    const staffByPin = Object.fromEntries(staffDocs.map(s => [s.pin, s]));
+    const staffByPin = Object.fromEntries(
+      staffDocs
+        .filter(s => staffSecretsById[s.id]?.pin)
+        .map(s => [staffSecretsById[s.id].pin, s])
+    );
     const staffByName = Object.fromEntries(staffDocs.map(s => [s.name?.toLowerCase() || `${s.firstName || ''} ${s.lastName || ''}`.trim().toLowerCase(), s]));
 
     const cardMethods = ['card', 'credit card', 'debit card', 'visa', 'mastercard', 'amex', 'sumup', 'zettle', 'square', 'stripe', 'pdq', 'terminal'];
