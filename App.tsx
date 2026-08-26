@@ -3139,16 +3139,25 @@ const today = londonHour < 6
             )}
 
             {currentView === 'training' && (
-              <TrainingCenter 
-                recipes={recipes} 
-                inventoryItems={combinedItems} 
-                staffId={user?.uid}
-                staffName={user?.displayName || user?.email || 'Unknown'}
-                certifications={staffCertifications}
-                quizSubmissions={quizSubmissions}
-                staffMembers={staffMembers}
-                isAdmin={userRole === 'Admin'}
-              />
+              (userRole === 'Admin' || (staffMembers.find(s => s.email?.toLowerCase() === user?.email?.toLowerCase())?.trainingAccessGranted ?? true))
+                ? (
+                  <TrainingCenter 
+                    recipes={recipes} 
+                    inventoryItems={combinedItems} 
+                    staffId={user?.uid}
+                    staffName={user?.displayName || user?.email || 'Unknown'}
+                    certifications={staffCertifications}
+                    quizSubmissions={quizSubmissions}
+                    staffMembers={staffMembers}
+                    isAdmin={userRole === 'Admin'}
+                  />
+                ) : (
+                  <div className="flex flex-col items-center justify-center h-full p-12 text-center">
+                    <AlertCircle className="h-16 w-16 text-error mb-4 opacity-20" />
+                    <h2 className="text-2xl font-bold text-text-navy mb-2">Training Access Not Granted</h2>
+                    <p className="text-text-muted max-w-md">Your manager hasn't enabled Training access for your account yet. Ask them to turn this on in Settings.</p>
+                  </div>
+                )
             )}
 
             {currentView === 'sales' && (

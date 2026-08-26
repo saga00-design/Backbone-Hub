@@ -27,16 +27,6 @@ interface UserData {
 
 const LOCATION_ID = 'loc_camden';
 
-// Stable, unique 4-digit code — the primary key Labour Import matches against once TTP exports
-// it too (see types.ts StaffMember.staffId). Retries on collision against the current staff list.
-function generateUniqueStaffId(existing: StaffMember[]): string {
-  const taken = new Set(existing.map(s => s.staffId).filter(Boolean));
-  let candidate: string;
-  do {
-    candidate = String(Math.floor(1000 + Math.random() * 9000));
-  } while (taken.has(candidate));
-  return candidate;
-}
 
 interface SettingsProps {
   auditLogs?: AuditLog[];
@@ -1113,7 +1103,7 @@ export const Settings: React.FC<SettingsProps> = ({ auditLogs = [] }) => {
                 <motion.div 
                   initial={{ scale: 0.9, y: 20 }}
                   animate={{ scale: 1, y: 0 }}
-                  className="w-full max-w-md bg-card-bg border border-border-grey rounded-3xl p-8 shadow-2xl"
+                  className="w-full max-w-2xl bg-card-bg border border-border-grey rounded-3xl p-8 shadow-2xl"
                 >
                   <div className="flex items-center justify-between mb-8">
                     <h3 className="text-2xl font-bold text-text-navy tracking-tight">
@@ -1256,33 +1246,23 @@ export const Settings: React.FC<SettingsProps> = ({ auditLogs = [] }) => {
                     <div>
                       <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2 block">Staff ID + Security PIN</label>
                       <p className="text-[9px] font-bold text-text-muted uppercase tracking-wide mb-2 normal-case">
-                        This is the one 4-digit code this person uses everywhere - Hub, POS, and Labour Import matching. Set it once here after creating them in HR/Payroll.
+                        This is the one 4-digit code this person uses everywhere - Hub, POS, and Labour Import matching. TTP assigns this when the employee is set up there - type in the same ID and PIN they already have, don't make up new ones here.
                       </p>
-                      <div className="flex gap-2 mb-3">
-                        <input
-                          type="text"
-                          inputMode="numeric"
-                          maxLength={4}
-                          placeholder="e.g. 4821"
-                          value={newStaff.staffId || ''}
-                          onChange={(e) => setNewStaff({ ...newStaff, staffId: e.target.value.replace(/\D/g, '').slice(0, 4) })}
-                          className="w-full bg-main-bg border border-border-grey rounded-xl px-4 py-3 text-text-navy focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent transition-all"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => setNewStaff({ ...newStaff, staffId: generateUniqueStaffId(staffMembers) })}
-                          title="Generate a unique Staff ID"
-                          className="shrink-0 flex items-center gap-1.5 px-4 rounded-xl border border-border-grey text-text-muted hover:text-text-navy hover:border-accent transition-all"
-                        >
-                          <RefreshCw className="w-4 h-4" />
-                        </button>
-                      </div>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        maxLength={4}
+                        placeholder="e.g. 4821 (from TTP)"
+                        value={newStaff.staffId || ''}
+                        onChange={(e) => setNewStaff({ ...newStaff, staffId: e.target.value.replace(/\D/g, '').slice(0, 4) })}
+                        className="w-full bg-main-bg border border-border-grey rounded-xl px-4 py-3 mb-3 text-text-navy focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent transition-all"
+                      />
                       <input 
                         type={userRole === 'Admin' ? "text" : "password"}
                         maxLength={4}
                         value={newStaff.pin}
                         onChange={(e) => setNewStaff({ ...newStaff, pin: e.target.value })}
-                        placeholder="4-digit PIN"
+                        placeholder="4-digit PIN (from TTP)"
                         className="w-full bg-main-bg border border-border-grey rounded-xl px-4 py-3 text-center text-2xl tracking-[0.5em] text-text-navy focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent transition-all"
                       />
                     </div>
