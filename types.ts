@@ -604,6 +604,8 @@ export interface StaffMember {
   id: string;
   firstName: string;
   lastName: string;
+  middleName?: string;
+  mobileNumber?: string;
   email: string;
   role: 'Admin' | 'Manager' | 'Waiter' | 'Chef' | 'Bartender';
   // pin, hourlyRate, salaryChanges, and annualSalary moved to the separate
@@ -641,6 +643,10 @@ export interface StaffMember {
     requiredOutstanding: number;
     lastUpdated: string | null;
   };
+  // Whether this staff member has access to the Training feature - a
+  // simple grant/revoke toggle, separate from trainingSummary above (which
+  // tracks actual progress once training is underway).
+  trainingAccessGranted?: boolean;
 
   certifications: string[];
   createdAt: string;

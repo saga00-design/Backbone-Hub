@@ -66,6 +66,8 @@ export const Settings: React.FC<SettingsProps> = ({ auditLogs = [] }) => {
   const [newStaff, setNewStaff] = useState<Partial<StaffMember> & Partial<StaffSecret>>({
     firstName: '',
     lastName: '',
+    middleName: '',
+    mobileNumber: '',
     email: '',
     role: 'Waiter',
     department: 'foh',
@@ -83,6 +85,7 @@ export const Settings: React.FC<SettingsProps> = ({ auditLogs = [] }) => {
     hourlyRate: 12.50,
     employmentType: 'Hourly',
     active: true,
+    trainingAccessGranted: true,
   });
 
   const getRolePermissions = (role: string): AppPermissions => {
@@ -162,6 +165,8 @@ export const Settings: React.FC<SettingsProps> = ({ auditLogs = [] }) => {
       const staffPayload = {
         firstName: newStaff.firstName,
         lastName: newStaff.lastName,
+        middleName: newStaff.middleName || '',
+        mobileNumber: newStaff.mobileNumber || '',
         name: `${newStaff.firstName} ${newStaff.lastName}`.trim(),
         email: newStaff.email || '',
         staffId: staffIdTrimmed || undefined,
@@ -181,6 +186,7 @@ export const Settings: React.FC<SettingsProps> = ({ auditLogs = [] }) => {
         },
 
         certifications: newStaff.certifications || [],
+        trainingAccessGranted: newStaff.trainingAccessGranted ?? true,
         lastUpdated: timestamp,
         ...(editingStaffId ? {} : { createdAt: timestamp })
       };
@@ -208,6 +214,8 @@ export const Settings: React.FC<SettingsProps> = ({ auditLogs = [] }) => {
       setNewStaff({
         firstName: '',
         lastName: '',
+        middleName: '',
+        mobileNumber: '',
         email: '',
         role: 'Waiter',
         department: 'foh',
@@ -225,6 +233,7 @@ export const Settings: React.FC<SettingsProps> = ({ auditLogs = [] }) => {
         hourlyRate: 12.5,
         employmentType: 'Hourly',
         active: true,
+        trainingAccessGranted: true,
       });
 
   } catch (err) {
@@ -1119,13 +1128,22 @@ export const Settings: React.FC<SettingsProps> = ({ auditLogs = [] }) => {
                   </div>
 
                   <div className="space-y-5 max-h-[60vh] overflow-y-auto pr-4 custom-scrollbar overflow-x-hidden">
-                    <div className="grid grid-cols-2 gap-4">
+                    <div className="grid grid-cols-3 gap-4">
                       <div>
                         <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2 block">First Name</label>
                         <input 
                           type="text"
                           value={newStaff.firstName}
                           onChange={(e) => setNewStaff({ ...newStaff, firstName: e.target.value })}
+                          className="w-full bg-main-bg border border-border-grey rounded-xl px-4 py-3 text-text-navy focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent transition-all"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2 block">Middle Name</label>
+                        <input 
+                          type="text"
+                          value={newStaff.middleName || ''}
+                          onChange={(e) => setNewStaff({ ...newStaff, middleName: e.target.value })}
                           className="w-full bg-main-bg border border-border-grey rounded-xl px-4 py-3 text-text-navy focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent transition-all"
                         />
                       </div>
@@ -1139,39 +1157,25 @@ export const Settings: React.FC<SettingsProps> = ({ auditLogs = [] }) => {
                         />
                       </div>
                     </div>
-                    <div>
-                      <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2 block">Email</label>
-                      <input 
-                        type="email"
-                        value={newStaff.email}
-                        onChange={(e) => setNewStaff({ ...newStaff, email: e.target.value })}
-                        className="w-full bg-main-bg border border-border-grey rounded-xl px-4 py-3 text-text-navy focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent transition-all"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2 block">Staff ID</label>
-                      <div className="flex gap-2">
-                        <input
-                          type="text"
-                          inputMode="numeric"
-                          maxLength={4}
-                          placeholder="e.g. 4821"
-                          value={newStaff.staffId || ''}
-                          onChange={(e) => setNewStaff({ ...newStaff, staffId: e.target.value.replace(/\D/g, '').slice(0, 4) })}
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2 block">Email</label>
+                        <input 
+                          type="email"
+                          value={newStaff.email}
+                          onChange={(e) => setNewStaff({ ...newStaff, email: e.target.value })}
                           className="w-full bg-main-bg border border-border-grey rounded-xl px-4 py-3 text-text-navy focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent transition-all"
                         />
-                        <button
-                          type="button"
-                          onClick={() => setNewStaff({ ...newStaff, staffId: generateUniqueStaffId(staffMembers) })}
-                          title="Generate a unique Staff ID"
-                          className="shrink-0 flex items-center gap-1.5 px-4 rounded-xl border border-border-grey text-text-muted hover:text-text-navy hover:border-accent transition-all"
-                        >
-                          <RefreshCw className="w-4 h-4" />
-                        </button>
                       </div>
-                      <p className="text-[9px] font-bold text-text-muted uppercase tracking-wide mt-1.5 normal-case">
-                        Stable ID used to match Labour Import rows to this profile — more reliable than matching by name text. Optional for now; leave blank if not needed yet.
-                      </p>
+                      <div>
+                        <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2 block">Mobile Number</label>
+                        <input 
+                          type="tel"
+                          value={newStaff.mobileNumber || ''}
+                          onChange={(e) => setNewStaff({ ...newStaff, mobileNumber: e.target.value })}
+                          className="w-full bg-main-bg border border-border-grey rounded-xl px-4 py-3 text-text-navy focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent transition-all"
+                        />
+                      </div>
                     </div>
                     <div>
                       <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2 block">Department</label>
@@ -1198,6 +1202,9 @@ export const Settings: React.FC<SettingsProps> = ({ auditLogs = [] }) => {
                         <option value="Manager">Manager</option>
                         <option value="Admin">Admin</option>
                       </select>
+                      <p className="text-[9px] font-bold text-text-muted uppercase tracking-wide mt-1.5 normal-case">
+                        Role drives system access on both Hub and POS - Station Access has been removed as a separate setting since it was never actually used for anything.
+                      </p>
                     </div>
                     <div>
                       <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2 block">Employment Type</label>
@@ -1210,7 +1217,7 @@ export const Settings: React.FC<SettingsProps> = ({ auditLogs = [] }) => {
                         <option value="Salaried">Salaried</option>
                       </select>
                       <p className="text-[9px] font-bold text-text-muted uppercase tracking-wide mt-1.5 normal-case">
-                        Salaried staff still clock in/out for hours tracking, but their pay comes from the Annual Salary below instead of hours × Hourly Rate — their shifts are excluded from the automated Wages cost total.
+                        Hourly rate is now managed in TTP, not here. Salaried staff still clock in/out for hours tracking, but their pay comes from the Annual Salary below - their shifts are excluded from the automated Wages cost total.
                       </p>
                     </div>
                     {newStaff.employmentType === 'Salaried' && (
@@ -1228,101 +1235,55 @@ export const Settings: React.FC<SettingsProps> = ({ auditLogs = [] }) => {
                       </div>
                     )}
 
-                    <div className="bg-main-bg/50 p-4 rounded-2xl border border-border-grey">
-                      <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest mb-4 block">Station Access</label>
-                      <div className="flex flex-wrap gap-6">
-                        {['food', 'beverage', 'non_fb'].map(station => (
-                          <label key={station} className="flex items-center gap-2 cursor-pointer group">
-                            <input 
-                              type="checkbox"
-                              checked={(newStaff.allowedStations || []).includes(station)}
-                              onChange={(e) => {
-                                const stations = [...(newStaff.allowedStations || [])];
-                                if (e.target.checked) {
-                                  stations.push(station);
-                                } else {
-                                  const index = stations.indexOf(station);
-                                  if (index > -1) stations.splice(index, 1);
-                                }
-                                setNewStaff({ ...newStaff, allowedStations: stations });
-                              }}
-                              className="w-4 h-4 rounded border-border-grey text-accent focus:ring-accent"
-                            />
-                            <span className="text-[10px] font-bold uppercase tracking-widest text-text-navy group-hover:text-accent transition-colors">
-                              {station.replace('_', '-')}
-                            </span>
-                          </label>
-                        ))}
+                    <div className="bg-main-bg/50 p-4 rounded-2xl border border-border-grey flex items-center justify-between">
+                      <div>
+                        <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest block">Grant Training Access</label>
+                        <p className="text-[9px] font-bold text-text-muted uppercase tracking-wide mt-1 normal-case">
+                          Lets this staff member use the Training feature. Their actual progress is tracked separately once they start.
+                        </p>
                       </div>
+                      <label className="relative inline-flex items-center cursor-pointer shrink-0 ml-4">
+                        <input
+                          type="checkbox"
+                          checked={newStaff.trainingAccessGranted ?? true}
+                          onChange={(e) => setNewStaff({ ...newStaff, trainingAccessGranted: e.target.checked })}
+                          className="sr-only peer"
+                        />
+                        <div className="w-11 h-6 bg-border-grey rounded-full peer peer-checked:bg-accent transition-all after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-5"></div>
+                      </label>
                     </div>
 
-                    <div className="bg-main-bg/50 p-4 rounded-2xl border border-border-grey">
-                      <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest mb-4 block">Training Summary</label>
-                      <div className="grid grid-cols-3 gap-3">
-                        <div>
-                          <label className="text-[8px] font-bold text-text-muted uppercase tracking-widiest mb-1 block">Level</label>
-                          <input 
-                            type="number"
-                            value={newStaff.trainingSummary?.level || 1}
-                            onChange={(e) => setNewStaff({
-                              ...newStaff,
-                              trainingSummary: {
-                                ...(newStaff.trainingSummary as any),
-                                level: parseInt(e.target.value) || 1
-                              }
-                            })}
-                            className="w-full bg-card-bg border border-border-grey rounded-lg px-2 py-1.5 text-xs text-text-navy"
-                          />
-                        </div>
-                        <div>
-                          <label className="text-[8px] font-bold text-text-muted uppercase tracking-widest mb-1 block">Completed</label>
-                          <input 
-                            type="number"
-                            value={newStaff.trainingSummary?.completedModules || 0}
-                            onChange={(e) => setNewStaff({
-                              ...newStaff,
-                              trainingSummary: {
-                                ...(newStaff.trainingSummary as any),
-                                completedModules: parseInt(e.target.value) || 0
-                              }
-                            })}
-                            className="w-full bg-card-bg border border-border-grey rounded-lg px-2 py-1.5 text-xs text-text-navy"
-                          />
-                        </div>
-                        <div>
-                          <label className="text-[8px] font-bold text-text-muted uppercase tracking-widest mb-1 block">Total</label>
-                          <input 
-                            type="number"
-                            value={newStaff.trainingSummary?.totalModules || 0}
-                            onChange={(e) => setNewStaff({
-                              ...newStaff,
-                              trainingSummary: {
-                                ...(newStaff.trainingSummary as any),
-                                totalModules: parseInt(e.target.value) || 0
-                              }
-                            })}
-                            className="w-full bg-card-bg border border-border-grey rounded-lg px-2 py-1.5 text-xs text-text-navy"
-                          />
-                        </div>
-                      </div>
-                    </div>
                     <div>
-                      <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2 block">Security PIN (4 digits)</label>
+                      <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2 block">Staff ID + Security PIN</label>
+                      <p className="text-[9px] font-bold text-text-muted uppercase tracking-wide mb-2 normal-case">
+                        This is the one 4-digit code this person uses everywhere - Hub, POS, and Labour Import matching. Set it once here after creating them in HR/Payroll.
+                      </p>
+                      <div className="flex gap-2 mb-3">
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          maxLength={4}
+                          placeholder="e.g. 4821"
+                          value={newStaff.staffId || ''}
+                          onChange={(e) => setNewStaff({ ...newStaff, staffId: e.target.value.replace(/\D/g, '').slice(0, 4) })}
+                          className="w-full bg-main-bg border border-border-grey rounded-xl px-4 py-3 text-text-navy focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent transition-all"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setNewStaff({ ...newStaff, staffId: generateUniqueStaffId(staffMembers) })}
+                          title="Generate a unique Staff ID"
+                          className="shrink-0 flex items-center gap-1.5 px-4 rounded-xl border border-border-grey text-text-muted hover:text-text-navy hover:border-accent transition-all"
+                        >
+                          <RefreshCw className="w-4 h-4" />
+                        </button>
+                      </div>
                       <input 
                         type={userRole === 'Admin' ? "text" : "password"}
                         maxLength={4}
                         value={newStaff.pin}
                         onChange={(e) => setNewStaff({ ...newStaff, pin: e.target.value })}
+                        placeholder="4-digit PIN"
                         className="w-full bg-main-bg border border-border-grey rounded-xl px-4 py-3 text-center text-2xl tracking-[0.5em] text-text-navy focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent transition-all"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2 block">Hourly Rate (£)</label>
-                      <input 
-                        type="number"
-                        value={newStaff.hourlyRate}
-                        onChange={(e) => setNewStaff({ ...newStaff, hourlyRate: parseFloat(e.target.value) })}
-                        className="w-full bg-main-bg border border-border-grey rounded-xl px-4 py-3 text-text-navy focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent transition-all"
                       />
                     </div>
 
