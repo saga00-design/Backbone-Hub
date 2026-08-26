@@ -1253,16 +1253,8 @@ export const Settings: React.FC<SettingsProps> = ({ auditLogs = [] }) => {
                         inputMode="numeric"
                         maxLength={4}
                         placeholder="e.g. 4821 (from TTP)"
-                        value={newStaff.staffId || ''}
-                        onChange={(e) => setNewStaff({ ...newStaff, staffId: e.target.value.replace(/\D/g, '').slice(0, 4) })}
-                        className="w-full bg-main-bg border border-border-grey rounded-xl px-4 py-3 mb-3 text-text-navy focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent transition-all"
-                      />
-                      <input 
-                        type={userRole === 'Admin' ? "text" : "password"}
-                        maxLength={4}
-                        value={newStaff.pin}
-                        onChange={(e) => setNewStaff({ ...newStaff, pin: e.target.value })}
-                        placeholder="4-digit PIN (from TTP)"
+                        value={newStaff.staffId || newStaff.pin || ''}
+                        onChange={(e) => { const v = e.target.value.replace(/\D/g, '').slice(0, 4); setNewStaff({ ...newStaff, staffId: v, pin: v }); }}
                         className="w-full bg-main-bg border border-border-grey rounded-xl px-4 py-3 text-center text-2xl tracking-[0.5em] text-text-navy focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent transition-all"
                       />
                     </div>
