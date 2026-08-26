@@ -87,6 +87,7 @@ export const googleProvider = new GoogleAuthProvider();
 export const functions = getFunctions(app, 'us-central1');
 export const callGemini = httpsCallable(functions, 'callGemini');
 export const verifyStaffPin = httpsCallable(functions, 'verifyStaffPin');
+export const fixElliottRecord = httpsCallable(functions, 'fixElliottRecord');
 
 // ─────────────────────────────────────────────────────────────
 // Identity constants
