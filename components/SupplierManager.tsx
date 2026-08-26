@@ -1,4 +1,4 @@
-
+﻿
 import React, { useState } from 'react';
 import { Supplier, InventoryItem, Invoice } from '../types';
 import { Button } from './Button';
@@ -32,7 +32,8 @@ export const SupplierManager: React.FC<SupplierManagerProps> = ({
     email: '',
     phone: '',
     address: '',
-    notes: ''
+    notes: '',
+    paymentTerms: { days: 30, countFrom: 'invoiceDate' as const }
   });
 
   const [confirmDelete, setConfirmDelete] = useState<{ isOpen: boolean; id: string | null }>({
@@ -50,7 +51,8 @@ export const SupplierManager: React.FC<SupplierManagerProps> = ({
         email: '',
         phone: '',
         address: '',
-        notes: ''
+        notes: '',
+        paymentTerms: { days: 30, countFrom: 'invoiceDate' as const }
       });
     }
     setIsModalOpen(true);
@@ -67,7 +69,8 @@ export const SupplierManager: React.FC<SupplierManagerProps> = ({
       email: editingSupplier.email,
       phone: editingSupplier.phone,
       address: editingSupplier.address,
-      notes: editingSupplier.notes
+      notes: editingSupplier.notes,
+      paymentTerms: editingSupplier.paymentTerms
     };
 
     onSaveSupplier(supplierToSave);
@@ -356,6 +359,30 @@ export const SupplierManager: React.FC<SupplierManagerProps> = ({
                         onChange={(e) => setEditingSupplier(prev => ({ ...prev, notes: e.target.value }))}
                         placeholder="Payment terms, delivery days, etc."
                       />
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-black text-gray-400 dark:text-slate-500 uppercase tracking-widest mb-2">Payment Terms</label>
+                      <div className="flex gap-3">
+                        <input
+                          type="number"
+                          min={0}
+                          className="bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-900 dark:text-white block w-24 px-4 py-3.5 text-sm rounded-xl focus:outline-none focus:ring-2 focus:ring-accent transition-all"
+                          value={editingSupplier.paymentTerms?.days ?? ''}
+                          onChange={(e) => setEditingSupplier(prev => ({ ...prev, paymentTerms: { days: Number(e.target.value) || 0, countFrom: prev.paymentTerms?.countFrom || 'invoiceDate' } }))}
+                          placeholder="30"
+                        />
+                        <span className="self-center text-xs text-gray-500 dark:text-slate-400">days from</span>
+                        <select
+                          className="bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-900 dark:text-white block flex-1 px-4 py-3.5 text-sm rounded-xl focus:outline-none focus:ring-2 focus:ring-accent transition-all"
+                          value={editingSupplier.paymentTerms?.countFrom || 'invoiceDate'}
+                          onChange={(e) => setEditingSupplier(prev => ({ ...prev, paymentTerms: { days: prev.paymentTerms?.days || 0, countFrom: e.target.value as 'invoiceDate' | 'goodsReceivedDate' } }))}
+                        >
+                          <option value="invoiceDate">Invoice Date</option>
+                          <option value="goodsReceivedDate">Goods Received Date</option>
+                        </select>
+                      </div>
+                      <p className="text-[10px] text-gray-400 dark:text-slate-500 mt-1.5">Used to auto-calculate a due date on invoices - always editable per-invoice afterward.</p>
                     </div>
                   </div>
                 </div>

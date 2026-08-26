@@ -1649,9 +1649,28 @@ const today = londonHour < 6
     safeFirestoreSet('stockCounts', record.id, record);
   };
 
+  // Auto-calculates a due date from the linked supplier's payment terms.
+  // Only fills it in if not already set (e.g. by a manual override upstream)
+  const calculateInvoiceDueDate = (invoice: Invoice): string | undefined => {
+    const supplier = suppliers.find(s => s.id === invoice.supplierId);
+    if (!supplier?.paymentTerms) return undefined;
+    const { days, countFrom } = supplier.paymentTerms;
+    let referenceDateStr = invoice.date;
+    if (countFrom === 'goodsReceivedDate' && invoice.orderId) {
+      const receiving = receivingRecords.find(r => r.orderId === invoice.orderId);
+      if (receiving) referenceDateStr = receiving.date;
+    }
+    const due = new Date(referenceDateStr);
+    due.setDate(due.getDate() + days);
+    return due.toISOString().split('T')[0];
+  };
+
   const handleAddFromInvoice = (invoice: Invoice) => {
-    setInvoices(prev => [invoice, ...prev]);
-    safeFirestoreSet('invoices', invoice.id, invoice);
+    const invoiceWithDueDate = invoice.dueDate || invoice.dueDateManuallySet
+      ? invoice
+      : { ...invoice, dueDate: calculateInvoiceDueDate(invoice) };
+    setInvoices(prev => [invoiceWithDueDate, ...prev]);
+    safeFirestoreSet('invoices', invoiceWithDueDate.id, invoiceWithDueDate);
     
     if (invoice.status === 'Processed') {
       toast.success(`Processed invoice from ${invoice.vendor}.`);

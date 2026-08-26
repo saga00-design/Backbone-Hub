@@ -105,19 +105,23 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const topCategories = subCategoryBreakdown.slice(0, TOP_CATEGORY_COUNT);
   const remainingCategories = subCategoryBreakdown.slice(TOP_CATEGORY_COUNT);
 
-  // Outstanding supplier invoices - note there's no real due-date field on
-  // Invoice/Supplier yet, only the invoice date itself, so this shows genuine
-  // days-outstanding rather than claiming a precise due date. 30+ days is
-  // flagged as overdue as a reasonable general default.
+  // Outstanding supplier invoices - uses each invoice's real dueDate when
+  // present (auto-calculated from the supplier's payment terms, or set
+  // manually). Falls back to days-since-invoice-date for older invoices
+  // that predate this feature / have no supplier payment terms configured.
   const outstandingInvoices = useMemo(() => {
     const now = Date.now();
     return invoices
       .filter(inv => inv.paymentStatus === 'Unpaid')
-      .map(inv => ({
-        ...inv,
-        daysOutstanding: Math.max(0, Math.floor((now - new Date(inv.date).getTime()) / 86400000)),
-      }))
-      .sort((a, b) => b.daysOutstanding - a.daysOutstanding);
+      .map(inv => {
+        if (inv.dueDate) {
+          const daysUntilDue = Math.floor((new Date(inv.dueDate).getTime() - now) / 86400000);
+          return { ...inv, daysUntilDue, isOverdue: daysUntilDue < 0, hasDueDate: true };
+        }
+        const daysOutstanding = Math.max(0, Math.floor((now - new Date(inv.date).getTime()) / 86400000));
+        return { ...inv, daysUntilDue: -daysOutstanding, isOverdue: daysOutstanding >= 30, hasDueDate: false };
+      })
+      .sort((a, b) => a.daysUntilDue - b.daysUntilDue);
   }, [invoices]);
   const remainingTotal = remainingCategories.reduce((acc, c) => acc + c.value, 0);
 
@@ -637,8 +641,15 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 >
                   <span className="flex flex-col truncate">
                     <span className="text-xs font-medium text-text-navy group-hover:text-accent transition-colors truncate" title={inv.vendor}>{inv.vendor}</span>
-                    <span className={`text-[10px] font-bold uppercase tracking-wide ${inv.daysOutstanding >= 30 ? "text-red-500" : "text-text-muted"}`}>
-                      {inv.daysOutstanding >= 30 ? "Overdue — " : ""}{inv.daysOutstanding} day{inv.daysOutstanding === 1 ? "" : "s"} outstanding
+                    <span className={`text-[10px] font-bold uppercase tracking-wide ${inv.isOverdue ? "text-red-500" : "text-text-muted"}`}>
+                      {inv.hasDueDate
+                        ? (inv.isOverdue
+                            ? `Overdue by ${Math.abs(inv.daysUntilDue)} day${Math.abs(inv.daysUntilDue) === 1 ? "" : "s"}`
+                            : `Due in ${inv.daysUntilDue} day${inv.daysUntilDue === 1 ? "" : "s"}`)
+                        : (inv.isOverdue
+                            ? `Overdue — ${Math.abs(inv.daysUntilDue)} days outstanding`
+                            : `${Math.abs(inv.daysUntilDue)} day${Math.abs(inv.daysUntilDue) === 1 ? "" : "s"} outstanding (no due date set)`)
+                      }
                     </span>
                   </span>
                   <span className="text-sm font-bold text-text-navy flex items-center gap-2 flex-shrink-0">

@@ -89,6 +89,13 @@ export interface Supplier {
   phone?: string;
   address?: string;
   notes?: string;
+  // Default payment terms for this supplier - used to auto-calculate a due
+  // date on invoices linked to them. Always editable per-invoice afterward;
+  // this is just a sensible starting point, not a hard rule.
+  paymentTerms?: {
+    days: number; // e.g. 5-30+, varies a lot by supplier
+    countFrom: 'invoiceDate' | 'goodsReceivedDate'; // no reliable 'date ordered' source in current state
+  };
 }
 
 export interface RecipeIngredient {
@@ -300,6 +307,11 @@ export interface Invoice {
   totalAmount: number;
   status: 'Pending' | 'Processed';
   paymentStatus: 'Paid' | 'Unpaid';
+  // Auto-calculated from the linked supplier's paymentTerms when the invoice
+  // is created/linked to an order, but always manually editable afterward -
+  // the calculation is a smart default, not a lock.
+  dueDate?: string;
+  dueDateManuallySet?: boolean;
 }
 
 export interface InvoiceItem {
