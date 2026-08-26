@@ -1,11 +1,11 @@
-
+﻿
 import React, { useMemo, useState } from 'react';
-import { InventoryItem, DailyClosure } from '../types';
+import { InventoryItem, DailyClosure, Invoice } from '../types';
 import { CategorySalesSplit } from '../utils/recipeUtils';
 import { TrendingUp, AlertTriangle, PoundSterling, Brain, RefreshCw, ArrowRight, Banknote, ShoppingCart, Clock, Bot, Wifi, WifiOff, ChevronDown, ChevronUp, HardHat, LayoutDashboard } from 'lucide-react';
 import { Button } from './Button';
 import { PageHeader } from './PageHeader';
-import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts';
+import { ResponsiveContainer, Tooltip, BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid } from 'recharts';
 
 interface LivePosSalesSummary {
   totalPaid: number;
@@ -37,6 +37,7 @@ interface DashboardProps {
   todaysClosure: DailyClosure | null;
   todayCategorySalesSplit: CategorySalesSplit;
   labourCostPeriodToDate: LabourCostPeriodToDate;
+  invoices: Invoice[];
   setCurrentView?: (view: any) => void;
   onAddToCart?: (item: InventoryItem, quantity: number) => void;
 }
@@ -65,6 +66,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
   todaysClosure,
   todayCategorySalesSplit,
   labourCostPeriodToDate,
+  invoices,
   setCurrentView,
   onAddToCart
 }) => {
@@ -102,6 +104,21 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const TOP_CATEGORY_COUNT = 6;
   const topCategories = subCategoryBreakdown.slice(0, TOP_CATEGORY_COUNT);
   const remainingCategories = subCategoryBreakdown.slice(TOP_CATEGORY_COUNT);
+
+  // Outstanding supplier invoices - note there's no real due-date field on
+  // Invoice/Supplier yet, only the invoice date itself, so this shows genuine
+  // days-outstanding rather than claiming a precise due date. 30+ days is
+  // flagged as overdue as a reasonable general default.
+  const outstandingInvoices = useMemo(() => {
+    const now = Date.now();
+    return invoices
+      .filter(inv => inv.paymentStatus === 'Unpaid')
+      .map(inv => ({
+        ...inv,
+        daysOutstanding: Math.max(0, Math.floor((now - new Date(inv.date).getTime()) / 86400000)),
+      }))
+      .sort((a, b) => b.daysOutstanding - a.daysOutstanding);
+  }, [invoices]);
   const remainingTotal = remainingCategories.reduce((acc, c) => acc + c.value, 0);
 
   const goToInventoryCategory = (categoryName: string) => {
@@ -195,7 +212,6 @@ export const Dashboard: React.FC<DashboardProps> = ({
       .slice(0, 8); // Show top 8 items at risk
   }, [items]);
 
-  const COLORS = ['#F27D26', '#141414', '#5A5A40', '#E4E3E0', '#8E9299', '#4a4a4a'];
 
   // Gross Sales hover/click popover
   const [grossDetailOpen, setGrossDetailOpen] = useState(false);
@@ -556,44 +572,17 @@ export const Dashboard: React.FC<DashboardProps> = ({
         )}
       </div>
 
-      {/* Sub Categories Breakdown */}
+      {/* Sub Categories Breakdown + Outstanding Supplier Invoices */}
       <div className="bg-card-bg shadow rounded-lg p-6 border border-border-grey">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-6 gap-4">
-          <h3 className="text-lg leading-6 font-medium text-text-navy">Total Value by Sub Category</h3>
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          <div className="lg:col-span-1 h-[220px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={subCategoryBreakdown.slice(0, 6)}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={60}
-                  outerRadius={80}
-                  paddingAngle={5}
-                  dataKey="value"
-                >
-                  {subCategoryBreakdown.slice(0, 6).map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                  ))}
-                </Pie>
-                <Tooltip
-                  formatter={(value: number) => [`£${value.toFixed(2)}`, 'Value']}
-                  contentStyle={{ backgroundColor: '#151619', border: 'none', borderRadius: '8px', color: '#fff' }}
-                />
-              </PieChart>
-            </ResponsiveContainer>
-          </div>
-
-          <div className="lg:col-span-2">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+          <div>
+            <h3 className="text-lg leading-6 font-medium text-text-navy mb-4">Total Value by Sub Category</h3>
             <div className="divide-y divide-border-grey/60">
               {topCategories.map((cat) => (
                 <button
                   key={cat.name}
                   onClick={() => goToInventoryCategory(cat.name)}
-                  className="w-full flex items-center justify-between py-2.5 px-2 hover:bg-main-bg/60 rounded-lg transition-colors group text-left"
+                  className="w-full flex items-center justify-between py-1 px-2 hover:bg-main-bg/60 rounded-lg transition-colors group text-left"
                 >
                   <span className="text-xs font-medium text-text-navy group-hover:text-accent transition-colors truncate" title={cat.name}>{cat.name}</span>
                   <span className="text-sm font-bold text-text-navy flex items-center gap-2 flex-shrink-0">
@@ -622,7 +611,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                       <button
                         key={cat.name}
                         onClick={() => goToInventoryCategory(cat.name)}
-                        className="w-full flex items-center justify-between py-2.5 px-2 hover:bg-main-bg/60 rounded-lg transition-colors group text-left"
+                        className="w-full flex items-center justify-between py-1 px-2 hover:bg-main-bg/60 rounded-lg transition-colors group text-left"
                       >
                         <span className="text-xs font-medium text-text-navy group-hover:text-accent transition-colors truncate" title={cat.name}>{cat.name}</span>
                         <span className="text-sm font-bold text-text-navy flex items-center gap-2 flex-shrink-0">
@@ -635,6 +624,33 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 )}
               </div>
             )}
+          </div>
+
+          <div>
+            <h3 className="text-lg leading-6 font-medium text-text-navy mb-4">Outstanding Supplier Invoices</h3>
+            <div className="divide-y divide-border-grey/60">
+              {outstandingInvoices.slice(0, 8).map((inv) => (
+                <button
+                  key={inv.id}
+                  onClick={() => setCurrentView && setCurrentView("invoices")}
+                  className="w-full flex items-center justify-between py-1 px-2 hover:bg-main-bg/60 rounded-lg transition-colors group text-left"
+                >
+                  <span className="flex flex-col truncate">
+                    <span className="text-xs font-medium text-text-navy group-hover:text-accent transition-colors truncate" title={inv.vendor}>{inv.vendor}</span>
+                    <span className={`text-[10px] font-bold uppercase tracking-wide ${inv.daysOutstanding >= 30 ? "text-red-500" : "text-text-muted"}`}>
+                      {inv.daysOutstanding >= 30 ? "Overdue — " : ""}{inv.daysOutstanding} day{inv.daysOutstanding === 1 ? "" : "s"} outstanding
+                    </span>
+                  </span>
+                  <span className="text-sm font-bold text-text-navy flex items-center gap-2 flex-shrink-0">
+                    £{inv.totalAmount.toFixed(0)}
+                    <ArrowRight className="h-3 w-3 text-text-muted/30 group-hover:text-accent group-hover:translate-x-0.5 transition-all" />
+                  </span>
+                </button>
+              ))}
+              {outstandingInvoices.length === 0 && (
+                 <p className="text-text-muted text-sm py-4">No outstanding supplier invoices.</p>
+              )}
+            </div>
           </div>
         </div>
       </div>

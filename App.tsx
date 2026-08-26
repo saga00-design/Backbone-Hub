@@ -3042,6 +3042,7 @@ const today = londonHour < 6
                   todaysClosure={closures.find(c => c.type === ClosureType.DAY && c.date === getBusinessDay()) || null}
                   todayCategorySalesSplit={todayCategorySalesSplit}
                   labourCostPeriodToDate={labourCostPeriodToDate}
+                  invoices={invoices}
                   setCurrentView={setCurrentView}
                   onAddToCart={handleAddToCart}
                 />
