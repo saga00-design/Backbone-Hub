@@ -199,7 +199,7 @@ export async function testConnection() {
     console.log('[Diagnostic] Firestore DELETE SUCCESSFUL.');
   } catch (error: any) {
     console.error('%c[Diagnostic] Firestore Connectivity Test FAILED:', 'color: red;', error);
-    if (error.code === 'permission-denied') {
+    if (error.code === 'permission-denied' && import.meta.env.DEV) {
       console.error('[Diagnostic] Error: permission-denied. Current Auth UID:', auth.currentUser?.uid);
     }
     throw error;

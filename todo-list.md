@@ -20,8 +20,8 @@
 ### Low
 - [ ] CN-020 — `.gitignore` missing key/cert patterns
 - [ ] CN-021 — no `storage.rules` tracked
-- [ ] CN-023 — unescaped `document.write` in `ExpenseManager.tsx`
-- [ ] CN-024 — error handler logs full auth context to console
+- [x] CN-023 - replaced document.write string-interpolation (XSS risk if receiptImageUrl was ever malicious) with safe DOM construction in ExpenseManager.tsx
+- [x] CN-024 - narrower than framed: only logs auth UID, locally, on permission-denied. Gated behind import.meta.env.DEV so it never logs in production
 - [ ] CN-025 — `Math.random()` for staff ID gen (now moot — IDs come from TTP)
 - [ ] CN-026 — no CI/CD vulnerability scanning
 ### Unconfirmed

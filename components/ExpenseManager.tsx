@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef } from 'react';
+﻿import React, { useState, useMemo, useRef } from 'react';
 import { Receipt, Plus, Search, Calendar, User, FileText, Download, Filter, ArrowUpDown, Trash, Camera, Upload, X, Image as ImageIcon, CheckCircle2, Clock, AlertCircle } from 'lucide-react';
 import { ExpenseRecord } from '../types';
 import { toast } from 'sonner';
@@ -272,7 +272,14 @@ export const ExpenseManager: React.FC<ExpenseManagerProps> = ({
                           <button
                             onClick={() => {
                               const win = window.open();
-                              win?.document.write(`<img src="${record.receiptImageUrl}" style="max-width: 100%;" />`);
+                              if (win && record.receiptImageUrl) {
+                                // Built via DOM APIs, not document.write with string interpolation -
+                                // avoids HTML injection if receiptImageUrl ever contained malicious content.
+                                const img = win.document.createElement('img');
+                                img.src = record.receiptImageUrl;
+                                img.style.maxWidth = '100%';
+                                win.document.body.appendChild(img);
+                              }
                             }}
                             className="p-2 text-text-muted hover:text-accent hover:bg-accent/10 rounded-lg transition-colors"
                             title="View Receipt"
