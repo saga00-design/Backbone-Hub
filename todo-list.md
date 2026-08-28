@@ -23,7 +23,7 @@
 - [x] CN-023 - replaced document.write string-interpolation (XSS risk if receiptImageUrl was ever malicious) with safe DOM construction in ExpenseManager.tsx
 - [x] CN-024 - narrower than framed: only logs auth UID, locally, on permission-denied. Gated behind import.meta.env.DEV so it never logs in production
 - [ ] CN-025 — `Math.random()` for staff ID gen (now moot — IDs come from TTP)
-- [ ] CN-026 — no CI/CD vulnerability scanning
+- [x] CN-026 - added .github/dependabot.yml (weekly dependency update PRs, root + functions) and .github/workflows/security-audit.yml (runs npm audit --audit-level=high on every push/PR to main plus weekly, fails the build on new high/critical vulns)
 ### Unconfirmed
 - [x] CN-006 / CN-011 — Firebase/lodash transitive dependency vulnerabilities. Resolved by the CN-016/017 `npm audit fix` pass (lodash 4.17.23→4.18.1, plus firebase's grpc-js/protobufjs/ws/websocket-driver transitives). Verified: `npm audit` now reports only the 2 esbuild/vite dev-server findings.
 
