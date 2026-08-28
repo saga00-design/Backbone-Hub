@@ -100,7 +100,12 @@ export default defineConfig({
     host: '0.0.0.0',
     port: 3000,
     strictPort: true,
-    allowedHosts: true
+    // Dev is localhost-only. Vite always allows `localhost` and bare IP hosts
+    // (127.0.0.1, LAN 192.168.x.x / 10.x.x.x) regardless of this list, so an
+    // empty array covers real usage while still rejecting a spoofed Host
+    // header from an arbitrary domain. Was `true` (accept any host) purely as
+    // a leftover from the original AI Studio scaffold — not actually needed.
+    allowedHosts: []
     // hmr intentionally left on Vite's default auto-detection - it infers
     // the correct protocol/port from how the page was actually loaded.
     // A hardcoded { protocol: 'wss', clientPort: 443 } here previously
