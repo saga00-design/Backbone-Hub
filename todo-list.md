@@ -4,13 +4,13 @@
 - [ ] Bell sounds not ringing on Bar KDS course completion
 - [ ] KDS "Bump to Done" removes ticket prematurely between courses
 - [ ] Hub recipe delete failing
-- [ ] VAT `|| 20` fallback needs replacing with `?? POS_CONFIG.DEFAULT_VAT_RATE` across ~10 files
+- [x] VAT `|| 20` fallback replaced with `?? DEFAULT_VAT_RATE` (constants.ts) in App.tsx + MenuRecipes.tsx (12 instances). Still open: same-class bug in services/closureService.ts:287 (legacy field-recovery chain, deliberately left alone — different fix shape), and the mirror fix in Backbone-POS (separate repo, not covered here).
 - [ ] localhost referrer format issue blocking some auth testing
 - [ ] App Check status unconfirmed
 
 ## cyber-neo security hardening — still open
 ### High
-- [ ] CN-008 — no security headers on Firebase Hosting
+- [x] CN-008 — added security headers to Firebase Hosting (X-Frame-Options, X-Content-Type-Options, Referrer-Policy, HSTS, Permissions-Policy). Deploys on next irebase deploy.
 - [ ] CN-010 — `@google/genai` version unpinned (wildcard `*`)
 - [x] CN-012 — migrated off the Tailwind CDN script to a real npm build. Installed `tailwindcss` + `@tailwindcss/vite` (v4, mirroring Backbone-POS), added `index.css` entry (`@import "tailwindcss"` + `@theme` block reproducing the exact custom colors/font + `@custom-variant dark` for the `.dark` class + a border-color compat shim for the v3→v4 default change), wired `tailwindcss()` into vite.config.ts, imported the CSS in index.tsx, removed the `<script src="cdn.tailwindcss.com">` + inline `tailwind.config` from index.html. Verified: build emits real 124 KB CSS, all custom color utilities resolve to identical values in light + dark, tsc error count unchanged (15 pre-existing, none new).
 ### Medium
