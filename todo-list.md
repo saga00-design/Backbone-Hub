@@ -11,15 +11,15 @@
 ## cyber-neo security hardening — still open
 ### High
 - [x] CN-008 — added security headers to Firebase Hosting (X-Frame-Options, X-Content-Type-Options, Referrer-Policy, HSTS, Permissions-Policy). Deploys on next irebase deploy.
-- [ ] CN-010 — `@google/genai` version unpinned (wildcard `*`)
+- [x] CN-010 - genai pinned from wildcard * to ^1.45.0, matching installed version
 - [x] CN-012 — migrated off the Tailwind CDN script to a real npm build. Installed `tailwindcss` + `@tailwindcss/vite` (v4, mirroring Backbone-POS), added `index.css` entry (`@import "tailwindcss"` + `@theme` block reproducing the exact custom colors/font + `@custom-variant dark` for the `.dark` class + a border-color compat shim for the v3→v4 default change), wired `tailwindcss()` into vite.config.ts, imported the CSS in index.tsx, removed the `<script src="cdn.tailwindcss.com">` + inline `tailwind.config` from index.html. Verified: build emits real 124 KB CSS, all custom color utilities resolve to identical values in light + dark, tsc error count unchanged (15 pre-existing, none new).
 ### Medium
 - [x] CN-013 — deleted stray `DRAFT_firestore.rules` (open `allow read, write: if true` stub). Confirmed unused first: `firebase.json` points both databases at `firestore.rules` only, no script/`.firebaserc` reference; the real 15 KB `firestore.rules` is untouched.
 - [x] CN-015 — Vite `allowedHosts` changed from `true` (accept any Host header) to `[]`. Elliott confirmed dev is localhost-only; Vite still always allows `localhost` + bare IP hosts, so `npm run dev` is unaffected. Verified: localhost/127.0.0.1 → 200, spoofed `Host: evil.example.com` → 403 (was 200). Was a leftover from the AI Studio scaffold (de73405).
 - [x] CN-016/017 — ran `npm audit fix` (safe, non-breaking): 13 → 2 vulns. Bumped lockfile-only (ws, websocket-driver, protobufjs, postcss, nanoid, lodash, brace-expansion, fast-uri, @grpc/grpc-js, @babel/core) — no `package.json` version changes, tsc/build/dev all still green. **Remaining 2 (esbuild ≤0.24.2 + vite depending on it, both dev-server-only) need `vite@8` — a major bump left as a deliberate decision, not auto-applied.**
 ### Low
-- [ ] CN-020 — `.gitignore` missing key/cert patterns
-- [ ] CN-021 — no `storage.rules` tracked
+- [x] CN-020 - added key/cert/credential patterns to .gitignore (*.pem, *.key, *.crt, *.cer, *.p12, *.pfx, *.jks, serviceAccountKey.json)
+- [x] CN-021 - created storage.rules (deny-all default) and wired into firebase.json. Storage is not actually used in app code, but this closes the gap regardless
 - [x] CN-023 - replaced document.write string-interpolation (XSS risk if receiptImageUrl was ever malicious) with safe DOM construction in ExpenseManager.tsx
 - [x] CN-024 - narrower than framed: only logs auth UID, locally, on permission-denied. Gated behind import.meta.env.DEV so it never logs in production
 - [ ] CN-025 — `Math.random()` for staff ID gen (now moot — IDs come from TTP)
