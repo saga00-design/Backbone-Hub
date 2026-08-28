@@ -29,3 +29,14 @@ entities.json
 
 # Stray folder from Windows PowerShell not expanding ~ like bash does
 ~/
+
+# Keys, certificates, credentials — never commit
+*.pem
+*.key
+*.crt
+*.cer
+*.p12
+*.pfx
+*.jks
+serviceAccountKey.json
+*serviceAccount*.json

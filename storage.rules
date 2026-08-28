@@ -1,0 +1,12 @@
+﻿rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Storage isn't used by this app's code today (no getStorage() calls
+    // anywhere), but Firebase projects can auto-provision a default bucket
+    // regardless. Deny-all by default so nothing is exposed if/when Storage
+    // is ever actually adopted - update these rules deliberately at that point.
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
