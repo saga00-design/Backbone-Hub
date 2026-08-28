@@ -1,0 +1,50 @@
+@import "tailwindcss";
+
+/* Dark mode is toggled by a `.dark` class on <html> (App.tsx theme logic),
+   not the OS preference — mirrors the old `darkMode: 'class'` CDN config. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: "Inter", sans-serif;
+
+  /* Semantic colors resolve through CSS vars that swap on `.dark`
+     (those vars are defined in index.html). */
+  --color-primary-surface: var(--primary-surface);
+  --color-secondary-surface: var(--secondary-surface);
+  --color-main-bg: var(--main-bg);
+  --color-card-bg: var(--card-bg);
+  --color-text-navy: var(--text-navy);
+  --color-text-muted: var(--text-muted);
+  --color-accent: var(--accent);
+  --color-cta: var(--cta);
+  --color-border-grey: var(--border-grey);
+  --color-dark-navy: var(--dark-navy);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-error: var(--error);
+
+  /* Brand scale — literal values, matching the old inline tailwind.config. */
+  --color-brand-50: #dceaf7;
+  --color-brand-100: #cfe0f2;
+  --color-brand-200: #b8d1eb;
+  --color-brand-300: #94b8e0;
+  --color-brand-400: #6b9ed4;
+  --color-brand-500: #4284c8;
+  --color-brand-600: #0d6efd;
+  --color-brand-700: #0b5ed7;
+  --color-brand-800: #0a53be;
+  --color-brand-900: #24345d;
+}
+
+/* Tailwind v4 defaults `border`/`divide` color to currentColor; v3 and the old
+   CDN build defaulted to gray-200. Keep the v3 look so bare `border` utilities
+   don't change appearance. */
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, currentColor);
+  }
+}

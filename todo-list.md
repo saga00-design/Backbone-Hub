@@ -12,7 +12,7 @@
 ### High
 - [ ] CN-008 — no security headers on Firebase Hosting
 - [ ] CN-010 — `@google/genai` version unpinned (wildcard `*`)
-- [ ] CN-012 — dead Tailwind CDN script still loaded in index.html
+- [x] CN-012 — migrated off the Tailwind CDN script to a real npm build. Installed `tailwindcss` + `@tailwindcss/vite` (v4, mirroring Backbone-POS), added `index.css` entry (`@import "tailwindcss"` + `@theme` block reproducing the exact custom colors/font + `@custom-variant dark` for the `.dark` class + a border-color compat shim for the v3→v4 default change), wired `tailwindcss()` into vite.config.ts, imported the CSS in index.tsx, removed the `<script src="cdn.tailwindcss.com">` + inline `tailwind.config` from index.html. Verified: build emits real 124 KB CSS, all custom color utilities resolve to identical values in light + dark, tsc error count unchanged (15 pre-existing, none new).
 ### Medium
 - [ ] CN-013 — stray `DRAFT_firestore.rules` file in Hub repo root (delete outright — top priority, harmless if unused, dangerous if ever accidentally deployed)
 - [ ] CN-015 — Vite `allowedHosts: true` still permissive
