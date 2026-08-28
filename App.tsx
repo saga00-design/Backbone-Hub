@@ -25,7 +25,7 @@ import { buildWeeklyLabourCostPenceMap, sumLabourCostForWeeks, filterShiftsForCo
 import { LayoutDashboard, Package, ClipboardCheck, FileInput, Menu, X, ChefHat, TrendingUp, Truck, Settings as SettingsIcon, BookOpen, Sun, Moon, ShoppingCart, AlertCircle, LogIn, LogOut, Trash2, ReceiptPoundSterling, Megaphone, LayoutList, PoundSterling } from 'lucide-react';
 import { Toaster, toast } from 'sonner';
 import { auth, db, googleProvider, signInWithPopup, onAuthStateChanged, collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, onSnapshot, handleFirestoreError, OperationType, User, cleanObject, signOut, increment, query, where, orderBy, limit, testConnection, LOCATION_ID, writeBatch } from './firebase';
-import { DEFAULT_PERMISSIONS, ADMIN_EMAILS } from './constants';
+import { DEFAULT_PERMISSIONS, ADMIN_EMAILS, DEFAULT_VAT_RATE } from './constants';
 import { calculateTotalCost, mapCategoryId, computeCategorySalesSplit } from './utils/recipeUtils';
 import { CONVERSION_FACTORS, toSafeNumber, resolveInvoiceLine } from './utils/unitConversions';
 import { normalizeCurrency, normalizeTimestamp, normalizeStatus } from './utils/currencyUtils';
@@ -1903,7 +1903,7 @@ const today = londonHour < 6
       categoryId: recipe.posCategoryId || categoryId,
       // POS systems expect price in cents (integers)
       priceGross: Math.round((Number(recipe.sellingPrice) || 0) * 100),
-      vatRate: Number(recipe.vatRate) || 20,
+      vatRate: Number(recipe.vatRate ?? DEFAULT_VAT_RATE),
       active: true,
       locationId: LOCATION_ID,
       station: mapStation(recipe),
@@ -1989,7 +1989,7 @@ const today = londonHour < 6
               slug,
               categoryId,
               priceGross: Math.round((Number(recipe.sellingPrice) || 0) * 100),
-              vatRate: Number(recipe.vatRate) || 20,
+              vatRate: Number(recipe.vatRate ?? DEFAULT_VAT_RATE),
               active: recipe.isActive !== false,
               locationId: LOCATION_ID,
               station: mapStation(recipe),
@@ -2017,7 +2017,7 @@ const today = londonHour < 6
                 batch.set(doc(db, 'menuItems', sideId), {
                   name: side.name,
                   priceGross: side.price,
-                  vatRate: recipe.vatRate ?? 20,
+                  vatRate: recipe.vatRate ?? DEFAULT_VAT_RATE,
                   categoryId: 'cat_sides',
                   isSide: true,
                   isAddon: false,
@@ -2040,7 +2040,7 @@ const today = londonHour < 6
                 batch.set(doc(db, 'menuItems', addonId), {
                   name: addon.name.replace(/\s*batch\s*/gi, '').trim(),
                   priceGross: addon.price,
-                  vatRate: recipe.vatRate ?? 20,
+                  vatRate: recipe.vatRate ?? DEFAULT_VAT_RATE,
                   categoryId: 'cat_addons',
                   isSide: false,
                   isAddon: true,

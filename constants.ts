@@ -13,6 +13,11 @@ import { AppPermissions } from './types';
 // list ever changes, update those two places by hand to match.
 export const ADMIN_EMAILS = ['saga00@gmail.com', 'famrokha@gmail.com'] as const;
 
+// UK standard VAT rate, used as the fallback when a recipe/item has no vatRate
+// set. Must be ?? not ||, since a real 0 (VAT-exempt item, 0%-VAT business)
+// is a valid rate and must not be overridden.
+export const DEFAULT_VAT_RATE = 20;
+
 export const APP_SECTIONS = [
   { id: 'dashboard', name: 'Dashboard' },
   { id: 'inventory', name: 'Inventory' },

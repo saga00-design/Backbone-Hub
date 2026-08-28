@@ -15,6 +15,7 @@ import html2canvas from 'html2canvas';
 import { getIngredientDetails as getIngredientDetailsShared, calculateTotalCost as calculateTotalCostShared, calculateGP, mapCategoryId } from '../utils/recipeUtils';
 import { convertToBaseUnit, convertFromBaseUnit, formatDisplayValue, areUnitsCompatible, UNIT_TYPES, BASE_UNITS, CONVERSION_FACTORS } from '../utils/unitConversions';
 import { MovementType } from '../types';
+import { DEFAULT_VAT_RATE } from '../constants';
 import { db, collection, doc, setDoc, updateDoc, deleteDoc, onSnapshot, handleFirestoreError, OperationType, query, where, LOCATION_ID, cleanObject, writeBatch, callGemini } from '../firebase';
 
 interface GeneratedRecipeIdea {
@@ -626,7 +627,7 @@ export const MenuRecipes: React.FC<MenuRecipesProps> = ({
           unit: side.unit,
           price: side.price,
           cost: side.cost,
-          vatRate: recipe.vatRate ?? 20,
+          vatRate: recipe.vatRate ?? DEFAULT_VAT_RATE,
           gp: side.price > 0 ? Math.round(((side.price - side.cost) / side.price) * 10000) / 100 : 0,
           categoryId: 'cat_sides',
           posMenuItemId: side.posMenuItemId,
@@ -648,7 +649,7 @@ export const MenuRecipes: React.FC<MenuRecipesProps> = ({
           unit: addon.unit,
           price: addon.price,
           cost: addon.cost,
-          vatRate: recipe.vatRate ?? 20,
+          vatRate: recipe.vatRate ?? DEFAULT_VAT_RATE,
           gp: addon.price > 0 ? Math.round(((addon.price - addon.cost) / addon.price) * 10000) / 100 : 0,
           categoryId: 'cat_addons',
           posMenuItemId: addon.posMenuItemId,
@@ -681,7 +682,7 @@ export const MenuRecipes: React.FC<MenuRecipesProps> = ({
           unit: 'portions',
           price,
           cost,
-          vatRate: recipe.vatRate ?? 20,
+          vatRate: recipe.vatRate ?? DEFAULT_VAT_RATE,
           gp: price > 0 ? Math.round(((price - cost) / price) * 10000) / 100 : 0,
           categoryId: catId,
           posMenuItemId: recipe.id,
@@ -1846,7 +1847,7 @@ export const MenuRecipes: React.FC<MenuRecipesProps> = ({
 
       // Pricing & Profit Section
       const cost = calculateTotalCost(recipe.ingredients);
-      const priceExcVat = recipe.sellingPrice / (1 + (Number(recipe.vatRate) || 20) / 100); // sellingPrice is gross inc. VAT
+      const priceExcVat = recipe.sellingPrice / (1 + (Number(recipe.vatRate ?? DEFAULT_VAT_RATE)) / 100); // sellingPrice is gross inc. VAT
       const marginCash = priceExcVat - cost;
       const marginPercent = priceExcVat > 0 ? (marginCash / priceExcVat) * 100 : 0;
 
@@ -2917,14 +2918,14 @@ export const MenuRecipes: React.FC<MenuRecipesProps> = ({
               const allItems = recipes;
               const lowGPItems = allItems.filter(r => {
                 const cost = calculateTotalCostShared(r.ingredients, inventoryItems, recipes);
-                const priceExcVat = r.sellingPrice / (1 + (Number(r.vatRate) || 20) / 100); // sellingPrice is gross inc. VAT
+                const priceExcVat = r.sellingPrice / (1 + (Number(r.vatRate ?? DEFAULT_VAT_RATE)) / 100); // sellingPrice is gross inc. VAT
                 const marginCash = priceExcVat - cost;
                 const marginPercent = priceExcVat > 0 ? (marginCash / priceExcVat) * 100 : 0;
                 return marginPercent < targetGP;
               });
               const avgGP = allItems.reduce((acc, r) => {
                 const cost = calculateTotalCostShared(r.ingredients, inventoryItems, recipes);
-                const priceExcVat = r.sellingPrice / (1 + (Number(r.vatRate) || 20) / 100); // sellingPrice is gross inc. VAT
+                const priceExcVat = r.sellingPrice / (1 + (Number(r.vatRate ?? DEFAULT_VAT_RATE)) / 100); // sellingPrice is gross inc. VAT
                 const marginCash = priceExcVat - cost;
                 const marginPercent = priceExcVat > 0 ? (marginCash / priceExcVat) * 100 : 0;
                 return acc + marginPercent;
@@ -3018,13 +3019,13 @@ export const MenuRecipes: React.FC<MenuRecipesProps> = ({
                 <tbody className="divide-y divide-border-grey">
                   {recipes.filter(r => {
                     const cost = calculateTotalCostShared(r.ingredients, inventoryItems, recipes);
-                    const priceExcVat = r.sellingPrice / (1 + (Number(r.vatRate) || 20) / 100); // sellingPrice is gross inc. VAT
+                    const priceExcVat = r.sellingPrice / (1 + (Number(r.vatRate ?? DEFAULT_VAT_RATE)) / 100); // sellingPrice is gross inc. VAT
                     const marginCash = priceExcVat - cost;
                     const marginPercent = priceExcVat > 0 ? (marginCash / priceExcVat) * 100 : 0;
                     return marginPercent < targetGP;
                   }).map(recipe => {
                     const cost = calculateTotalCostShared(recipe.ingredients, inventoryItems, recipes);
-                    const priceExcVat = recipe.sellingPrice / (1 + (Number(recipe.vatRate) || 20) / 100); // sellingPrice is gross inc. VAT
+                    const priceExcVat = recipe.sellingPrice / (1 + (Number(recipe.vatRate ?? DEFAULT_VAT_RATE)) / 100); // sellingPrice is gross inc. VAT
                     const marginCash = priceExcVat - cost;
                     const marginPercent = priceExcVat > 0 ? (marginCash / priceExcVat) * 100 : 0;
                     
@@ -3077,13 +3078,13 @@ export const MenuRecipes: React.FC<MenuRecipesProps> = ({
             <div className="md:hidden divide-y divide-border-grey">
               {recipes.filter(r => {
                 const cost = calculateTotalCostShared(r.ingredients, inventoryItems, recipes);
-                const priceExcVat = r.sellingPrice / (1 + (Number(r.vatRate) || 20) / 100); // sellingPrice is gross inc. VAT
+                const priceExcVat = r.sellingPrice / (1 + (Number(r.vatRate ?? DEFAULT_VAT_RATE)) / 100); // sellingPrice is gross inc. VAT
                 const marginCash = priceExcVat - cost;
                 const marginPercent = priceExcVat > 0 ? (marginCash / priceExcVat) * 100 : 0;
                 return marginPercent < targetGP;
               }).map(recipe => {
                 const cost = calculateTotalCostShared(recipe.ingredients, inventoryItems, recipes);
-                const priceExcVat = recipe.sellingPrice / (1 + (Number(recipe.vatRate) || 20) / 100); // sellingPrice is gross inc. VAT
+                const priceExcVat = recipe.sellingPrice / (1 + (Number(recipe.vatRate ?? DEFAULT_VAT_RATE)) / 100); // sellingPrice is gross inc. VAT
                 const marginCash = priceExcVat - cost;
                 const marginPercent = priceExcVat > 0 ? (marginCash / priceExcVat) * 100 : 0;
                 const suggestedPrice = cost / (1 - targetGP / 100);
@@ -3125,7 +3126,7 @@ export const MenuRecipes: React.FC<MenuRecipesProps> = ({
 
             {recipes.filter(r => {
               const cost = calculateTotalCostShared(r.ingredients, inventoryItems, recipes);
-              const priceExcVat = r.sellingPrice / (1 + (Number(r.vatRate) || 20) / 100); // sellingPrice is gross inc. VAT
+              const priceExcVat = r.sellingPrice / (1 + (Number(r.vatRate ?? DEFAULT_VAT_RATE)) / 100); // sellingPrice is gross inc. VAT
               const marginCash = priceExcVat - cost;
               const marginPercent = priceExcVat > 0 ? (marginCash / priceExcVat) * 100 : 0;
               return marginPercent < targetGP;
@@ -3603,7 +3604,7 @@ export const MenuRecipes: React.FC<MenuRecipesProps> = ({
               filteredRecipes.map((recipe) => {
                 const cost = calculateTotalCost(recipe.ingredients);
                 const priceIncVat = recipe.sellingPrice; // sellingPrice is gross inc. VAT (menu price)
-                const priceExcVat = priceIncVat / (1 + (Number(recipe.vatRate) || 20) / 100);
+                const priceExcVat = priceIncVat / (1 + (Number(recipe.vatRate ?? DEFAULT_VAT_RATE)) / 100);
                 const marginPercent = calculateGP(priceExcVat, cost);
                 const currentTargetGP = recipe.marginTarget || targetGP;
                 const isLowMargin = marginPercent < currentTargetGP;
@@ -5926,7 +5927,7 @@ export const MenuRecipes: React.FC<MenuRecipesProps> = ({
                               <div className="mt-1 bg-card-bg border border-border-grey rounded-xl shadow-xl max-h-48 overflow-y-auto">
                                 {setMenuDishSearchResults.map(r => {
                                   const rCostPence = Math.round(calculateTotalCostShared(r.ingredients, inventoryItems, recipes) * 100);
-                                  const rPriceExVat = r.sellingPrice / (1 + (Number(r.vatRate) || 20) / 100);
+                                  const rPriceExVat = r.sellingPrice / (1 + (Number(r.vatRate ?? DEFAULT_VAT_RATE)) / 100);
                                   const rGP = rPriceExVat > 0 ? calculateGP(rPriceExVat, rCostPence / 100) : 0;
                                   return (
                                     <button
