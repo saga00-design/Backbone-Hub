@@ -1,6 +1,6 @@
 ﻿# Backbone Hub + POS — To-Do List
 
-## Known bugs, not yet fixed
+## Known bugs — 4 resolved, 2 open (resolved entries kept for the audit trail)
 - [x] Bell sounds not ringing on Bar KDS — FIXED in Backbone-POS `5c543ca` (2026-07-23). Old bell was a reactive watcher on ticket state; a bar ticket goes preparing→fully-bumped in one Firestore snapshot and drops out of the listener query, so the watcher never observed it. Bell now fires synchronously in `updateKdsTicketStatus` (store.ts:1558) on the bump call itself. Verified in current code: `ringBarBell()` runs on every bar bump. Minor residual: it fires just after an `await getDoc`, so it relies on the audio elements already being unlocked by an earlier tap (`unlockBellAudio` handles that on first interaction) — not a bug in practice, the bump itself is that tap.
   - **2026-08-29 follow-up — RESOLVED, no code issue.** Bell silence reported on Kitchen/Bar/Expo immediately after the `82e49da` bump-fix merge turned out to be a stale service-worker / PWA cache on the KDS devices, not a code regression. Confirmed via `git diff 9307c52..82e49da`: the bell calls in `updateKdsTicketStatus` are byte-identical before/after the merge (only the course-scoping delegation changed). A hard refresh / clear cache on the affected devices restored all bells — Elliott confirmed live on real devices. (Note: Expo's `status`-transition bell watchers are long-dead code — bumped tickets fall out of the `status in [pending,preparing,ready]` listener query before the watcher sees them — but that predates this merge and is separate.)
   - **2026-08-29 — Expo dead-bell cleanup done.** Removed ExpoScreen's two unreachable `useEffect` bell watchers (per-ticket `status`→`bumped` ring + Table Done ring) in Backbone-POS `9fbc5c2` (branch `fix/expo-dead-bell-watchers`, merged to main). Confirmed as intentional dead-code removal, **not** a feature gap: Expo always runs alongside a station screen that already rings from `updateKdsTicketStatus` (store.ts), so Expo needs no bell of its own. `unlockBellAudio()` effect kept so the shared bell still works if the first tap lands on the Expo screen. Also dropped the now-unused `prevStatuses`/`prevAllDone` refs and bell imports. Pure cleanup, zero behavior change — tsc + production build clean, no live-device gate needed.
@@ -10,7 +10,9 @@
 - [ ] localhost referrer format issue blocking some auth testing
 - [ ] App Check status unconfirmed
 
-## cyber-neo security hardening — still open
+## cyber-neo security hardening — every tracked finding resolved
+
+All items below are `[x]` except CN-025, which is moot (staff IDs now come from TTP, not `Math.random()`). `npm audit` → 0 vulnerabilities as of 2026-08-29 (after the Vite 5→8 upgrade).
 ### High
 - [x] CN-008 — added security headers to Firebase Hosting (X-Frame-Options, X-Content-Type-Options, Referrer-Policy, HSTS, Permissions-Policy). Deploys on next irebase deploy.
 - [x] CN-010 - genai pinned from wildcard * to ^1.45.0, matching installed version
@@ -29,6 +31,6 @@
 ### Unconfirmed
 - [x] CN-006 / CN-011 — Firebase/lodash transitive dependency vulnerabilities. Resolved by the CN-016/017 `npm audit fix` pass (lodash 4.17.23→4.18.1, plus firebase's grpc-js/protobufjs/ws/websocket-driver transitives). Verified: `npm audit` now reports only the 2 esbuild/vite dev-server findings.
 
-## Other open items
+## Other items — 1 open
 - [x] POS's bootstrap function — REMOVED in Backbone-POS `cd7f5e8` ("Remove bootstrapFirstUser and its button"). Confirmed in current code: no `bootstrapFirstUser` anywhere in `src/`; `PinLoginScreen.tsx` line 260 block now contains only the "Sync Users from Hub" button. Two harmless residues: the stale comment `{/* Bootstrap / Sync buttons */}` and the `(staffList.length === 0 || googleUser)` gate that once revealed the bootstrap button (now just gates the Sync button) — cosmetic only.
 - [ ] Full staff data audit against TTP once real IDs/PINs are entered
